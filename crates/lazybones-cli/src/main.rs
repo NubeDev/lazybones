@@ -24,10 +24,16 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = Config::load(&config_path())?;
+    let config_path = config_path();
+    let config = Config::load(&config_path)?;
 
     match command() {
-        Command::Serve => serve::serve(config).await,
+        Command::Serve => {
+            // The scheduler keys (gate, concurrency, worktrees, …) load from the
+            // same file + LAZYBONES_* env; only `serve` runs the loop.
+            let engine = lazybones_engine::EngineConfig::load(&config_path)?;
+            serve::serve(config, engine).await
+        }
         Command::Import(path) => serve::import(config, &path).await,
     }
 }

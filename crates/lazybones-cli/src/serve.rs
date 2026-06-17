@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use lazybones_api::{AppState, router};
+use lazybones_engine::EngineConfig;
 use lazybones_store::{StoreEngine, StoreHandle, sync_seeds};
 
 use crate::configure::Config;
@@ -18,14 +19,20 @@ async fn open_store(config: &Config) -> anyhow::Result<StoreHandle> {
     Ok(store)
 }
 
-/// Serve the REST API until the process is signalled.
+/// Serve the REST API and run the in-process scheduler until signalled.
+///
+/// The scheduler shares the same [`StoreHandle`] — it reads/writes the store
+/// in-process, no HTTP round-trip to itself — and is aborted when the API stops.
 ///
 /// # Errors
 /// Returns an error if the store cannot open or the listener cannot bind.
-pub async fn serve(config: Config) -> anyhow::Result<()> {
+pub async fn serve(config: Config, engine: EngineConfig) -> anyhow::Result<()> {
     let store = open_store(&config).await?;
-    let state = AppState::new(store, config.run.clone(), config.loop_token.clone());
+    let state = AppState::new(store.clone(), config.run.clone(), config.loop_token.clone());
     let app = router(state);
+
+    // The loop is the daemon: if lazybonesd is up, the queue is being drained.
+    let sched = tokio::spawn(lazybones_engine::run(store, engine));
 
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     tracing::info!(bind = %config.bind, run = %config.run, "lazybonesd serving");
@@ -33,6 +40,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    sched.abort(); // stop the loop when the API stops
     Ok(())
 }
 
