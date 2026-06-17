@@ -1,0 +1,15 @@
+//! The scheduler: the execution plane that drives ready tasks to done.
+
+mod finish;
+mod gate;
+mod git;
+mod merge;
+mod prompt;
+mod reclaim;
+mod run;
+mod tick;
+mod worktree;
+
+pub use run::run;
+
+pub(crate) use tick::tick;
