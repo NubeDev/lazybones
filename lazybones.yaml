@@ -1,0 +1,34 @@
+# lazybones config. Every key is overridable by an env var (shown in [brackets]).
+# env wins over file wins over the defaults baked into configure.rs.
+
+# --- target repo the agents build in ---
+target_repo: /home/user/code/rust/rbx     # [LAZYBONES_TARGET_REPO]
+base_branch: main                         # [LAZYBONES_BASE_BRANCH] branch tasks fork from + merge into
+remote: origin                            # [LAZYBONES_REMOTE]      where each task branch is pushed
+
+# --- the gate: a task is `done` only when this passes in its worktree ---
+# run in order; any non-zero exit blocks the task. these are the rubix defaults.
+gate:                                      # [LAZYBONES_GATE] (newline-separated when set via env)
+  - cargo test --workspace
+  - cargo clippy --workspace --all-targets -- -D warnings
+
+# --- parallelism + isolation ---
+concurrency: 3                            # [LAZYBONES_CONCURRENCY] max agents running at once
+worktrees: true                           # [LAZYBONES_WORKTREES]   false = serialize on base_branch
+worktree_root: .lazy/wt                   # [LAZYBONES_WORKTREE_ROOT] where `git worktree add` lands
+branch_prefix: lazy/                      # [LAZYBONES_BRANCH_PREFIX] task `auth` -> branch `lazy/auth`
+merge: fast-forward                       # [LAZYBONES_MERGE] fast-forward | merge | pr
+
+# --- which agent tool runs a task (per-task `tool:` in workfile.yaml overrides) ---
+agent_tool: claude                        # [LAZYBONES_AGENT_TOOL] claude | codex | gemini | opencode ...
+
+# --- the brain: lazybonesd REST + embedded SurrealDB ---
+api:
+  bind: 127.0.0.1:7878                    # [LAZYBONES_BIND]
+data_dir: .lazy/db                         # [LAZYBONES_DATA_DIR] embedded SurrealDB (kv-surrealkv) files
+namespace: lazybones                      # [LAZYBONES_NAMESPACE]
+database: run                             # [LAZYBONES_DATABASE]
+
+# --- liveness ---
+heartbeat_secs: 30                        # [LAZYBONES_HEARTBEAT_SECS] agent ping interval
+stale_after_secs: 300                     # [LAZYBONES_STALE_AFTER_SECS] running+stale+no-agent -> reclaim

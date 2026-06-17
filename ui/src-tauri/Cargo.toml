@@ -1,0 +1,23 @@
+[package]
+name = "lazybones-desktop"
+version = "0.1.0"
+description = "lazybones desktop shell — the orchestration dashboard as a native window"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+# This crate is its own thing, NOT a member of the parent lazybones workspace.
+[workspace]
+
+[lib]
+name = "lazybones_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

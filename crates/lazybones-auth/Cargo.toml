@@ -1,0 +1,13 @@
+[package]
+name = "lazybones-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+lazybones-store = { workspace = true }
+thiserror = { workspace = true }

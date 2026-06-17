@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+/* lazybones design system — a Codex-inspired surface: near-black neutrals, a
+   single warm accent, generous radii, hairline borders. Tailwind v4 reads the
+   custom properties under @theme as first-class utilities (bg-surface, etc.). */
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Light palette — warm paper, ink text. */
+  --background: oklch(0.99 0.004 95);
+  --foreground: oklch(0.22 0.01 60);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.975 0.004 95);
+  --muted: oklch(0.955 0.005 95);
+  --muted-foreground: oklch(0.52 0.01 70);
+  --border: oklch(0.91 0.005 90);
+  --border-strong: oklch(0.85 0.006 90);
+  --ring: oklch(0.7 0.13 50);
+
+  --accent: oklch(0.66 0.16 48);
+  --accent-foreground: oklch(0.99 0.01 95);
+  --accent-soft: oklch(0.95 0.04 60);
+
+  /* Lifecycle status hues — shared across themes, tuned per mode below. */
+  --status-pending: oklch(0.62 0.01 70);
+  --status-ready: oklch(0.62 0.13 230);
+  --status-running: oklch(0.7 0.15 85);
+  --status-gating: oklch(0.62 0.16 300);
+  --status-done: oklch(0.62 0.15 150);
+  --status-blocked: oklch(0.6 0.2 25);
+
+  --radius: 0.75rem;
+}
+
+.dark {
+  /* Dark palette — the primary surface. Codex-grade near-black. */
+  --background: oklch(0.17 0.005 80);
+  --foreground: oklch(0.93 0.005 90);
+  --surface: oklch(0.2 0.006 80);
+  --surface-2: oklch(0.235 0.007 80);
+  --muted: oklch(0.26 0.008 80);
+  --muted-foreground: oklch(0.66 0.008 85);
+  --border: oklch(0.29 0.008 80);
+  --border-strong: oklch(0.36 0.01 80);
+  --ring: oklch(0.7 0.14 50);
+
+  --accent: oklch(0.72 0.15 52);
+  --accent-foreground: oklch(0.18 0.01 60);
+  --accent-soft: oklch(0.3 0.05 55);
+
+  --status-pending: oklch(0.6 0.01 75);
+  --status-ready: oklch(0.7 0.13 230);
+  --status-running: oklch(0.78 0.14 85);
+  --status-gating: oklch(0.72 0.15 300);
+  --status-done: oklch(0.72 0.15 155);
+  --status-blocked: oklch(0.68 0.18 25);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ring: var(--ring);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-status-pending: var(--status-pending);
+  --color-status-ready: var(--status-ready);
+  --color-status-running: var(--status-running);
+  --color-status-gating: var(--status-gating);
+  --color-status-done: var(--status-done);
+  --color-status-blocked: var(--status-blocked);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-sm: calc(var(--radius) - 0.4rem);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--color-accent-soft);
+  }
+
+  /* Hairline, low-contrast scrollbars matching the surface. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-strong);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-muted-foreground);
+  }
+}
+
+@layer utilities {
+  /* A soft, repeated grid for empty/hero surfaces. */
+  .bg-grid {
+    background-image: linear-gradient(var(--color-border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--color-border) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 30%, transparent 75%);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--color-accent) 30%, transparent),
+      0 8px 30px -12px color-mix(in oklch, var(--color-accent) 50%, transparent);
+  }
+
+  /* Region the OS treats as a window drag handle (desktop only). */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in oklch, currentColor 45%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 6px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+  .animate-pulse-ring {
+    animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-fade-up {
+    animation: fade-up 0.3s ease both;
+  }
+}

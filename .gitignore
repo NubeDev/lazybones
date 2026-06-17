@@ -1,0 +1,5 @@
+/target
+# runtime: embedded SurrealDB files + worktrees the loop creates
+/.lazy
+# secrets: agent CLI keys + run tokens — never commit. Template is .env.example.
+/.env

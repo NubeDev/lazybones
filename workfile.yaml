@@ -1,0 +1,40 @@
+# The work queue ("the hcom workfile"). Each task is one unit of work.
+# Friendly concept ids — never WS-01. Order is dependency order; the loop runs any
+# task whose deps are `done` and whose `owns` globs don't overlap a running task.
+#
+# This is a SEED, not the runtime source of truth. `hcom run lazybones` imports it
+# into SurrealDB (POST /workfile/sync) as task documents + depends_on graph edges;
+# the DB is authoritative after. Edit + re-run to reconcile, or edit tasks over REST.
+# Specs, status, history, and AI memory all live in the DB — never back in this file.
+
+run: rubix-admin-api          # label for this run (groups the tasks + history)
+
+tasks:
+  - id: store
+    title: Embedded SurrealDB store boundary + health
+    spec: tasks/store.md
+    deps: []
+    owns:
+      - crates/lazybones-store/**
+    # tool: claude            # optional per-task override of config.agent_tool
+
+  - id: auth
+    title: Scoped session + capability grants
+    spec: tasks/auth.md
+    deps: [store]
+    owns:
+      - crates/lazybones-auth/**
+
+  - id: api
+    title: REST surface — tasks, claim, heartbeat, done, block
+    spec: tasks/api.md
+    deps: [store, auth]
+    owns:
+      - crates/lazybones-api/**
+
+  - id: cli
+    title: lazybonesd binary — parse config, open store, serve
+    spec: tasks/cli.md
+    deps: [api]
+    owns:
+      - crates/lazybones-cli/**

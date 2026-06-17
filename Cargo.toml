@@ -1,0 +1,36 @@
+# lazybones — standalone multi-agent build orchestrator (will move to its own repo).
+# Its own cargo workspace; deliberately NOT a member of the parent rubix workspace.
+[workspace]
+resolver = "2"
+members = [
+    "crates/lazybones-store",
+    "crates/lazybones-auth",
+    "crates/lazybones-api",
+    "crates/lazybones-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.93"
+
+[workspace.dependencies]
+lazybones-store = { version = "0.1.0", path = "crates/lazybones-store" }
+lazybones-auth = { version = "0.1.0", path = "crates/lazybones-auth" }
+lazybones-api = { version = "0.1.0", path = "crates/lazybones-api" }
+
+anyhow = "1"
+axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "query"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+surrealdb = { version = "3", default-features = false, features = ["kv-mem", "kv-surrealkv"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
