@@ -1,5 +1,6 @@
 //! The scheduler: the execution plane that drives ready tasks to done.
 
+mod effective;
 mod finish;
 mod gate;
 mod git;

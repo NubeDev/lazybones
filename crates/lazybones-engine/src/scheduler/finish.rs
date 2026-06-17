@@ -12,6 +12,7 @@ use lazybones_store::{StoreHandle, Task, Transition};
 use crate::config::EngineConfig;
 use crate::hcom::Hcom;
 
+use super::effective::EffectiveGit;
 use super::{gate, merge, worktree};
 
 /// The actor recorded on transitions this module drives.
@@ -25,7 +26,7 @@ const AWAIT_SECS: u64 = 3600;
 ///
 /// Best-effort and self-contained: every failure path ends in a `Block` or a
 /// logged error so the supervisor loop never wedges.
-pub async fn drive(store: StoreHandle, hcom: Hcom, cfg: EngineConfig, task: Task) {
+pub async fn drive(store: StoreHandle, hcom: Hcom, cfg: EngineConfig, eff: EffectiveGit, task: Task) {
     let signal = match await_signal(&hcom, &task.id).await {
         Ok(s) => s,
         Err(e) => {
@@ -40,7 +41,7 @@ pub async fn drive(store: StoreHandle, hcom: Hcom, cfg: EngineConfig, task: Task
                 tracing::warn!(task = %task.id, "gate transition failed: {e}");
                 return;
             }
-            gate_and_land(&store, &cfg, &task).await;
+            gate_and_land(&store, &cfg, &eff, &task).await;
         }
         Signal::Blocked(reason) => block(&store, &task.id, reason).await,
         Signal::Timeout => {
@@ -89,7 +90,7 @@ fn blocked_reason(text: &str) -> String {
 }
 
 /// Run the gate; on green, merge + record `done` + teardown; on red, block.
-async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, task: &Task) {
+async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveGit, task: &Task) {
     let worktree_path = task.worktree.clone().unwrap_or_default();
     let outcome = match gate::run(std::path::Path::new(&worktree_path), &cfg.gate).await {
         Ok(o) => o,
@@ -101,14 +102,14 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, task: &Task) {
 
     match outcome {
         gate::GateOutcome::Red(reason) => block(store, &task.id, reason).await,
-        gate::GateOutcome::Green => match merge::land(task, cfg).await {
+        gate::GateOutcome::Green => match merge::land(task, eff, cfg).await {
             Ok(commit) => {
                 match store
                     .transition(&task.id, Transition::Done { commit }, ACTOR)
                     .await
                 {
                     Ok(_) => {
-                        if let Err(e) = worktree::teardown(task, cfg).await {
+                        if let Err(e) = worktree::teardown(task, eff, cfg).await {
                             tracing::warn!(task = %task.id, "teardown failed: {e}");
                         }
                     }

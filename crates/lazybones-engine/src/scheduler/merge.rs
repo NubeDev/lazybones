@@ -8,15 +8,20 @@ use lazybones_store::Task;
 
 use crate::config::{EngineConfig, MergeMode};
 
+use super::effective::EffectiveGit;
 use super::git::git;
 
 /// Merge `task`'s branch into base per `cfg.merge`, push, and return the merged
 /// commit sha.
 ///
+/// The repo and base branch come from `eff` (the per-workflow resolved settings)
+/// so a workflow targeting a different repo merges in the right place; the remote
+/// and merge strategy stay global (`cfg`).
+///
 /// # Errors
 /// Returns an error if any git step fails; the caller turns it into a `Block`.
-pub async fn land(task: &Task, cfg: &EngineConfig) -> anyhow::Result<String> {
-    let repo = &cfg.target_repo;
+pub async fn land(task: &Task, eff: &EffectiveGit, cfg: &EngineConfig) -> anyhow::Result<String> {
+    let repo = eff.repo.as_path();
     let branch = task
         .branch
         .clone()
@@ -25,13 +30,13 @@ pub async fn land(task: &Task, cfg: &EngineConfig) -> anyhow::Result<String> {
     match cfg.merge {
         MergeMode::Pr => {
             // Push the branch; a PR is opened out of band. Record the branch head.
-            push(cfg, &branch).await?;
-            head_sha(task, cfg, &branch).await
+            push(repo, &cfg.remote, &branch).await?;
+            head_sha(task, repo, &branch).await
         }
         MergeMode::FastForward | MergeMode::Merge => {
             // Move onto base, integrate the branch, push base, then push the
             // branch too so the remote keeps the task ref.
-            checkout(repo, &cfg.base_branch).await?;
+            checkout(repo, &eff.base_branch).await?;
             let args: Vec<&str> = match cfg.merge {
                 MergeMode::FastForward => vec!["merge", "--ff-only", &branch],
                 // A merge commit keeps history when base has moved under us.
@@ -39,9 +44,9 @@ pub async fn land(task: &Task, cfg: &EngineConfig) -> anyhow::Result<String> {
             };
             let out = git(repo, &args).await?;
             if !out.ok {
-                anyhow::bail!("git merge of {branch} into {} failed: {}", cfg.base_branch, out.stderr);
+                anyhow::bail!("git merge of {branch} into {} failed: {}", eff.base_branch, out.stderr);
             }
-            push(cfg, &cfg.base_branch).await?;
+            push(repo, &cfg.remote, &eff.base_branch).await?;
             let sha = rev_parse(repo, "HEAD").await?;
             Ok(sha)
         }
@@ -58,20 +63,20 @@ async fn checkout(repo: &std::path::Path, branch: &str) -> anyhow::Result<()> {
 }
 
 /// `git push <remote> <ref>`.
-async fn push(cfg: &EngineConfig, refname: &str) -> anyhow::Result<()> {
-    let out = git(&cfg.target_repo, &["push", &cfg.remote, refname]).await?;
+async fn push(repo: &std::path::Path, remote: &str, refname: &str) -> anyhow::Result<()> {
+    let out = git(repo, &["push", remote, refname]).await?;
     if !out.ok {
-        anyhow::bail!("git push {} {refname} failed: {}", cfg.remote, out.stderr);
+        anyhow::bail!("git push {remote} {refname} failed: {}", out.stderr);
     }
     Ok(())
 }
 
 /// Resolve the branch head, preferring the task's worktree if it has one.
-async fn head_sha(task: &Task, cfg: &EngineConfig, branch: &str) -> anyhow::Result<String> {
+async fn head_sha(task: &Task, repo: &std::path::Path, branch: &str) -> anyhow::Result<String> {
     let repo = task
         .worktree
         .as_deref()
-        .map_or(cfg.target_repo.as_path(), std::path::Path::new);
+        .map_or(repo, std::path::Path::new);
     rev_parse(repo, branch).await
 }
 
@@ -133,9 +138,15 @@ mod tests {
         let cfg = cfg_for(dir.path(), MergeMode::FastForward);
         let mut task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
         task.branch = Some("lazy/auth".into());
+        let eff = EffectiveGit {
+            repo: dir.path().to_path_buf(),
+            base_branch: "main".into(),
+            branch_prefix: "lazy/".into(),
+            worktree_mode: lazybones_store::WorktreeMode::New,
+        };
         // No remote configured, so the push step fails — assert the merge itself
         // landed by checking base before the push error.
-        let _ = land(&task, &cfg).await;
+        let _ = land(&task, &eff, &cfg).await;
         let base = rev_parse(dir.path(), "main").await.unwrap();
         assert_eq!(base, want, "main should fast-forward to the branch head");
     }
