@@ -28,7 +28,17 @@ mod secrets_list;
 mod secrets_put;
 mod stream;
 mod sync;
+mod templates_create;
+mod templates_delete;
+mod templates_get;
+mod templates_list;
 mod update;
+mod workflows_add_task;
+mod workflows_cancel;
+mod workflows_create;
+mod workflows_get;
+mod workflows_list;
+mod workflows_start;
 
 use axum::Router;
 use axum::routing::{get, post, put};
@@ -58,6 +68,24 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks/:id/block", post(block::block_task))
         // Operator cancel: kill the live agent (hcom) then block the task.
         .route("/tasks/:id/cancel", post(cancel::cancel_task))
+        // Reusable task templates (global, stateless recipes).
+        .route(
+            "/templates",
+            get(templates_list::list_templates).post(templates_create::create_template),
+        )
+        .route(
+            "/templates/:id",
+            get(templates_get::get_template).delete(templates_delete::delete_template),
+        )
+        // Workflows (one-off runs, stored in the `run` table; path stays user-facing).
+        .route(
+            "/workflows",
+            get(workflows_list::list_workflows).post(workflows_create::create_workflow),
+        )
+        .route("/workflows/:id", get(workflows_get::get_workflow))
+        .route("/workflows/:id/tasks", post(workflows_add_task::add_workflow_task))
+        .route("/workflows/:id/start", post(workflows_start::start_workflow))
+        .route("/workflows/:id/cancel", post(workflows_cancel::cancel_workflow))
         .route("/runs/:id", get(runs::run_history))
         // Live push feed of status transitions (SSE) — for the dashboard + loop.
         .route("/stream", get(stream::stream))

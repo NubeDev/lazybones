@@ -40,15 +40,19 @@ impl IntoResponse for ApiError {
         let (status, message) = match &self {
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, self.to_string()),
-            ApiError::Store(StoreError::TaskNotFound(_)) => {
-                (StatusCode::NOT_FOUND, self.to_string())
-            }
+            ApiError::Store(
+                StoreError::TaskNotFound(_)
+                | StoreError::TemplateNotFound(_)
+                | StoreError::RunNotFound(_),
+            ) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Store(StoreError::IllegalTransition { .. }) => {
                 (StatusCode::CONFLICT, self.to_string())
             }
-            ApiError::Store(StoreError::TaskExists(_)) => {
-                (StatusCode::CONFLICT, self.to_string())
-            }
+            ApiError::Store(
+                StoreError::TaskExists(_)
+                | StoreError::TemplateExists(_)
+                | StoreError::RunExists(_),
+            ) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),

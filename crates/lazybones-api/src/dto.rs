@@ -3,9 +3,9 @@
 //! The domain [`Task`](lazybones_store::Task) already derives serde, so it *is*
 //! the task DTO — these are the small request bodies the mutating routes accept.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use lazybones_store::WorktreeMode;
+use lazybones_store::{Run, Task, WorktreeMode};
 
 /// `POST /tasks/:id/claim` body: where the agent will work.
 #[derive(Debug, Deserialize)]
@@ -103,6 +103,128 @@ pub struct UpdateTaskBody {
     /// New worktree provisioning intent; defaults to `new`.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
+}
+
+/// `POST /templates` body: a reusable task recipe to author.
+#[derive(Debug, Deserialize)]
+pub struct CreateTemplateBody {
+    /// Unique template id; `409` if it is already taken.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+    /// Optional longer description shown in the picker.
+    #[serde(default)]
+    pub description: String,
+    /// Starting spec text for tasks instantiated from this template.
+    pub spec_template: String,
+    /// Agent tool inherited by the task unless overridden.
+    #[serde(default)]
+    pub default_tool: Option<String>,
+    /// Rarely-set worktree mode intrinsic to the recipe; usually omitted.
+    #[serde(default)]
+    pub default_worktree_mode: Option<WorktreeMode>,
+}
+
+/// The workspace sub-object of a `POST /workflows` body.
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceBody {
+    /// Absolute path to the target git repo.
+    pub repo: String,
+    /// Base branch override; omitted inherits the global `EngineConfig`.
+    #[serde(default)]
+    pub base_branch: Option<String>,
+    /// Branch-prefix override; omitted inherits the global `EngineConfig`.
+    #[serde(default)]
+    pub branch_prefix: Option<String>,
+    /// Default git mode for this workflow's tasks.
+    #[serde(default)]
+    pub worktree_mode: WorktreeMode,
+}
+
+/// `POST /workflows` body: a new workflow bound to a workspace.
+#[derive(Debug, Deserialize)]
+pub struct CreateWorkflowBody {
+    /// Unique workflow id; `409` if it is already taken.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+    /// The repo + inherited git config.
+    pub workspace: WorkspaceBody,
+}
+
+/// `POST /workflows/:id/tasks` body: add a task to the workflow.
+///
+/// When `from_template` is set, the task is instantiated from that template
+/// (spec/tool/default mode); the explicit fields below then refine it.
+#[derive(Debug, Deserialize)]
+pub struct AddWorkflowTaskBody {
+    /// The unique task id; `409` if it is already taken.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+    /// Spec text. Ignored when `from_template` is set (the template supplies it).
+    #[serde(default)]
+    pub spec: String,
+    /// Instantiate from this template id, if set.
+    #[serde(default)]
+    pub from_template: Option<String>,
+    /// Dependency ids within the workflow; wired as graph edges.
+    #[serde(default)]
+    pub deps: Vec<String>,
+    /// Paths/areas this task owns.
+    #[serde(default)]
+    pub owns: Vec<String>,
+    /// Per-task agent tool override.
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// Workflow-only worktree-mode override; omitted inherits the workspace mode.
+    #[serde(default)]
+    pub worktree_mode_override: Option<WorktreeMode>,
+    /// For `reuse` mode: the task id whose worktree to reuse (cross-workflow).
+    #[serde(default)]
+    pub reuse_from: Option<String>,
+}
+
+/// `GET /workflows` list item: a run with its derived state and task counts.
+#[derive(Debug, Serialize)]
+pub struct WorkflowSummary {
+    /// The stored run (workspace, lifecycle, timestamps).
+    #[serde(flatten)]
+    pub run: Run,
+    /// The derived, never-stored state (`draft|ready|running|...`).
+    pub state: &'static str,
+    /// Total tasks linked to this workflow.
+    pub task_count: usize,
+    /// How many of those tasks are `done`.
+    pub done_count: usize,
+}
+
+impl WorkflowSummary {
+    /// Build a summary from a run and its tasks (derives state + counts).
+    #[must_use]
+    pub fn new(run: Run, tasks: &[Task]) -> Self {
+        let state = lazybones_store::derived_state(run.lifecycle, tasks).as_str();
+        let done_count = tasks
+            .iter()
+            .filter(|t| t.status == lazybones_store::Status::Done)
+            .count();
+        Self {
+            run,
+            state,
+            task_count: tasks.len(),
+            done_count,
+        }
+    }
+}
+
+/// `GET /workflows/:id` detail: the summary plus the generated task ids.
+#[derive(Debug, Serialize)]
+pub struct WorkflowDetail {
+    /// The run + derived state + counts.
+    #[serde(flatten)]
+    pub summary: WorkflowSummary,
+    /// The ids of the tasks linked to this workflow.
+    pub task_ids: Vec<String>,
 }
 
 /// `PUT /secrets/:tool` body: the credential to seal for an agent CLI.
