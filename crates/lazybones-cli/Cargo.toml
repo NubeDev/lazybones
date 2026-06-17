@@ -16,6 +16,7 @@ path = "src/main.rs"
 lazybones-store = { workspace = true }
 lazybones-auth = { workspace = true }
 lazybones-api = { workspace = true }
+lazybones-engine = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }

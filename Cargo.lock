@@ -2167,12 +2167,28 @@ dependencies = [
  "axum 0.7.9",
  "lazybones-api",
  "lazybones-auth",
+ "lazybones-engine",
  "lazybones-store",
  "serde",
  "serde_yaml",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "lazybones-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "lazybones-store",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
