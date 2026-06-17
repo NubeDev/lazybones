@@ -26,3 +26,6 @@ tracing = { workspace = true }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# The 3-workflow integration test drives the in-process scheduler (engine
+# harness) over the same store and uses tempdir git repos.
+tempfile = "3"
