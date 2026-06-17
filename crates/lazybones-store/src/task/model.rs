@@ -23,6 +23,32 @@ pub enum WorktreeMode {
     Branch,
 }
 
+impl WorktreeMode {
+    /// The lowercase wire/storage form of this mode.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WorktreeMode::New => "new",
+            WorktreeMode::Reuse => "reuse",
+            WorktreeMode::Branch => "branch",
+        }
+    }
+
+    /// Parse a stored mode string; missing or unknown values fall back to the
+    /// default (`New`), so legacy rows and bad data stay isolated-by-default.
+    ///
+    /// Shared by both the task row and the template row so the string<->enum
+    /// mapping lives in exactly one place.
+    #[must_use]
+    pub fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("reuse") => WorktreeMode::Reuse,
+            Some("branch") => WorktreeMode::Branch,
+            _ => WorktreeMode::New,
+        }
+    }
+}
+
 /// One unit of work in a run. Keyed by a friendly concept `id` (e.g. `auth`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
@@ -59,6 +85,30 @@ pub struct Task {
     pub reason: Option<String>,
     /// RFC3339 timestamp of the agent's last heartbeat, if running.
     pub heartbeat: Option<String>,
+    /// FK to the parent workflow [`Run`](crate::Run); `None` for a standalone
+    /// task. Distinct from `run` (an event-grouping label): `run_id` is the real
+    /// relationship the workflow views key off (SCOPE.md principle 6 — the link
+    /// is the truth, the dotted board label is only derived from it).
+    #[serde(default)]
+    pub run_id: Option<String>,
+    /// Provenance: which [`Template`](crate::Template) this task was
+    /// instantiated from, if any.
+    #[serde(default)]
+    pub template_id: Option<String>,
+    /// For `worktree_mode = reuse`: the id of the task whose stored `worktree`
+    /// this task should reuse (cross-workflow tree sharing).
+    #[serde(default)]
+    pub reuse_from: Option<String>,
+    /// Workflow-only override of the inherited worktree mode. `None` means
+    /// "inherit the workspace mode" (the resolver falls back to the run, then
+    /// the global default). The non-optional `worktree_mode` above is left as
+    /// the standalone-task contract so standalone behaviour is unchanged.
+    // TODO(workflow): two worktree-mode fields coexist — `worktree_mode` (the
+    // pre-workflow standalone field) and `worktree_mode_override` (the
+    // inherit-aware Option the resolver uses when `run_id` is set). A later pass
+    // could collapse them once nothing reads the non-optional one directly.
+    #[serde(default)]
+    pub worktree_mode_override: Option<WorktreeMode>,
 }
 
 impl Task {
@@ -89,6 +139,10 @@ impl Task {
             commit: None,
             reason: None,
             heartbeat: None,
+            run_id: None,
+            template_id: None,
+            reuse_from: None,
+            worktree_mode_override: None,
         }
     }
 }

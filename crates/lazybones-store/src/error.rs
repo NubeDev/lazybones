@@ -42,6 +42,22 @@ pub enum StoreError {
     #[error("task already exists: {0}")]
     TaskExists(String),
 
+    /// A template id was referenced that does not exist in the store.
+    #[error("template not found: {0}")]
+    TemplateNotFound(String),
+
+    /// A template was created with an id that is already taken.
+    #[error("template already exists: {0}")]
+    TemplateExists(String),
+
+    /// A run (workflow) id was referenced that does not exist in the store.
+    #[error("run not found: {0}")]
+    RunNotFound(String),
+
+    /// A run (workflow) was created with an id that is already taken.
+    #[error("run already exists: {0}")]
+    RunExists(String),
+
     /// Sealing or opening a secret failed (bad master key, corrupt blob, …).
     #[error("secret error: {0}")]
     Secret(String),

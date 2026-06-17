@@ -1,0 +1,126 @@
+//! Workflows (stored in the `run` table): the workspace-bound model, its row, the
+//! verbs that create/read/list/cancel/start them, the `list_run_tasks` query, and
+//! the pure `derived_state` function (run state is derived, never stored).
+
+mod cancel;
+mod create;
+mod derived;
+mod get;
+mod list;
+mod model;
+mod row;
+mod start;
+
+pub use cancel::cancel_run;
+pub use create::create_run;
+pub use derived::{RunState, derived_state};
+pub use get::get_run;
+pub use list::{list_run_tasks, list_runs};
+pub use model::{Lifecycle, Run, Workspace};
+pub use start::mark_started;
+
+#[cfg(test)]
+mod tests {
+    use crate::bootstrap::use_namespace;
+    use crate::connect::{StoreEngine, open_engine};
+    use crate::init_schema::init_schema;
+    use crate::task::{Task, WorktreeMode};
+    use crate::task::create::create_task;
+
+    use super::*;
+
+    async fn db() -> surrealdb::Surreal<surrealdb::engine::local::Db> {
+        let db = open_engine(&StoreEngine::Memory).await.unwrap();
+        use_namespace(&db, "lazybones", "test").await.unwrap();
+        init_schema(&db).await.unwrap();
+        db
+    }
+
+    fn sample() -> Run {
+        Run::new(
+            "workflow-1",
+            "WF 1",
+            Workspace {
+                repo: "/repo/abc".into(),
+                base_branch: None,
+                branch_prefix: None,
+                worktree_mode: WorktreeMode::New,
+            },
+            "2026-01-01T00:00:00Z",
+        )
+    }
+
+    #[tokio::test]
+    async fn create_get_list_roundtrip() {
+        let db = db().await;
+        let created = create_run(&db, &sample()).await.unwrap();
+        assert_eq!(created.id, "workflow-1");
+        assert_eq!(created.lifecycle, Lifecycle::Active);
+
+        let got = get_run(&db, "workflow-1").await.unwrap().unwrap();
+        assert_eq!(got, created);
+
+        assert_eq!(list_runs(&db).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_duplicate_is_error() {
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+        let err = create_run(&db, &sample()).await.unwrap_err();
+        assert!(matches!(err, crate::StoreError::RunExists(_)));
+    }
+
+    #[tokio::test]
+    async fn workspace_overrides_roundtrip() {
+        let db = db().await;
+        let mut run = sample();
+        run.workspace.base_branch = Some("dev".into());
+        run.workspace.branch_prefix = Some("wf/".into());
+        run.workspace.worktree_mode = WorktreeMode::Reuse;
+        create_run(&db, &run).await.unwrap();
+        let got = get_run(&db, "workflow-1").await.unwrap().unwrap();
+        assert_eq!(got.workspace.base_branch.as_deref(), Some("dev"));
+        assert_eq!(got.workspace.branch_prefix.as_deref(), Some("wf/"));
+        assert_eq!(got.workspace.worktree_mode, WorktreeMode::Reuse);
+    }
+
+    #[tokio::test]
+    async fn cancel_sets_lifecycle() {
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+        let cancelled = cancel_run(&db, "workflow-1").await.unwrap();
+        assert_eq!(cancelled.lifecycle, Lifecycle::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn start_stamps_once() {
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+        let r1 = mark_started(&db, "workflow-1", "2026-02-02T00:00:00Z").await.unwrap();
+        assert_eq!(r1.started_at.as_deref(), Some("2026-02-02T00:00:00Z"));
+        // Idempotent: a second start keeps the first stamp.
+        let r2 = mark_started(&db, "workflow-1", "2026-03-03T00:00:00Z").await.unwrap();
+        assert_eq!(r2.started_at.as_deref(), Some("2026-02-02T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn list_run_tasks_keys_off_run_id() {
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+        // Two tasks linked to workflow-1, one standalone.
+        let mut a = Task::seed("a", "r", "A", "s", vec![], vec![], None);
+        a.run_id = Some("workflow-1".into());
+        let mut b = Task::seed("b", "r", "B", "s", vec![], vec![], None);
+        b.run_id = Some("workflow-1".into());
+        let standalone = Task::seed("c", "r", "C", "s", vec![], vec![], None);
+        create_task(&db, &a).await.unwrap();
+        create_task(&db, &b).await.unwrap();
+        create_task(&db, &standalone).await.unwrap();
+
+        let mut tasks = list_run_tasks(&db, "workflow-1").await.unwrap();
+        tasks.sort_by(|x, y| x.id.cmp(&y.id));
+        let ids: Vec<_> = tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b"]);
+    }
+}

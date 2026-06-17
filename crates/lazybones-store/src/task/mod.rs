@@ -1,14 +1,14 @@
 //! Task documents: the lifecycle model, its persisted row, and the verbs that
 //! read, list, upsert, relate, and transition them.
 
-mod create;
+pub(crate) mod create;
 mod delete;
 mod depend;
 mod get;
 mod heartbeat;
 mod list;
 mod model;
-mod row;
+pub(crate) mod row;
 mod status;
 mod transition;
 mod update;

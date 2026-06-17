@@ -33,6 +33,15 @@ pub(crate) struct TaskRow {
     pub(crate) commit: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) heartbeat: Option<String>,
+    /// FK to the parent workflow run; `Option` so legacy rows read back as `None`.
+    pub(crate) run_id: Option<String>,
+    /// Provenance template id; `Option` for forward/backward compatibility.
+    pub(crate) template_id: Option<String>,
+    /// Reuse-tree source task id; `Option` for forward/backward compatibility.
+    pub(crate) reuse_from: Option<String>,
+    /// Workflow-only worktree-mode override, stored as its lowercase string form.
+    /// `Option` so legacy rows (and standalone tasks) read back as `None`.
+    pub(crate) worktree_mode_override: Option<String>,
 }
 
 impl TaskRow {
@@ -47,13 +56,17 @@ impl TaskRow {
             deps: task.deps.clone(),
             owns: task.owns.clone(),
             tool: task.tool.clone(),
-            worktree_mode: Some(worktree_mode_str(task.worktree_mode).to_owned()),
+            worktree_mode: Some(task.worktree_mode.as_str().to_owned()),
             session: task.session.clone(),
             worktree: task.worktree.clone(),
             branch: task.branch.clone(),
             commit: task.commit.clone(),
             reason: task.reason.clone(),
             heartbeat: task.heartbeat.clone(),
+            run_id: task.run_id.clone(),
+            template_id: task.template_id.clone(),
+            reuse_from: task.reuse_from.clone(),
+            worktree_mode_override: task.worktree_mode_override.map(|m| m.as_str().to_owned()),
         }
     }
 
@@ -68,13 +81,21 @@ impl TaskRow {
             deps: self.deps,
             owns: self.owns,
             tool: self.tool,
-            worktree_mode: parse_worktree_mode(self.worktree_mode.as_deref()),
+            worktree_mode: WorktreeMode::parse(self.worktree_mode.as_deref()),
             session: self.session,
             worktree: self.worktree,
             branch: self.branch,
             commit: self.commit,
             reason: self.reason,
             heartbeat: self.heartbeat,
+            run_id: self.run_id,
+            template_id: self.template_id,
+            reuse_from: self.reuse_from,
+            // `None` stays `None` (inherit); only a stored value parses to Some.
+            worktree_mode_override: self
+                .worktree_mode_override
+                .as_deref()
+                .map(|s| WorktreeMode::parse(Some(s))),
         }
     }
 }
@@ -84,25 +105,6 @@ fn task_key(id: &RecordId) -> String {
     match &id.key {
         RecordIdKey::String(s) => s.clone(),
         other => other.to_sql(),
-    }
-}
-
-/// The lowercase wire/storage form of a [`WorktreeMode`].
-fn worktree_mode_str(mode: WorktreeMode) -> &'static str {
-    match mode {
-        WorktreeMode::New => "new",
-        WorktreeMode::Reuse => "reuse",
-        WorktreeMode::Branch => "branch",
-    }
-}
-
-/// Parse a stored worktree-mode string; missing or unknown values fall back to
-/// the default (`New`), so legacy rows and bad data stay isolated-by-default.
-fn parse_worktree_mode(s: Option<&str>) -> WorktreeMode {
-    match s {
-        Some("reuse") => WorktreeMode::Reuse,
-        Some("branch") => WorktreeMode::Branch,
-        _ => WorktreeMode::New,
     }
 }
 

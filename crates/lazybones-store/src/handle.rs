@@ -15,8 +15,14 @@ use crate::connect::{StoreEngine, open_engine};
 use crate::error::Result;
 use crate::event::{Activity, Event, EventBus, LiveEvent, run_history};
 use crate::init_schema::init_schema;
+use crate::run::{
+    Run, cancel_run, create_run, get_run, list_run_tasks, list_runs, mark_started,
+};
 use crate::secret::{
     Cipher, SecretEnv, SecretMeta, delete_secret, list_secrets, put_secret, secret_env,
+};
+use crate::template::{
+    Template, create_template, delete_template, get_template, list_templates,
 };
 use crate::task::{
     Status, Task, TaskEdit, Transition, create_task, delete_task, get_task, list_tasks,
@@ -195,6 +201,98 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the query fails.
     pub async fn run_history(&self, run: &str) -> Result<Vec<Event>> {
         run_history(&self.db, run).await
+    }
+
+    /// The current time as an RFC3339 string — the one timestamp source callers
+    /// (the API) use to stamp `created_at`/`started_at` so they need not depend
+    /// on SurrealDB directly.
+    #[must_use]
+    pub fn now(&self) -> String {
+        surrealdb::types::Datetime::now().to_string()
+    }
+
+    /// Create a task template, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_template(&self, template: &Template) -> Result<Template> {
+        create_template(&self.db, template).await
+    }
+
+    /// Read a single template by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_template(&self, id: &str) -> Result<Option<Template>> {
+        get_template(&self.db, id).await
+    }
+
+    /// List every task template.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_templates(&self) -> Result<Vec<Template>> {
+        list_templates(&self.db).await
+    }
+
+    /// Delete a template by id. Returns whether one existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_template(&self, id: &str) -> Result<bool> {
+        delete_template(&self.db, id).await
+    }
+
+    /// Create a workflow (run), failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_run(&self, run: &Run) -> Result<Run> {
+        create_run(&self.db, run).await
+    }
+
+    /// Read a single workflow (run) by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_run(&self, id: &str) -> Result<Option<Run>> {
+        get_run(&self.db, id).await
+    }
+
+    /// List every workflow (run).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_runs(&self) -> Result<Vec<Run>> {
+        list_runs(&self.db).await
+    }
+
+    /// List the tasks linked to workflow `run_id` (via the `run_id` FK).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_run_tasks(&self, run_id: &str) -> Result<Vec<Task>> {
+        list_run_tasks(&self.db, run_id).await
+    }
+
+    /// Stamp a workflow's `started_at` (idempotent). Returns the run.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
+    /// write fails.
+    pub async fn mark_run_started(&self, id: &str, now: &str) -> Result<Run> {
+        mark_started(&self.db, id, now).await
+    }
+
+    /// Set a workflow's lifecycle to `cancelled`. Returns the updated run.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
+    /// write fails.
+    pub async fn cancel_run(&self, id: &str) -> Result<Run> {
+        cancel_run(&self.db, id).await
     }
 
     /// Seal and store an agent CLI credential for `tool` under `env_var`.
