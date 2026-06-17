@@ -3,6 +3,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme/theme-provider";
 import { QueryProvider } from "./query-provider";
 import { useRouter, ViewRenderer } from "./router";
+import { useLiveStream } from "@/lib/hooks/use-live-stream";
 
 /** The root shell: providers + the sidebar/content split. */
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
 
 function Shell() {
   const { view, navigate } = useRouter();
+  useLiveStream();
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       <Sidebar view={view} onNavigate={navigate} />
