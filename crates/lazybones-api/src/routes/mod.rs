@@ -8,6 +8,7 @@ mod activity;
 mod agent_test;
 mod agents;
 mod block;
+mod cancel;
 mod claim;
 mod create;
 mod delete;
@@ -55,6 +56,8 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks/:id/gate", post(gate::gate_task))
         .route("/tasks/:id/done", post(done::done_task))
         .route("/tasks/:id/block", post(block::block_task))
+        // Operator cancel: kill the live agent (hcom) then block the task.
+        .route("/tasks/:id/cancel", post(cancel::cancel_task))
         .route("/runs/:id", get(runs::run_history))
         // Live push feed of status transitions (SSE) — for the dashboard + loop.
         .route("/stream", get(stream::stream))

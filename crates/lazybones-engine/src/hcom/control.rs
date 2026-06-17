@@ -52,11 +52,10 @@ impl Hcom {
     /// Cancel every agent tagged with `tag` (`hcom kill tag:<tag> --go`).
     ///
     /// Wired by the `POST /tasks/:id/cancel` control surface (docs/scheduler.md
-    /// "Cancellation"); kept here as the typed handle that route will call.
+    /// "Cancellation") via [`crate::cancel_agent`].
     ///
     /// # Errors
     /// Returns an error if hcom cannot be launched or exits non-zero.
-    #[allow(dead_code)] // TODO(scheduler): used once the cancel route lands.
     pub async fn kill_tag(&self, tag: &str) -> anyhow::Result<()> {
         let out = self
             .command()

@@ -2141,6 +2141,7 @@ dependencies = [
  "axum 0.7.9",
  "http-body-util",
  "lazybones-auth",
+ "lazybones-engine",
  "lazybones-store",
  "serde",
  "serde_json",
@@ -2149,6 +2150,7 @@ dependencies = [
  "tokio-stream",
  "tower",
  "tower-http",
+ "tracing",
 ]
 
 [[package]]

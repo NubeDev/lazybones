@@ -53,6 +53,14 @@ pub struct BlockBody {
     pub reason: String,
 }
 
+/// `POST /tasks/:id/cancel` body: an optional reason (defaults when omitted).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct CancelBody {
+    /// Why the task was cancelled; a blank/absent value records a default.
+    pub reason: Option<String>,
+}
+
 /// `POST /tasks` body: a new task to author (status starts `Pending`).
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskBody {

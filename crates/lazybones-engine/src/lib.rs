@@ -12,6 +12,18 @@ mod scheduler;
 pub use config::{EngineConfig, MergeMode};
 pub use scheduler::run;
 
+use hcom::Hcom;
+
+/// Cancel every hcom agent tagged with `tag` (a task id) — the control-surface
+/// primitive behind `POST /tasks/:id/cancel`. Pairs with a `Block` transition
+/// in the store; this half just stops the live agent.
+///
+/// # Errors
+/// Returns an error if hcom cannot be launched or the kill exits non-zero.
+pub async fn cancel_agent(tag: &str) -> anyhow::Result<()> {
+    Hcom::discover().kill_tag(tag).await
+}
+
 #[doc(hidden)]
 pub use harness::{Engine, run_once};
 

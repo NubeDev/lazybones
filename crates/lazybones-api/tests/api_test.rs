@@ -304,6 +304,62 @@ async fn illegal_transition_is_conflict() {
 }
 
 #[tokio::test]
+async fn cancel_blocks_a_running_task() {
+    let app = app().await;
+    // Promote + claim `store` so it is `running`.
+    send(&app, loop_post("/tasks/promote", json!(null))).await;
+    let (status, _) = send(
+        &app,
+        loop_post(
+            "/tasks/store/claim",
+            json!({
+                "session": "sess-1",
+                "worktree": "/wt/store",
+                "branch": "lazy/store",
+                "token": "agent-tok"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Cancel: the hcom kill is best-effort (no real agent here), so the task
+    // still lands in `blocked` with the supplied reason.
+    let (status, task) = send(
+        &app,
+        loop_post("/tasks/store/cancel", json!({ "reason": "operator stop" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "blocked");
+    assert_eq!(task["reason"], "operator stop");
+}
+
+#[tokio::test]
+async fn cancel_defaults_reason_when_omitted() {
+    let app = app().await;
+    send(&app, loop_post("/tasks/promote", json!(null))).await;
+    send(
+        &app,
+        loop_post(
+            "/tasks/store/claim",
+            json!({
+                "session": "s",
+                "worktree": "/wt",
+                "branch": "b",
+                "token": "agent-tok"
+            }),
+        ),
+    )
+    .await;
+
+    let (status, task) = send(&app, loop_post("/tasks/store/cancel", json!({}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "blocked");
+    assert_eq!(task["reason"], "cancelled by operator");
+}
+
+#[tokio::test]
 async fn agent_cannot_act_on_another_task() {
     let app = app().await;
     // Promote + claim `store`, minting an agent token bound to `store`.
