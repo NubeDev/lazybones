@@ -15,8 +15,12 @@ axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tower-http = { workspace = true }
+# SSE `/stream`: adapt the store's broadcast receiver into an axum event stream.
+tokio-stream = { workspace = true }
+# `spawn_blocking` for the live agent-test probe (a blocking subprocess wait).
+tokio = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

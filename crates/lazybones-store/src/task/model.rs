@@ -5,6 +5,24 @@ use serde::{Deserialize, Serialize};
 
 use super::status::Status;
 
+/// How the run loop should provision the working tree when it claims a task.
+///
+/// This is the operator's *intent*, set at authoring or start time; the loop
+/// reads it when claiming. `New` preserves the historical default (an isolated
+/// `git worktree add`); the others let a task reuse an existing tree or run on a
+/// chosen branch in the main checkout — no per-task worktree at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorktreeMode {
+    /// Provision a fresh, isolated worktree on a new branch (the default).
+    #[default]
+    New,
+    /// Reuse an existing worktree at the task's `worktree` path.
+    Reuse,
+    /// Run in the main checkout on the task's `branch`; create no worktree.
+    Branch,
+}
+
 /// One unit of work in a run. Keyed by a friendly concept `id` (e.g. `auth`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
@@ -24,6 +42,11 @@ pub struct Task {
     pub owns: Vec<String>,
     /// Per-task agent tool override; `None` falls back to the run config.
     pub tool: Option<String>,
+    /// How the loop should provision the working tree on claim. Defaults to
+    /// `New` (isolated worktree); `#[serde(default)]` keeps tasks stored before
+    /// this field readable.
+    #[serde(default)]
+    pub worktree_mode: WorktreeMode,
     /// The hcom session that claimed this task, if running.
     pub session: Option<String>,
     /// The git worktree path the agent works in, if claimed.
@@ -59,6 +82,7 @@ impl Task {
             deps,
             owns,
             tool,
+            worktree_mode: WorktreeMode::default(),
             session: None,
             worktree: None,
             branch: None,

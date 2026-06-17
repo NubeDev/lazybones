@@ -14,10 +14,18 @@ use super::row::TASK_TABLE;
 
 /// Relate `task ->depends_on-> dep` (idempotent: re-relating is a no-op).
 ///
-/// The edge endpoints are bound as `RecordId` params — SurrealQL's `RELATE` wants
-/// record-id expressions in the node positions, which `type::thing(..)` is not
-/// accepted as inline. A deterministic edge id (`[task, dep]`) makes the relate
-/// idempotent: re-syncing the same dependency overwrites the same edge.
+/// The edge must be a real graph RELATION (the readiness query traverses
+/// `->depends_on->`), so it has to be written with `RELATE`, not `UPSERT` —
+/// an `UPSERT`ed row on the relation table is stored as a plain record and the
+/// graph traversal rejects it ("not a relation, but expected a RELATION").
+///
+/// But `RELATE` always *creates*, so re-syncing the same dependency would fail
+/// with "record already exists" on the deterministic edge id. We guard it with
+/// `IF NOT EXISTS` so the first sync relates and every re-sync is a clean no-op.
+///
+/// The endpoints are bound as `RecordId` params — SurrealQL wants record-id
+/// expressions in the node positions, which `type::thing(..)` is not accepted as
+/// inline.
 ///
 /// # Errors
 /// Returns [`StoreError::Operation`] if the write fails.
@@ -25,9 +33,31 @@ pub async fn relate_dep(db: &Surreal<Db>, task: &str, dep: &str) -> Result<()> {
     let from = RecordId::new(TASK_TABLE, task);
     let to = RecordId::new(TASK_TABLE, dep);
     let edge = RecordId::new("depends_on", format!("{task}__{dep}"));
-    db.query("RELATE $from->depends_on->$to SET id = $edge")
-        .bind(("from", from))
-        .bind(("to", to))
+    db.query(
+        "IF !(SELECT id FROM ONLY $edge) { RELATE $from->depends_on->$to SET id = $edge }",
+    )
+    .bind(("edge", edge))
+    .bind(("from", from))
+    .bind(("to", to))
+    .await
+    .map_err(StoreError::Operation)?
+    .check()
+    .map_err(StoreError::Operation)?;
+    Ok(())
+}
+
+/// Drop the `task ->depends_on-> dep` edge (idempotent: a missing edge is fine).
+///
+/// The complement of [`relate_dep`] for the authoring path: when an edit removes
+/// a dependency, the handle deletes just that one deterministic edge so the
+/// readiness traversal stops counting it. Deleting an absent record is a no-op,
+/// so calling this for a dep that was never related is safe.
+///
+/// # Errors
+/// Returns [`StoreError::Operation`] if the delete fails.
+pub async fn unrelate_dep(db: &Surreal<Db>, task: &str, dep: &str) -> Result<()> {
+    let edge = RecordId::new("depends_on", format!("{task}__{dep}"));
+    db.query("DELETE $edge")
         .bind(("edge", edge))
         .await
         .map_err(StoreError::Operation)?

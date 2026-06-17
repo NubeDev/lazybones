@@ -7,6 +7,11 @@ export type Status =
   | "done"
   | "blocked";
 
+/** Mirror of `lazybones_store::WorktreeMode` — how the loop provisions the
+ *  working tree when it claims this task. `new` = isolated worktree (default);
+ *  `reuse` = an existing worktree path; `branch` = the main checkout on a branch. */
+export type WorktreeMode = "new" | "reuse" | "branch";
+
 export const STATUSES: Status[] = [
   "pending",
   "ready",
@@ -26,6 +31,7 @@ export interface Task {
   deps: string[];
   owns: string[];
   tool: string | null;
+  worktree_mode: WorktreeMode;
   session: string | null;
   worktree: string | null;
   branch: string | null;

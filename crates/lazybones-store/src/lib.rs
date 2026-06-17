@@ -11,12 +11,14 @@ mod error;
 mod event;
 mod handle;
 mod init_schema;
+mod secret;
 mod task;
 mod workfile;
 
 pub use connect::StoreEngine;
 pub use error::{Result, StoreError};
-pub use event::Event;
+pub use event::{Activity, Event, EventBus, LiveEvent};
 pub use handle::StoreHandle;
-pub use task::{Status, Task, Transition};
+pub use secret::{SecretEnv, SecretMeta};
+pub use task::{Status, Task, TaskEdit, Transition, WorktreeMode};
 pub use workfile::{SeedTask, sync_seeds};

@@ -5,22 +5,48 @@ import { cn } from "@/lib/utils/cn";
 import { relativeTime } from "@/lib/utils/platform";
 import type { Task } from "@/types/task";
 
-/** A compact, clickable task tile for the board columns. */
+/** A compact, clickable task tile for the board columns. Draggable when the task
+ *  has a legal operator move (promote / block); the board enforces where it can
+ *  actually land. */
 export function TaskCard({
   task,
   selected,
+  draggable,
+  dragging,
+  blockedReason,
   onSelect,
+  onDragStart,
+  onDragEnd,
 }: {
   task: Task;
   selected?: boolean;
+  draggable?: boolean;
+  dragging?: boolean;
+  /** Why this card can't be promoted to Ready yet (deps unmet), or null. */
+  blockedReason?: string | null;
   onSelect: (id: string) => void;
+  onDragStart?: (id: string) => void;
+  onDragEnd?: () => void;
 }) {
   return (
     <Card
+      draggable={draggable}
+      title={blockedReason ?? undefined}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", task.id);
+        onDragStart?.(task.id);
+      }}
+      onDragEnd={() => onDragEnd?.()}
       onClick={() => onSelect(task.id)}
       className={cn(
         "cursor-pointer p-3 transition-all hover:border-border-strong hover:bg-surface-2",
-        "animate-fade-up",
+        // `animate-fade-up` ends with `animation-fill-mode: both`, which pins
+        // opacity:1 and would override a dimming class — so skip the entrance
+        // animation on blocked cards and let `opacity-50` take effect instead.
+        blockedReason ? "opacity-50" : "animate-fade-up",
+        draggable && "cursor-grab active:cursor-grabbing",
+        dragging && "opacity-40",
         selected && "border-accent/50 ring-1 ring-accent/30",
       )}
     >

@@ -68,17 +68,11 @@ LOOP_SCRIPT    := scripts/lazybones.sh
 
 # --- agent CLIs + secrets: the tools the loop spawns to do the work ---
 # lazybones is the queue + gate; the actual coding is done by an agent CLI per task
-# (config `agent_tool`: claude | codex | gemini | opencode ...). Those CLIs are
-# installed separately and read their credentials from the environment. $(ENV_FILE)
-# (gitignored, scaffolded from $(ENV_EXAMPLE)) holds those keys; the loop + agents
-# inherit it. Each tool maps to the CLI binary + the env var that authenticates it.
+# (config `agent_tool`: claude | codex | gemini | opencode ...). Those CLIs read
+# their credentials from the environment. $(ENV_FILE) (gitignored, scaffolded from
+# $(ENV_EXAMPLE)) holds those keys; the daemon loads it so the agents inherit them.
 ENV_FILE    ?= .env
 ENV_EXAMPLE ?= .env.example
-# "tool:binary:keyvar" — the CLI to look for and the env var that authenticates it.
-AGENT_TOOLS ?= claude:claude:ANTHROPIC_API_KEY \
-               codex:codex:OPENAI_API_KEY \
-               gemini:gemini:GEMINI_API_KEY \
-               opencode:opencode:OPENCODE_API_KEY
 
 # --- ui: the dashboard (React + Tailwind + Tauri; browser or desktop) ---
 # A self-contained npm project under $(UI_DIR) with its own Tauri shell. It is NOT
@@ -88,7 +82,7 @@ UI_DIR ?= ui
 NPM    ?= npm
 
 .PHONY: build import serve dev dev-backend demo test lint fmt clean wipe kill \
-        install-hcom hcom-status doctor secrets-init agents-check agents-setup \
+        install-hcom secrets-init \
         ui ui-install ui-dev ui-desktop ui-build ui-bundle ui-clean
 
 build:
@@ -239,6 +233,19 @@ install-hcom:
 	else \
 		echo "loop script $(LOOP_SCRIPT) not present yet (tracked follow-up — see README 'Not yet built')."; \
 		echo "hcom is ready; nothing to install. The lazybonesd queue+gate works standalone via 'make dev'."; \
+	fi
+
+# Scaffold the gitignored $(ENV_FILE) from $(ENV_EXAMPLE) so you can fill in the
+# agent CLI keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...). The daemon loads this
+# file at boot; GET /agents then reports which keys are present. Never overwrites
+# an existing $(ENV_FILE).
+secrets-init:
+	@if [ -f "$(ENV_FILE)" ]; then \
+		echo "$(ENV_FILE) already exists — leaving it untouched."; \
+	else \
+		cp "$(ENV_EXAMPLE)" "$(ENV_FILE)"; \
+		echo "created $(ENV_FILE) from $(ENV_EXAMPLE) — fill in the keys for the tools you use."; \
+		echo "(gitignored; GET /agents reports which keys are set)"; \
 	fi
 
 # --- the dashboard UI (ui/) ----------------------------------------------------

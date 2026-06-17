@@ -1,0 +1,301 @@
+//! Probe the host for the orchestration engine (hcom) and the agent CLIs.
+//!
+//! lazybones is the queue + gate; the *engine* (hcom) and the per-task *agent
+//! CLIs* (claude, codex, …) are external binaries installed separately. The UI
+//! needs to show whether they're present so a user can set the run up — these
+//! helpers resolve each binary and run a cheap `--version` probe, never failing
+//! the request (a missing tool is data, not an error).
+//!
+//! Resolution does NOT rely on `$PATH` alone. A daemon launched from a desktop
+//! shell, a `.app` bundle, or `make dev` often runs with a minimal `PATH` that
+//! omits user-local install dirs (`~/.local/bin`, `~/.cargo/bin`, Homebrew) —
+//! the exact place `hcom` and these CLIs land. We search those dirs explicitly
+//! so "installed" reflects the host, not the daemon's inherited environment.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::Command;
+
+/// Resolve `bin` to an absolute path: first via `$PATH`, then via the common
+/// user-local install directories a GUI-launched daemon usually can't see.
+pub(crate) fn resolve(bin: &str) -> Option<PathBuf> {
+    // 1. Honour an explicit PATH entry if the daemon has one.
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(bin);
+            if is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    // 2. Fall back to the dirs CLIs install into regardless of PATH.
+    for dir in extra_bin_dirs() {
+        let candidate = dir.join(bin);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Whether `bin` is installed anywhere we look.
+pub(crate) fn on_path(bin: &str) -> bool {
+    resolve(bin).is_some()
+}
+
+/// The first line of `<bin> --version`, trimmed, if the binary runs. Invokes the
+/// resolved absolute path so a stripped `$PATH` doesn't hide an installed tool.
+pub(crate) fn version_of(bin: &str) -> Option<String> {
+    let exe = resolve(bin)?;
+    let out = Command::new(&exe).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.lines()
+        .next()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// Whether an env var is set and non-empty in the daemon's environment.
+pub(crate) fn env_set(var: &str) -> bool {
+    std::env::var(var).map(|v| !v.is_empty()).unwrap_or(false)
+}
+
+/// Outcome of a live credential probe: did the agent CLI launch + respond?
+pub(crate) struct ProbeOutcome {
+    /// Whether the probe authenticated and the agent answered.
+    pub ok: bool,
+    /// A short human-readable explanation (success summary or failure reason).
+    pub detail: String,
+}
+
+/// Actually run the agent through hcom to prove its credential works.
+///
+/// hcom launches agents asynchronously and tracks each as a "batch"; the real
+/// signal of a working credential is whether the launched agent *reaches a live
+/// state* (the CLI started, authenticated, and is running) versus dying with a
+/// launch/auth failure. So the probe:
+///   1. `hcom <tool> --headless --hcom-prompt "<probe>" --go` — launch one agent,
+///      with `key_env` exported so it authenticates with the credential to test.
+///   2. `hcom events launch <batch> --timeout N` — block until the batch reaches
+///      a terminal state; this returns a JSON `LaunchResult` (`ready`/`blocked`/
+///      `failed` counts) and an exit code (0 ready, 1 error, 2 timeout/blocked).
+///   3. Always `hcom kill <batch>` to tear the probe agent down.
+///
+/// A reached/ready/blocked agent means the CLI authenticated (a bad key dies as
+/// `failed` with an auth error long before it can block on work). `key_env` is
+/// `(env_var, value)`, exported only to these children, never logged.
+pub(crate) fn probe_agent(
+    tool: &str,
+    key_env: Option<(&str, &str)>,
+    timeout_secs: u64,
+) -> ProbeOutcome {
+    let Some(hcom) = resolve("hcom") else {
+        return ProbeOutcome {
+            ok: false,
+            detail: "hcom (the engine that launches agents) is not installed".to_owned(),
+        };
+    };
+
+    // 1. Launch a single headless agent and capture its batch id.
+    let mut launch = Command::new(&hcom);
+    launch.args([
+        tool,
+        "--headless",
+        "--hcom-prompt",
+        "Reply with exactly: ok",
+        "--go",
+    ]);
+    if let Some((var, value)) = key_env {
+        launch.env(var, value);
+    }
+    let launch_out = match launch.output() {
+        Ok(o) => o,
+        Err(e) => {
+            return ProbeOutcome {
+                ok: false,
+                detail: format!("could not launch hcom: {e}"),
+            };
+        }
+    };
+    let launch_text = {
+        let mut s = String::from_utf8_lossy(&launch_out.stdout).into_owned();
+        s.push_str(&String::from_utf8_lossy(&launch_out.stderr));
+        s
+    };
+    // An immediate error (e.g. binary not on PATH) shows up here, before a batch.
+    if launch_text.contains("not installed") || launch_text.contains("not in PATH") {
+        let reason = launch_text
+            .lines()
+            .find(|l| l.contains("not installed") || l.contains("not in PATH"))
+            .unwrap_or("agent CLI not runnable");
+        return ProbeOutcome {
+            ok: false,
+            detail: reason.trim().to_owned(),
+        };
+    }
+    let Some(batch) = parse_batch_id(&launch_text) else {
+        return ProbeOutcome {
+            ok: false,
+            detail: "hcom did not start a launch batch (see daemon logs)".to_owned(),
+        };
+    };
+
+    // 2. Block until the batch settles, then 3. tear it down regardless.
+    let outcome = wait_for_batch(&hcom, &batch, timeout_secs);
+    let _ = Command::new(&hcom).args(["kill", &batch]).output();
+    outcome
+}
+
+/// Pull the `Batch id: <id>` hcom prints on launch out of its output.
+fn parse_batch_id(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("Batch id:"))
+        .map(|id| id.trim().to_owned())
+}
+
+/// Block on `hcom events launch <batch>` and read its JSON `LaunchResult` into a
+/// probe outcome. Counts decide it: any `ready`/`blocked` agent authenticated and
+/// ran (success); `failed` (or no agent reaching a live state) is the credential
+/// failing. The exit code is a fallback when the JSON can't be parsed.
+fn wait_for_batch(hcom: &std::path::Path, batch: &str, timeout_secs: u64) -> ProbeOutcome {
+    let out = Command::new(hcom)
+        .args(["events", "launch", batch, "--timeout", &timeout_secs.to_string()])
+        .output();
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return ProbeOutcome {
+                ok: false,
+                detail: format!("error waiting on agent: {e}"),
+            };
+        }
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let exit_ok = out.status.success();
+
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.trim()) {
+        let count = |k: &str| json.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let ready = count("ready");
+        let blocked = count("blocked");
+        let failed = count("failed");
+        // The agent reaching ready/blocked proves the CLI authenticated and ran;
+        // a credential failure surfaces as `failed` with an auth error.
+        if ready > 0 || blocked > 0 {
+            return ProbeOutcome {
+                ok: true,
+                detail: "authenticated; agent launched and is running".to_owned(),
+            };
+        }
+        if failed > 0 {
+            let why = json
+                .get("hint")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("agent failed to launch (check the credential)");
+            return ProbeOutcome {
+                ok: false,
+                detail: first_line(why),
+            };
+        }
+    }
+
+    // No parseable JSON / no decisive counts: fall back to the exit code.
+    if exit_ok {
+        ProbeOutcome {
+            ok: true,
+            detail: "authenticated; agent launched".to_owned(),
+        }
+    } else {
+        ProbeOutcome {
+            ok: false,
+            detail: first_line(text.trim()),
+        }
+    }
+}
+
+/// First non-empty line of `s`, for a compact failure detail.
+fn first_line(s: &str) -> String {
+    s.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("agent failed to run")
+        .to_owned()
+}
+
+/// Per-tool install state as hcom sees it, keyed by hcom tool id (`claude`,
+/// `copilot`, …). hcom is the engine that actually launches agents, so it's the
+/// authority on whether a tool is runnable — it resolves editor-bundled CLIs
+/// (the VS Code Copilot shim) and snap-managed installs that a naive PATH probe
+/// misses. We shell out to `hcom status --json` and read its `tools` map.
+///
+/// Fail-soft: any failure (hcom absent, non-zero exit, unparseable output)
+/// yields an empty map, which the report treats as "nothing detected" rather
+/// than erroring the request. The caller falls back accordingly.
+pub(crate) fn hcom_tools() -> HashMap<String, bool> {
+    let Some(exe) = resolve("hcom") else {
+        return HashMap::new();
+    };
+    let Ok(out) = Command::new(&exe).args(["status", "--json"]).output() else {
+        return HashMap::new();
+    };
+    if !out.status.success() {
+        return HashMap::new();
+    }
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+        return HashMap::new();
+    };
+    let Some(tools) = json.get("tools").and_then(serde_json::Value::as_object) else {
+        return HashMap::new();
+    };
+    tools
+        .iter()
+        .map(|(tool, info)| {
+            let installed = info
+                .get("installed")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            (tool.clone(), installed)
+        })
+        .collect()
+}
+
+/// Common user-local + system bin dirs CLIs land in, independent of `$PATH`.
+fn extra_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".local/bin")); // pipx / pip --user / many installers
+        dirs.push(home.join(".cargo/bin")); // cargo install
+        dirs.push(home.join(".bun/bin")); // bun
+        dirs.push(home.join(".deno/bin")); // deno
+        dirs.push(home.join(".npm-global/bin")); // npm -g (custom prefix)
+        dirs.push(home.join("bin")); // ~/bin
+    }
+    dirs.push(PathBuf::from("/usr/local/bin")); // Homebrew (Intel) / make install
+    dirs.push(PathBuf::from("/opt/homebrew/bin")); // Homebrew (Apple Silicon)
+    dirs.push(PathBuf::from("/usr/bin"));
+    dirs
+}
+
+/// Whether `path` is a regular file with an executable bit (or just exists on
+/// platforms without unix permissions).
+fn is_executable(path: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}

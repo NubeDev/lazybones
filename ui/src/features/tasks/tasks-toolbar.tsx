@@ -2,8 +2,10 @@ import { ArrowUpFromLine, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils/cn";
+import { TaskDialog } from "./authoring/task-dialog";
+import type { Task } from "@/types/task";
 
-/** The board toolbar: search, promote, refresh. */
+/** The board toolbar: search, new task, promote, refresh. */
 export function TasksToolbar({
   query,
   onQuery,
@@ -11,6 +13,7 @@ export function TasksToolbar({
   onRefresh,
   promoting,
   refreshing,
+  tasks,
 }: {
   query: string;
   onQuery: (q: string) => void;
@@ -18,6 +21,7 @@ export function TasksToolbar({
   onRefresh: () => void;
   promoting: boolean;
   refreshing: boolean;
+  tasks: Task[];
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -34,10 +38,11 @@ export function TasksToolbar({
         <RefreshCw className={cn(refreshing && "animate-spin")} />
         Refresh
       </Button>
-      <Button size="sm" onClick={onPromote} disabled={promoting}>
+      <Button variant="secondary" size="sm" onClick={onPromote} disabled={promoting}>
         <ArrowUpFromLine className={cn(promoting && "animate-pulse")} />
         Promote ready
       </Button>
+      <TaskDialog allTasks={tasks} />
     </div>
   );
 }

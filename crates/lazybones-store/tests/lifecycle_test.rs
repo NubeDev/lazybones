@@ -3,7 +3,7 @@
 use lazybones_store::{SeedTask, StoreEngine, StoreError, StoreHandle, Transition, sync_seeds};
 
 async fn store() -> StoreHandle {
-    StoreHandle::open(&StoreEngine::Memory, "lazybones", "test")
+    StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "test-secret-key")
         .await
         .expect("open in-memory store")
 }
@@ -126,6 +126,31 @@ async fn dependent_task_is_not_ready_until_dep_done() {
 
     // Now `api` becomes ready.
     assert_eq!(store.newly_ready().await.unwrap(), vec!["api".to_owned()]);
+}
+
+#[tokio::test]
+async fn transitions_are_published_on_the_live_bus() {
+    let store = store().await;
+    sync_seeds(&store, "run", &[seed("store", vec![])])
+        .await
+        .unwrap();
+
+    // Subscribe BEFORE the transition — the bus replays nothing, only live events.
+    let mut feed = store.subscribe();
+
+    store
+        .transition("store", Transition::Ready, "loop")
+        .await
+        .unwrap();
+
+    let live = feed.recv().await.expect("a published transition");
+    let lazybones_store::LiveEvent::Transition(event) = live else {
+        panic!("expected a transition, got {live:?}");
+    };
+    assert_eq!(event.task, "store");
+    assert_eq!(event.from, "pending");
+    assert_eq!(event.to, "ready");
+    assert_eq!(event.actor, "loop");
 }
 
 #[tokio::test]

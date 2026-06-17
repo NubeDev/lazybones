@@ -37,4 +37,12 @@ pub enum StoreError {
     /// A task id was referenced that does not exist in the store.
     #[error("task not found: {0}")]
     TaskNotFound(String),
+
+    /// A task was created with an id that is already taken.
+    #[error("task already exists: {0}")]
+    TaskExists(String),
+
+    /// Sealing or opening a secret failed (bad master key, corrupt blob, …).
+    #[error("secret error: {0}")]
+    Secret(String),
 }

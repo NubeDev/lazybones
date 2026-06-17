@@ -7,7 +7,7 @@
 
 use surrealdb::types::{RecordId, RecordIdKey, SurrealValue, ToSql};
 
-use super::model::Task;
+use super::model::{Task, WorktreeMode};
 use super::status::Status;
 
 /// The table tasks live in.
@@ -24,6 +24,9 @@ pub(crate) struct TaskRow {
     pub(crate) deps: Vec<String>,
     pub(crate) owns: Vec<String>,
     pub(crate) tool: Option<String>,
+    /// Worktree provisioning intent, stored as its lowercase string form.
+    /// `Option` so rows written before this column read back as the default.
+    pub(crate) worktree_mode: Option<String>,
     pub(crate) session: Option<String>,
     pub(crate) worktree: Option<String>,
     pub(crate) branch: Option<String>,
@@ -44,6 +47,7 @@ impl TaskRow {
             deps: task.deps.clone(),
             owns: task.owns.clone(),
             tool: task.tool.clone(),
+            worktree_mode: Some(worktree_mode_str(task.worktree_mode).to_owned()),
             session: task.session.clone(),
             worktree: task.worktree.clone(),
             branch: task.branch.clone(),
@@ -64,6 +68,7 @@ impl TaskRow {
             deps: self.deps,
             owns: self.owns,
             tool: self.tool,
+            worktree_mode: parse_worktree_mode(self.worktree_mode.as_deref()),
             session: self.session,
             worktree: self.worktree,
             branch: self.branch,
@@ -79,6 +84,25 @@ fn task_key(id: &RecordId) -> String {
     match &id.key {
         RecordIdKey::String(s) => s.clone(),
         other => other.to_sql(),
+    }
+}
+
+/// The lowercase wire/storage form of a [`WorktreeMode`].
+fn worktree_mode_str(mode: WorktreeMode) -> &'static str {
+    match mode {
+        WorktreeMode::New => "new",
+        WorktreeMode::Reuse => "reuse",
+        WorktreeMode::Branch => "branch",
+    }
+}
+
+/// Parse a stored worktree-mode string; missing or unknown values fall back to
+/// the default (`New`), so legacy rows and bad data stay isolated-by-default.
+fn parse_worktree_mode(s: Option<&str>) -> WorktreeMode {
+    match s {
+        Some("reuse") => WorktreeMode::Reuse,
+        Some("branch") => WorktreeMode::Branch,
+        _ => WorktreeMode::New,
     }
 }
 

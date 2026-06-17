@@ -23,6 +23,11 @@ pub enum Capability {
     Memorize,
     /// Read tasks, runs, and memory.
     Read,
+    /// Manage agent CLI credentials (store/list/delete/export). Loop only — an
+    /// agent session never reads or writes the secret store.
+    Secret,
+    /// Create, edit, or delete task records directly (author the queue in the DB; loop only).
+    Author,
 }
 
 impl Capability {
@@ -37,6 +42,8 @@ impl Capability {
             Capability::Block,
             Capability::Memorize,
             Capability::Read,
+            Capability::Secret,
+            Capability::Author,
         ]
     }
 

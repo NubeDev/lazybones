@@ -13,7 +13,8 @@ async fn open_store(config: &Config) -> anyhow::Result<StoreHandle> {
     let engine = StoreEngine::File {
         path: config.data_dir.clone(),
     };
-    let store = StoreHandle::open(&engine, &config.namespace, &config.database).await?;
+    let store =
+        StoreHandle::open(&engine, &config.namespace, &config.database, &config.secret_key).await?;
     Ok(store)
 }
 

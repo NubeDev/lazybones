@@ -49,6 +49,7 @@ export function TasksPage() {
             onRefresh={() => refetch()}
             promoting={promote.isPending}
             refreshing={isFetching}
+            tasks={tasks ?? []}
           />
         }
       />

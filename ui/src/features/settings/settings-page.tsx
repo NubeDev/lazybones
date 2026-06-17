@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { AgentsPanel } from "@/features/agents/agents-panel";
 import {
   apiBase,
   setApiBase,
@@ -67,6 +68,8 @@ export function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          <AgentsPanel />
 
           <Card>
             <CardHeader>

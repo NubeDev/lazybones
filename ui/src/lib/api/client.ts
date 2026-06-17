@@ -12,7 +12,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOpts {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   /** Attach the loop bearer token (required by guarded mutations). */
   auth?: boolean;

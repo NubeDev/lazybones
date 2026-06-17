@@ -25,7 +25,9 @@ DEFINE FIELD IF NOT EXISTS task ON event TYPE string;\n\
 DEFINE FIELD IF NOT EXISTS at ON event TYPE datetime;\n\
 DEFINE INDEX IF NOT EXISTS event_task_at ON event FIELDS task, at;\n\
 DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;\n\
-DEFINE TABLE IF NOT EXISTS learned TYPE RELATION SCHEMALESS;";
+DEFINE TABLE IF NOT EXISTS learned TYPE RELATION SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS secret SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS env_var ON secret TYPE string;";
 
 /// Apply the schema on the bootstrapped connection.
 ///

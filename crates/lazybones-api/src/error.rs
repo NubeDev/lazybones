@@ -25,6 +25,14 @@ pub enum ApiError {
     /// A store-boundary failure (mapped by status below).
     #[error(transparent)]
     Store(#[from] StoreError),
+
+    /// The requested resource doesn't exist (e.g. an unknown agent tool).
+    #[error("not found")]
+    NotFound,
+
+    /// An unexpected server-side failure.
+    #[error("{0}")]
+    Internal(String),
 }
 
 impl IntoResponse for ApiError {
@@ -38,7 +46,12 @@ impl IntoResponse for ApiError {
             ApiError::Store(StoreError::IllegalTransition { .. }) => {
                 (StatusCode::CONFLICT, self.to_string())
             }
+            ApiError::Store(StoreError::TaskExists(_)) => {
+                (StatusCode::CONFLICT, self.to_string())
+            }
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
+            ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         (status, Json(json!({ "error": message }))).into_response()
     }

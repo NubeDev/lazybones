@@ -9,7 +9,7 @@ use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 
 use crate::error::{Result, StoreError};
-use crate::event::append_event;
+use crate::event::{Event, append_event};
 
 use super::get::get_task;
 use super::model::Task;
@@ -61,6 +61,9 @@ impl Transition {
 
 /// Move `id` through `transition`, driven by `actor`, recording an event.
 ///
+/// Returns the updated task and the persisted [`Event`] so the caller can both
+/// answer the request and publish the transition on the live event bus.
+///
 /// # Errors
 /// Returns [`StoreError::TaskNotFound`] if the task does not exist,
 /// [`StoreError::IllegalTransition`] if the current status forbids the move, or
@@ -70,7 +73,7 @@ pub async fn transition_task(
     id: &str,
     transition: Transition,
     actor: &str,
-) -> Result<Task> {
+) -> Result<(Task, Event)> {
     let mut task = get_task(db, id)
         .await?
         .ok_or_else(|| StoreError::TaskNotFound(id.to_owned()))?;
@@ -97,8 +100,8 @@ pub async fn transition_task(
         .map(TaskRow::into_task)
         .ok_or_else(|| StoreError::TaskNotFound(id.to_owned()))?;
 
-    append_event(db, &task.run, id, from.as_str(), to.as_str(), actor).await?;
-    Ok(task)
+    let event = append_event(db, &task.run, id, from.as_str(), to.as_str(), actor).await?;
+    Ok((task, event))
 }
 
 /// Fold the transition's side-data into the task before it is written.

@@ -25,6 +25,9 @@ pub struct Config {
     pub run: String,
     /// Bearer token the trusted loop authenticates with.
     pub loop_token: String,
+    /// Master key the store derives its secret-encryption key from. Never
+    /// persisted; protects agent CLI credentials at rest in the `secret` table.
+    pub secret_key: String,
 }
 
 /// The subset of `lazybones.yaml` the daemon reads, all optional in the file.
@@ -68,6 +71,13 @@ impl Config {
             run: env_or("LAZYBONES_RUN", file.run, "lazybones-run"),
             loop_token: std::env::var("LAZYBONES_LOOP_TOKEN")
                 .unwrap_or_else(|_| "lazybones-loop".to_owned()),
+            // Falls back to the loop token so a fresh local run still has a
+            // distinct-enough key; override with LAZYBONES_SECRET_KEY for any
+            // real deployment (changing it makes existing secrets undecryptable).
+            secret_key: std::env::var("LAZYBONES_SECRET_KEY").unwrap_or_else(|_| {
+                std::env::var("LAZYBONES_LOOP_TOKEN")
+                    .unwrap_or_else(|_| "lazybones-secret-key".to_owned())
+            }),
         })
     }
 }

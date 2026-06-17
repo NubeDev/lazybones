@@ -1,4 +1,4 @@
-import { X, GitCommitHorizontal } from "lucide-react";
+import { X, GitCommitHorizontal, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -7,7 +7,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FieldRow, Mono } from "./field-row";
 import { DepsList } from "./deps-list";
 import { BlockDialog } from "./block-dialog";
+import { DeleteDialog } from "./delete-dialog";
 import { SpecView } from "./spec-view";
+import { TaskDialog } from "../authoring/task-dialog";
+import { StartDialog } from "../start-dialog";
 import { useTask } from "@/lib/hooks/use-tasks";
 import { relativeTime } from "@/lib/utils/platform";
 import type { Task } from "@/types/task";
@@ -117,11 +120,22 @@ export function TaskDetail({
         </div>
       </ScrollArea>
 
-      {!terminal && (
-        <div className="flex justify-end gap-2 border-t border-border p-4">
-          <BlockDialog taskId={task.id} />
+      <div className="flex items-center justify-between gap-2 border-t border-border p-4">
+        <DeleteDialog taskId={task.id} onDeleted={onClose} />
+        <div className="flex gap-2">
+          {task.status === "pending" && <StartDialog task={task} byId={byId} />}
+          <TaskDialog
+            task={task}
+            allTasks={[...byId.values()]}
+            trigger={
+              <Button variant="secondary" size="sm">
+                <Pencil /> Edit
+              </Button>
+            }
+          />
+          {!terminal && <BlockDialog taskId={task.id} />}
         </div>
-      )}
+      </div>
     </Panel>
   );
 }

@@ -6,7 +6,7 @@ use surrealdb::types::{Datetime, SurrealValue};
 
 use crate::error::{Result, StoreError};
 
-use super::row::{EVENT_TABLE, EventRow};
+use super::row::{EVENT_TABLE, Event, EventRow};
 
 /// The content of a new event (no `id` — SurrealDB mints a ULID key).
 #[derive(Debug, Clone, SurrealValue)]
@@ -19,7 +19,8 @@ struct NewEvent {
     at: Datetime,
 }
 
-/// Record that `task` moved `from -> to`, driven by `actor`, in `run`.
+/// Record that `task` moved `from -> to`, driven by `actor`, in `run`, and
+/// return the persisted [`Event`] (for live publication on the event bus).
 ///
 /// # Errors
 /// Returns [`StoreError::Operation`] if the write fails.
@@ -30,8 +31,8 @@ pub async fn append_event(
     from: &str,
     to: &str,
     actor: &str,
-) -> Result<()> {
-    let _: Option<EventRow> = db
+) -> Result<Event> {
+    let written: Option<EventRow> = db
         .create(EVENT_TABLE)
         .content(NewEvent {
             run: run.to_owned(),
@@ -43,5 +44,11 @@ pub async fn append_event(
         })
         .await
         .map_err(StoreError::Operation)?;
-    Ok(())
+    written
+        .map(EventRow::into_event)
+        .ok_or_else(|| {
+            StoreError::Operation(surrealdb::Error::thrown(
+                "event insert returned no row".to_owned(),
+            ))
+        })
 }

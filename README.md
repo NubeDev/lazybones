@@ -69,6 +69,24 @@ other path with `409`. Every transition is a queryable `event` row, not a log li
 | `POST /tasks/:id/gate` | running→gating | Claim (loop) |
 | `POST /tasks/:id/done` | gating→done (commit) | Done |
 | `POST /tasks/:id/block` | *→blocked (reason) | Block |
+| `GET /engine` | hcom availability (installed? version) | — |
+| `GET /agents` | agent CLIs: installed? key set? ready? | Secret (loop) |
+| `GET /secrets` | stored credential metadata (no values) | Secret (loop) |
+| `PUT /secrets/:tool` | seal + store an agent CLI credential | Secret (loop) |
+| `DELETE /secrets/:tool` | remove a stored credential | Secret (loop) |
+| `GET /secrets/env` | decrypt all secrets → env pairs (spawn) | Secret (loop) |
+
+## Engine + agent setup (the secret store)
+
+lazybones runs an agent CLI per task (`agent_tool`: claude | codex | gemini |
+opencode). `GET /engine` reports whether the **hcom** engine is installed;
+`GET /agents` reports, per tool, whether the **CLI** is installed and whether a
+**credential** is set. Keys are registered through the app (or `PUT /secrets/:tool`)
+and **encrypted at rest** (AES-256-GCM) under a master key — `LAZYBONES_SECRET_KEY`
+(falls back to the loop token; override it for any real run, and note that changing
+it makes existing secrets undecryptable). The DB never holds a plaintext key; only
+the loop-guarded `GET /secrets/env` decrypts them, which the loop exports into each
+agent's environment at spawn. Listing only ever returns a `…last4` hint.
 
 ## Config
 
