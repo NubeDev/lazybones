@@ -1,7 +1,7 @@
 # Starting tasks: the "I can't start a task" problem
 
 > Status: short-term fixes landed; long-term plan proposed (not yet built).
-> Audience: anyone working on the board UI, the API, or the `hcom` run loop.
+> Audience: anyone working on the board UI, the API, or the scheduler.
 
 ## TL;DR
 
@@ -10,12 +10,12 @@ actors:
 
 - **You (the UI)** = the *control plane*. You author tasks and **promote** them to
   `ready`. That is the only "go" signal a human gives.
-- **The `hcom` run loop** = the *execution plane*. It watches for `ready` tasks,
-  provisions a git worktree, calls `POST /tasks/:id/claim` (`ready → running`),
-  and runs the agent.
+- **The scheduler** (a Rust task inside `lazybonesd`) = the *execution plane*. It
+  watches for `ready` tasks, provisions a git worktree, claims them
+  (`ready → running`), and spawns the agent via the hcom CLI.
 
-A task only runs when **both** happen: you promote it **and** a loop is alive to
-claim it. The UI cannot (and must not) mark a task `running` itself — doing so
+A task only runs when **both** happen: you promote it **and** the daemon (hence the
+scheduler) is up. The UI cannot (and must not) mark a task `running` itself — doing so
 would create a `running` task with no agent behind it (a "zombie").
 
 This split is correct by design, but it was **invisible**, so it read as broken.
@@ -89,46 +89,42 @@ from the browser. **Fix:** add `Method::PATCH` to the allow-list.
 
 Two things are still only half-solved:
 
-1. **The loop is external and doesn't honour `worktree_mode` yet.** The run loop
-   is `hcom` (`hcom run lazybones`), **not a crate in this workspace**. The UI now
-   *captures and stores* the worktree intent and it appears in the task JSON, but
-   `hcom`'s claim logic must be updated to *read* it. Until then, `reuse`/`branch`
-   are recorded but not obeyed — the loop still does its current worktree add.
+1. **No loop exists yet to honour `worktree_mode`.** The scheduler is planned as a
+   Rust task inside `lazybonesd` (`src/scheduler/`, see [vision.md](vision.md)) —
+   **not** an external `hcom run` script (that earlier framing is superseded). The
+   UI already *captures and stores* the worktree intent (it appears in the task
+   JSON); the scheduler must *read* it on claim. Until the scheduler is built,
+   `reuse`/`branch` are recorded but not obeyed.
 
-2. **A `ready` task with no loop running just sits there, unexplained.** Nothing
-   tells the operator "promoted successfully, but nothing is consuming the queue."
+2. **A `ready` task with nothing consuming it.** Today there is no execution plane
+   at all. Once the scheduler lives in the daemon this dissolves: if `lazybonesd` is
+   up, the queue is being drained — there is no separate loop to be "disconnected."
 
 ## Proposed long-term fix
 
 The goal: make the two-actor model **legible and honest** so "what will start it"
 is never a mystery, and make worktree intent a **real contract** the loop honours.
 
-### A. Make the contract explicit in the data model (done) and in `hcom` (todo)
+### A. Make the contract explicit in the data model (done) and in the scheduler (todo)
 
-`worktree_mode` is the durable contract. `hcom` should, on claim:
+`worktree_mode` is the durable contract. The Rust scheduler should, on claim:
 
-- `new` → `git worktree add` a fresh branch (current behaviour).
-- `reuse` → use the existing `task.worktree` path; error clearly if it's missing.
+- `new` → `git worktree add` a fresh branch (current intended behaviour).
+- `reuse` → use the existing `task.worktree` path; block clearly if it's missing.
 - `branch` → run in the main checkout on `task.branch`; create no worktree.
 
-This belongs in the `hcom` repo. The API already exposes everything it needs
-(`worktree_mode`, `worktree`, `branch` on the task). No further API change should
-be required — keep the contract in the task document, not in the claim body.
+This is **lazybones' own code** (`src/scheduler/`), not the hcom repo — the
+scheduler provisions the worktree *before* it shells out to `hcom` to spawn the
+agent. The task document already carries everything it needs (`worktree_mode`,
+`worktree`, `branch`); keep the contract there, not in any claim body.
 
-### B. Surface run-loop liveness in the UI
+### B. Loop liveness — mostly dissolved by the in-process scheduler
 
-Add a lightweight "is a loop connected?" signal so a promoted task is never a
-silent dead end. Options, cheapest first:
-
-- **Heuristic banner (no backend change):** if any task is `ready` (or `running`)
-  but none has a recent heartbeat / nothing has been claimed, show
-  "No run loop connected — ready tasks won't execute until you start `hcom`."
-- **Explicit liveness (small backend change):** have `hcom` register/heartbeat a
-  loop presence the API exposes (e.g. `GET /engine` or a `loop_seen_at`), and the
-  UI shows a green/grey "loop: connected / idle" pill in the toolbar.
-
-Recommendation: ship the heuristic banner now; add explicit liveness when the
-`hcom` change in (A) lands, since both touch the same claim path.
+Once the scheduler lives inside `lazybonesd`, "is a loop connected?" collapses into
+"is the daemon up?" — which the UI already knows from `GET /health`. There is no
+separate process to be disconnected. The only residual signal worth showing is
+whether the **hcom CLI** is installed/usable (`GET /engine`), since the scheduler
+shells out to it; surface that as a grey/green "hcom available" pill.
 
 ### C. Keep the human action honest
 
@@ -142,7 +138,7 @@ This doc + a short "lifecycle" section in the UI README so the two-actor model i
 discoverable from the code, not just tribal knowledge:
 
 ```
-pending ──promote (you)──▶ ready ──claim (hcom loop)──▶ running ──▶ gating ──▶ done
+pending ──promote (you)──▶ ready ──claim (scheduler)──▶ running ──▶ gating ──▶ done
                                                                               └─ unlocks dependents
 ```
 

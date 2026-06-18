@@ -12,6 +12,7 @@ workspace = true
 lazybones-store = { workspace = true }
 lazybones-auth = { workspace = true }
 lazybones-engine = { workspace = true }
+lazybones-gh = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

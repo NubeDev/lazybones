@@ -30,6 +30,12 @@ pub enum ApiError {
     #[error("not found")]
     NotFound,
 
+    /// A `gh`/`git` CLI invocation failed (not installed, not authed, or the
+    /// command itself errored). Surfaced as `502` — the failure is upstream of
+    /// us, in a tool we shell out to.
+    #[error(transparent)]
+    Gh(#[from] lazybones_gh::GhError),
+
     /// An unexpected server-side failure.
     #[error("{0}")]
     Internal(String),
@@ -54,6 +60,7 @@ impl IntoResponse for ApiError {
                 | StoreError::RunExists(_),
             ) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };

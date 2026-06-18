@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Plus, FolderSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,7 +10,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/client";
 import { useCreateWorkflow } from "@/lib/hooks/use-workflows";
+import { useGhRepo } from "@/lib/hooks/use-gh";
 import { WORKTREE_MODES, WorktreeModePicker } from "@/features/tasks/worktree-mode";
+import { RepoPicker } from "./repo-picker";
+import { BranchField } from "./branch-field";
 import type { WorkspaceDraft } from "@/lib/api/workflows";
 
 const EMPTY: WorkspaceDraft = {
@@ -35,11 +38,30 @@ export function WorkflowDialog({
   const [ws, setWs] = useState<WorkspaceDraft>(EMPTY);
   const create = useCreateWorkflow();
 
+  // The chosen repo drives the repo-info + branch lookups (null until picked).
+  const dir = ws.repo.trim() || null;
+  const repo = useGhRepo(dir);
+
   function reset() {
     setId("");
     setTitle("");
     setWs(EMPTY);
   }
+
+  /** On choosing a repo, record its path and prefill the base branch from the
+   *  repo's default (unless the user already typed one). */
+  function pickRepo(path: string) {
+    setWs((prev) => ({ ...prev, repo: path }));
+  }
+
+  // Prefill the base branch from the repo's default once known, but never
+  // clobber a value the user set themselves.
+  const defaultBranch = repo.data?.default_branch ?? null;
+  useEffect(() => {
+    if (defaultBranch && !ws.base_branch) {
+      setWs((prev) => (prev.base_branch ? prev : { ...prev, base_branch: defaultBranch }));
+    }
+  }, [defaultBranch, ws.base_branch]);
 
   function submit() {
     const tid = id.trim();
@@ -112,23 +134,37 @@ export function WorkflowDialog({
               Workspace
             </span>
 
-            <Field label="Repo" hint="absolute path to the target git repo">
-              <Input
-                value={ws.repo}
-                onChange={(e) => setWs({ ...ws, repo: e.target.value })}
-                placeholder="/home/me/code/project"
-                className="font-mono"
-              />
+            <Field
+              label="Repo"
+              hint={
+                repo.data
+                  ? `${repo.data.full_name} · default ${repo.data.default_branch ?? "?"}`
+                  : "absolute path to the target git repo"
+              }
+            >
+              <div className="flex gap-2">
+                <Input
+                  value={ws.repo}
+                  onChange={(e) => setWs({ ...ws, repo: e.target.value })}
+                  placeholder="/home/me/code/project"
+                  className="font-mono"
+                />
+                <RepoPicker
+                  onPick={pickRepo}
+                  trigger={
+                    <Button variant="ghost" size="sm" title="Browse for a repo">
+                      <FolderSearch /> Browse
+                    </Button>
+                  }
+                />
+              </div>
             </Field>
 
             <Field label="Base branch" hint="blank = inherit global default">
-              <Input
-                value={ws.base_branch ?? ""}
-                onChange={(e) =>
-                  setWs({ ...ws, base_branch: e.target.value.trim() || null })
-                }
-                placeholder="main"
-                className="font-mono"
+              <BranchField
+                dir={dir}
+                value={ws.base_branch}
+                onChange={(b) => setWs((prev) => ({ ...prev, base_branch: b }))}
               />
             </Field>
 

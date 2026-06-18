@@ -21,10 +21,14 @@ durable in a database, and has no bespoke loop algorithm to babysit.
 
 ## Principles
 
-1. **hcom is the engine; lazybones is the queue + the gate.** The loop is an hcom
-   workflow script (`hcom run lazybones`). lazybones owns only what hcom doesn't:
-   the durable queue, the commit/push gate, worktree lifecycle, and the REST/state
-   surface. No cron loop, no hand-rolled spawn algorithm.
+1. **hcom is the agent fabric; lazybones is the brain + the gate.** hcom spawns and
+   manages agent processes (PTYs, multi-tool, messaging). lazybones owns everything
+   else — the durable queue, the scheduler, the commit/push gate, worktree
+   lifecycle, and the REST/state surface — and it owns them **in Rust**. The
+   scheduling loop is a task inside `lazybonesd` that drives the `hcom` CLI via
+   `std::process::Command`; it is **not** a shell script under `~/.hcom/scripts/`.
+   We invoke hcom; we never reimplement its spawning. See
+   [docs/vision.md](docs/vision.md).
 2. **Parallel by default; the worktree is how it stays safe.** Every running task
    gets its own `git worktree` + branch, so N agents edit N trees with zero
    collisions. Worktree isolation is not an add-on — it is the parallelism
@@ -60,32 +64,29 @@ durable in a database, and has no bespoke loop algorithm to babysit.
 ## How it runs (one run, start to finish)
 
 ```
-   lazybones.yaml ── config ──┐
-   workfile.yaml  ── queue ───┤  hcom run lazybones "build the queue"
-                              ▼
-                ┌──────────────────────────────┐      REST / HTTP (JSON)
-   the loop ───►│   lazybonesd  (Rust binary)   │◄──────────── you · scripts · agents
-  (hcom script) │   axum REST  +  SurrealDB     │   GET /tasks   POST /tasks/:id/done
-                │   embedded, file-backed       │   POST /tasks/:id/heartbeat   ...
-                └───────────────┬──────────────-┘
-                                │ durable queue + status + run log (restartable)
-                                ▼
-        ┌──────── hcom workflow script = the loop ────────┐
-        │ 1. sync workfile.yaml → lazybonesd               │
-        │ 2. ask /tasks?status=ready (deps met, owns free) │
-        │ 3. for each, up to `concurrency`:                │
-        │      git worktree add + branch  →  spawn 1 agent │
-        │ 4. wait on hcom thread DONE (events --wait, no    │
-        │    sleep); agents POST heartbeats to lazybonesd  │
-        │ 5. gate: re-run tests in the worktree            │
-        │ 6. green → push branch, merge, mark /done         │
-        │    red   → mark /block, keep worktree for triage │
-        │ 7. loop until no ready/running tasks remain       │
-        └───┬──────────────┬──────────────┬───────────────┘
-            ▼              ▼              ▼
-        agent:auth     agent:store     agent:api     ← headless claude/codex/…, parallel
-        wt/auth        wt/store        wt/api        ← isolated git worktrees
-        lazy/auth      lazy/store      lazy/api      ← branches: commit + push each
+   boot config ── bind + DB location (file/env, the only file) ──┐
+   Plans / Tasks ── authored over the API/UI, stored in the DB ──┤
+                                                                  ▼
+                ┌──────────────────────────────────────┐   REST / HTTP (JSON)
+   you · UI ───►│   lazybonesd  (Rust binary)            │◄──── agents POST heartbeats
+                │   axum REST  +  SurrealDB  (embedded)   │      GET /tasks  POST …/done
+                │   ┌──────────────────────────────────┐ │
+                │   │ scheduler (Tokio task, in-process) │ │   shells out to the hcom CLI
+                │   │ 1. read ready Tasks from the store │ │──► hcom 1 <tool> --tag … --headless
+                │   │ 2. up to `concurrency` (global):   │ │──► hcom events --wait --json
+                │   │    git worktree add + branch       │ │──► hcom kill tag:<id>
+                │   │    → mark running → spawn 1 agent  │ │
+                │   │ 3. await DONE event (no sleep)     │ │
+                │   │ 4. gate in the worktree            │ │
+                │   │ 5. green → push/merge → done        │ │
+                │   │    red   → block, keep worktree    │ │
+                │   │ 6. loop until no ready/running work │ │
+                │   └──────────────────────────────────┘ │
+                └───────────────┬──────────┬─────────────┘
+                                ▼          ▼          ▼
+                        agent:auth     agent:store     agent:api  ← headless claude/codex/…
+                        wt/auth        wt/store        wt/api     ← isolated git worktrees
+                        lazy/auth      lazy/store      lazy/api   ← branches: commit + push
 ```
 
 The loop never writes feature code. It reads the queue, spawns agents, runs the
@@ -153,21 +154,23 @@ the `WS-xx.md` "assumptions / deviations / follow-ups" sections) — is captured
   lessons). Memory is per-run by default and can be promoted to a durable,
   cross-run store.
 
-### `lazybones.sh` — the loop (hcom workflow script)
+### The scheduler — a Rust task inside `lazybonesd` (not a script)
 
-Installed to `~/.hcom/scripts/lazybones.sh`, run with `hcom run lazybones "<goal>"`.
-Follows the hcom authoring rules exactly: `--thread` on every send/wait (isolation),
-`--go --headless` on every launch, `--tag` per task for group routing,
-`hcom events --wait` instead of `sleep`, `trap cleanup ERR INT TERM` to never orphan
-a headless agent, and it parses `--name` to forward identity. Per ready task it:
+The loop lives in the daemon, not in `~/.hcom/scripts/`. It drives the `hcom` CLI
+through a typed Rust client (`spawn` / `events --json` / `list` / `kill`). Per ready
+task it:
 
 1. `git worktree add <root>/wt/<id> -b lazy/<id> <base_branch>` (unless worktrees off),
-2. `POST /tasks/:id/claim`,
+2. marks the task `running` directly in the store (the internal `/claim`),
 3. spawns one headless agent (`hcom 1 <tool> --tag <id> --go --headless --hcom-prompt …`)
    pointed at the task spec + the agent charter, told to implement, commit, push,
-   then signal `DONE` on the thread,
-4. waits on the DONE event, runs the gate in the worktree, advances the task in
-   `lazybonesd`, and on success merges `lazy/<id>` back and removes the worktree.
+   then signal `DONE`,
+4. awaits the DONE event via `hcom events --wait --json`, runs the gate in the
+   worktree, advances the task, and on success merges `lazy/<id>` back and removes
+   the worktree.
+
+Because the scheduler is the daemon, there is no second process to launch and no
+"is a loop connected?" ambiguity: if `lazybonesd` is up, the queue is consumed.
 
 ### `lazybones.yaml` — config seed (env-overridable)
 
@@ -202,12 +205,18 @@ lazybones/
   workfile.yaml                  # the task queue
   Cargo.toml                     # the lazybonesd crate
   tasks/
-    <id>.md                      # one spec per task
-  scripts/
-    lazybones.sh                 # the hcom workflow script (installed to ~/.hcom/scripts/)
-    install-hcom-script.sh       # symlink/copy lazybones.sh into ~/.hcom/scripts/
+    <id>.md                      # optional spec seed (import only; DB is authoritative)
   src/
     main.rs                      # parse config, open store, serve
+    scheduler/                   # the loop, in Rust (replaces scripts/lazybones.sh)
+      mod.rs                     # barrel
+      tick.rs                    # one pass: read ready → claim → spawn → await → gate
+      gate.rs                    # re-run the gate in the worktree
+    hcom/                        # typed client over the hcom CLI
+      mod.rs                     # barrel
+      spawn.rs                   # hcom N <tool> --tag … --headless …
+      events.rs                  # hcom events --wait --json --sql
+      control.rs                 # hcom list / kill / fork / resume
     configure.rs                 # load lazybones.yaml + LAZYBONES_* env overrides
     state.rs                     # AppState { store handle, config }
     workfile/
@@ -277,12 +286,14 @@ point.
 
 ## Non-goals
 
-- **No bespoke loop algorithm.** hcom's workflow runtime is the loop; lazybones
-  adds a queue and a gate, nothing more.
-- **No file as the runtime source of truth.** Status, queue, specs, and memory are
-  SurrealDB over REST. YAML/markdown are seeds imported once; there is no
-  `STATUS.md`, no appended loop log, no per-task front-matter to keep in sync, and
-  nothing re-parsed from disk mid-run.
+- **No reimplementing hcom.** hcom owns agent process spawning (PTYs, multi-tool,
+  messaging); lazybones invokes the hcom CLI from Rust. But the **scheduler is ours
+  and is Rust** — a task in `lazybonesd`, never a shell script.
+- **No file as the runtime source of truth — and no file as the authoring path.**
+  Status, queue, specs, Plans, and memory are SurrealDB over REST, created via the
+  API/UI. YAML/markdown are an *optional* import, not required; there is no
+  `STATUS.md`, no appended loop log, no per-task front-matter, nothing re-parsed
+  from disk mid-run. The only irreducible file is boot config (bind + DB location).
 - **No prose-only knowledge.** Decisions/gotchas/follow-ups are vector-indexed
   memory records, recalled on demand — not buried in a `WS-xx.md` to be re-read.
 - **No `WS-01`-style ids.** Tasks have friendly concept ids.
@@ -307,9 +318,9 @@ point.
    self-gate before signalling DONE to fail faster?
 4. **Push target for parallel branches.** One remote with N `lazy/*` branches, or a
    stacked/queued merge to avoid base churn when many tasks finish at once.
-5. **Where `lazybonesd` runs.** Spawned by the workflow script for the run's
-   lifetime, or a long-lived service so the REST API and history outlast a single
-   run (better for inspection, more to manage).
+5. ~~**Where `lazybonesd` runs.**~~ **Resolved:** a long-lived daemon that *contains*
+   the scheduler. The REST API, history, and the loop share one process, so state
+   outlasts any single run and there is no external loop to babysit.
 6. **Cross-tool tasks.** A task that needs design-then-implement across two tools
    (hcom pattern 5) — modeled as one task with an internal duo, or two dependent
    tasks?

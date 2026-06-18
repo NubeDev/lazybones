@@ -2142,6 +2142,7 @@ dependencies = [
  "http-body-util",
  "lazybones-auth",
  "lazybones-engine",
+ "lazybones-gh",
  "lazybones-store",
  "serde",
  "serde_json",
@@ -2190,6 +2191,18 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lazybones-gh"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
 ]

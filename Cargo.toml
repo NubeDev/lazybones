@@ -7,6 +7,7 @@ members = [
     "crates/lazybones-auth",
     "crates/lazybones-api",
     "crates/lazybones-engine",
+    "crates/lazybones-gh",
     "crates/lazybones-cli",
 ]
 
@@ -21,6 +22,7 @@ lazybones-store = { version = "0.1.0", path = "crates/lazybones-store" }
 lazybones-auth = { version = "0.1.0", path = "crates/lazybones-auth" }
 lazybones-api = { version = "0.1.0", path = "crates/lazybones-api" }
 lazybones-engine = { version = "0.1.0", path = "crates/lazybones-engine" }
+lazybones-gh = { version = "0.1.0", path = "crates/lazybones-gh" }
 
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "query"] }

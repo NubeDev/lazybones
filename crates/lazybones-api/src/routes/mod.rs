@@ -14,8 +14,10 @@ mod create;
 mod delete;
 mod done;
 mod engine;
+mod fs_list;
 mod gate;
 mod get;
+mod gh;
 mod health;
 mod heartbeat;
 mod list;
@@ -89,6 +91,21 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id", get(runs::run_history))
         // Live push feed of status transitions (SSE) — for the dashboard + loop.
         .route("/stream", get(stream::stream))
+        // Native filesystem browse for the UI's repo/dir picker (New workflow).
+        .route("/fs/list", get(fs_list::fs_list))
+        // GitHub via the user's existing `gh`/`git` login (no token here).
+        .route("/gh/auth", get(gh::gh_auth))
+        .route("/gh/repo", get(gh::gh_repo))
+        .route(
+            "/gh/branches",
+            get(gh::gh_branches).post(gh::gh_create_branch),
+        )
+        .route(
+            "/gh/issues",
+            get(gh::gh_issues).post(gh::gh_create_issue),
+        )
+        .route("/gh/issues/:number", get(gh::gh_issue_view))
+        .route("/gh/issues/:number/close", post(gh::gh_close_issue))
         // Engine + agent availability (so the UI can show what's set up).
         .route("/engine", get(engine::engine_status))
         .route("/agents", get(agents::list_agents))

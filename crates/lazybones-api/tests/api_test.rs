@@ -86,6 +86,47 @@ fn get(path: &str) -> Request<Body> {
 }
 
 #[tokio::test]
+async fn fs_list_browses_dirs_and_flags_repos() {
+    let app = app().await;
+
+    // A temp dir holding a plain subdir, a git repo (has `.git`), and a dotdir.
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join("plain")).unwrap();
+    std::fs::create_dir(tmp.path().join("repo")).unwrap();
+    std::fs::create_dir(tmp.path().join("repo/.git")).unwrap();
+    std::fs::create_dir(tmp.path().join(".hidden")).unwrap();
+
+    let uri = format!("/fs/list?path={}", tmp.path().display());
+    let (status, body) = send(&app, get(&uri)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let names: Vec<&str> = body["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    // Dotdirs are hidden; plain + repo are listed and sorted.
+    assert_eq!(names, vec!["plain", "repo"]);
+
+    let repo = &body["entries"][1];
+    assert_eq!(repo["name"], "repo");
+    assert_eq!(repo["is_repo"], true);
+    assert_eq!(body["entries"][0]["is_repo"], false);
+    assert!(body["parent"].is_string());
+}
+
+#[tokio::test]
+async fn gh_auth_probe_is_unguarded_and_returns_a_verdict() {
+    let app = app().await;
+    // No token, no network assumptions: the probe always answers 200 with a
+    // boolean (true if `gh` is logged in on this host, false otherwise).
+    let (status, body) = send(&app, get("/gh/auth")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["authenticated"].is_boolean());
+}
+
+#[tokio::test]
 async fn full_lifecycle_over_rest() {
     let app = app().await;
 
