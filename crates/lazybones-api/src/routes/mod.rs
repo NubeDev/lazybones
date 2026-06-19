@@ -43,7 +43,7 @@ mod workflows_list;
 mod workflows_start;
 
 use axum::Router;
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 
 use crate::cors::cors_layer;
 use crate::state::AppState;
@@ -100,6 +100,13 @@ pub fn router(state: AppState) -> Router {
             "/gh/branches",
             get(gh::gh_branches).post(gh::gh_create_branch),
         )
+        .route("/gh/branches/:name", delete(gh::gh_delete_branch))
+        .route("/gh/checkout", post(gh::gh_checkout))
+        .route(
+            "/gh/worktrees",
+            get(gh::gh_worktrees).delete(gh::gh_remove_worktree),
+        )
+        .route("/gh/worktrees/prune", post(gh::gh_prune_worktrees))
         .route(
             "/gh/issues",
             get(gh::gh_issues).post(gh::gh_create_issue),

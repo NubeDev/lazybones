@@ -117,6 +117,57 @@ async fn fs_list_browses_dirs_and_flags_repos() {
 }
 
 #[tokio::test]
+async fn gh_worktrees_lists_main_and_extra() {
+    let app = app().await;
+
+    // A real temp repo with one extra worktree on its own branch.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let run_git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "t@t"],
+        &["config", "user.name", "t"],
+        &["commit", "--allow-empty", "-q", "-m", "root"],
+    ] {
+        run_git(args);
+    }
+    let wt = dir.join("wt-extra");
+    run_git(&["worktree", "add", "-q", "-b", "feat/wt", wt.to_str().unwrap()]);
+
+    let uri = format!("/gh/worktrees?dir={}", urlencode(&dir.to_string_lossy()));
+    let (status, body) = send(&app, loop_req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let trees = body.as_array().unwrap();
+    assert_eq!(trees.len(), 2);
+    assert_eq!(trees[0]["is_main"], json!(true));
+    assert!(
+        trees
+            .iter()
+            .any(|w| w["branch"] == json!("feat/wt") && w["is_main"] == json!(false))
+    );
+}
+
+/// Minimal percent-encoding for a filesystem path used in a query string.
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'/' => "%2F".to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
+#[tokio::test]
 async fn gh_auth_probe_is_unguarded_and_returns_a_verdict() {
     let app = app().await;
     // No token, no network assumptions: the probe always answers 200 with a

@@ -22,6 +22,7 @@ use axum::extract::{Path, Query, State};
 use lazybones_auth::Capability;
 use lazybones_gh::{self as gh, Gh, IssueState};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::error::ApiResult;
 use crate::extract::Session;
@@ -188,6 +189,136 @@ pub async fn gh_create_branch(
     Ok(Json(BranchCreated {
         branch: gh.current_branch(&body.dir).await?,
     }))
+}
+
+/// Body for switching branches.
+#[derive(Debug, Deserialize)]
+pub struct CheckoutBody {
+    #[serde(default = "dot")]
+    pub dir: String,
+    /// Existing branch to switch to.
+    pub branch: String,
+}
+
+/// `POST /gh/checkout` — switch to an existing branch. Requires `Author`.
+pub async fn gh_checkout(
+    State(_): State<AppState>,
+    session: Session,
+    Json(body): Json<CheckoutBody>,
+) -> ApiResult<Json<BranchCreated>> {
+    session.require(Capability::Author, "gh:checkout", &body.branch)?;
+    let gh = Gh::new();
+    gh.checkout(&body.dir, &body.branch).await?;
+    Ok(Json(BranchCreated {
+        branch: gh.current_branch(&body.dir).await?,
+    }))
+}
+
+/// `?dir=&force=` — branch-delete options.
+#[derive(Debug, Deserialize)]
+pub struct DeleteBranchQuery {
+    #[serde(default = "dot")]
+    dir: String,
+    #[serde(default)]
+    force: bool,
+}
+
+/// `DELETE /gh/branches/:name?dir=&force=` — delete a local branch. Requires
+/// `Author`. `force=true` maps to `git branch -D` (drops unmerged work).
+pub async fn gh_delete_branch(
+    State(_): State<AppState>,
+    session: Session,
+    Path(name): Path<String>,
+    Query(q): Query<DeleteBranchQuery>,
+) -> ApiResult<Json<Value>> {
+    session.require(Capability::Author, "gh:branch:delete", &name)?;
+    Gh::new().delete_branch(&q.dir, &name, q.force).await?;
+    Ok(Json(json!({ "deleted": name })))
+}
+
+// ---- worktrees ----------------------------------------------------------
+
+/// One worktree row for the UI.
+#[derive(Debug, Serialize)]
+pub struct WorktreeDto {
+    pub path: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub is_main: bool,
+    pub locked: bool,
+}
+
+impl From<gh::Worktree> for WorktreeDto {
+    fn from(w: gh::Worktree) -> Self {
+        Self {
+            path: w.path,
+            branch: w.branch,
+            head: w.head,
+            is_main: w.is_main,
+            locked: w.locked,
+        }
+    }
+}
+
+/// `GET /gh/worktrees?dir=` — list the repo's worktrees. Requires `Read`.
+pub async fn gh_worktrees(
+    State(_): State<AppState>,
+    session: Session,
+    Query(q): Query<DirQuery>,
+) -> ApiResult<Json<Vec<WorktreeDto>>> {
+    session.require(Capability::Read, "gh:worktrees", &q.dir)?;
+    let trees = Gh::new().worktrees(&q.dir).await?;
+    Ok(Json(trees.into_iter().map(Into::into).collect()))
+}
+
+/// Body for removing a worktree.
+#[derive(Debug, Deserialize)]
+pub struct RemoveWorktreeBody {
+    #[serde(default = "dot")]
+    pub dir: String,
+    /// Worktree working-dir path to remove.
+    pub path: String,
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// `DELETE /gh/worktrees` — remove a worktree. Requires `Block` (it tears down
+/// a checkout the scheduler may own). The main worktree can never be removed.
+pub async fn gh_remove_worktree(
+    State(_): State<AppState>,
+    session: Session,
+    Json(body): Json<RemoveWorktreeBody>,
+) -> ApiResult<Json<Value>> {
+    session.require(Capability::Block, "gh:worktree:remove", &body.path)?;
+    let gh = Gh::new();
+    // Defensive: never let the primary checkout be removed from here.
+    if let Some(main) = gh.worktrees(&body.dir).await?.into_iter().find(|w| w.is_main)
+        && main.path == body.path
+    {
+        return Err(crate::error::ApiError::bad_request(
+            "refusing to remove the main worktree",
+        ));
+    }
+    gh.remove_worktree(&body.dir, &body.path, body.force).await?;
+    Ok(Json(json!({ "removed": body.path })))
+}
+
+/// Body for pruning worktrees.
+#[derive(Debug, Deserialize)]
+pub struct PruneWorktreeBody {
+    #[serde(default = "dot")]
+    pub dir: String,
+}
+
+/// `POST /gh/worktrees/prune` — drop stale worktree entries. Requires `Block`.
+pub async fn gh_prune_worktrees(
+    State(_): State<AppState>,
+    session: Session,
+    Json(body): Json<PruneWorktreeBody>,
+) -> ApiResult<Json<Value>> {
+    session.require(Capability::Block, "gh:worktree:prune", &body.dir)?;
+    Gh::new().prune_worktrees(&body.dir).await?;
+    Ok(Json(json!({ "pruned": true })))
 }
 
 // ---- issues -------------------------------------------------------------

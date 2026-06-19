@@ -36,9 +36,21 @@ pub enum ApiError {
     #[error(transparent)]
     Gh(#[from] lazybones_gh::GhError),
 
+    /// The request is well-formed but semantically rejected (e.g. trying to
+    /// remove the main worktree). `400`.
+    #[error("{0}")]
+    BadRequest(String),
+
     /// An unexpected server-side failure.
     #[error("{0}")]
     Internal(String),
+}
+
+impl ApiError {
+    /// A `400 Bad Request` with a human-readable reason.
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        ApiError::BadRequest(msg.into())
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -62,6 +74,7 @@ impl IntoResponse for ApiError {
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
+            ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         (status, Json(json!({ "error": message }))).into_response()
