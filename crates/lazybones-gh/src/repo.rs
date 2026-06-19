@@ -47,6 +47,66 @@ pub struct Branch {
     pub protected: bool,
 }
 
+/// One local branch, from `git for-each-ref` — works with no remote and offline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBranch {
+    pub name: String,
+    /// Short tip SHA.
+    pub sha: String,
+    /// Upstream tracking ref (e.g. `origin/master`), if the branch tracks one.
+    pub upstream: Option<String>,
+    /// Commits ahead of upstream; `0` when no upstream.
+    pub ahead: u32,
+    /// Commits behind upstream; `0` when no upstream.
+    pub behind: u32,
+}
+
+impl LocalBranch {
+    /// Parse one tab-delimited record emitted by the `--format` we pass to
+    /// `git for-each-ref` (see `Gh::branches_local`). Returns `None` for an
+    /// empty/garbled line. Fields: `name \t sha \t upstream \t ahead \t behind`.
+    pub fn parse_line(line: &str) -> Option<LocalBranch> {
+        let mut f = line.split('\t');
+        let name = f.next()?.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let sha = f.next().unwrap_or("").trim().to_string();
+        let upstream = match f.next().unwrap_or("").trim() {
+            "" => None,
+            u => Some(u.to_string()),
+        };
+        // `%(upstream:track,nobracket)` field, e.g. "ahead 2, behind 1",
+        // "ahead 3", "behind 4", "gone", or "".
+        let track = f.next().unwrap_or("").trim();
+        let (ahead, behind) = parse_track(track);
+        Some(LocalBranch {
+            name: name.to_string(),
+            sha,
+            upstream,
+            ahead,
+            behind,
+        })
+    }
+}
+
+/// Parse git's `%(upstream:track,nobracket)` output into `(ahead, behind)`.
+/// Forms seen: `"ahead 2, behind 1"`, `"ahead 3"`, `"behind 4"`, `"gone"`, `""`.
+/// Anything else (no upstream) yields `(0, 0)`.
+fn parse_track(s: &str) -> (u32, u32) {
+    let mut ahead = 0;
+    let mut behind = 0;
+    for part in s.split(',') {
+        let mut it = part.split_whitespace();
+        match (it.next(), it.next()) {
+            (Some("ahead"), Some(n)) => ahead = n.parse().unwrap_or(0),
+            (Some("behind"), Some(n)) => behind = n.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+    (ahead, behind)
+}
+
 /// One entry from `git worktree list --porcelain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worktree {

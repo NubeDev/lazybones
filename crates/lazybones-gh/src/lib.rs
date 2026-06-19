@@ -26,7 +26,7 @@ mod repo;
 
 pub use error::GhError;
 pub use issue::{Issue, IssueState};
-pub use repo::{Branch, RepoView, Worktree};
+pub use repo::{Branch, LocalBranch, RepoView, Worktree};
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -126,6 +126,33 @@ impl Gh {
             .filter(|l| !l.trim().is_empty())
             .map(|l| serde_json::from_str(l).map_err(GhError::Json))
             .collect()
+    }
+
+    /// List **local** branches via `git for-each-ref` — works with no GitHub
+    /// remote, offline, and without `gh` auth (unlike [`branches`](Self::branches),
+    /// which hits the GitHub API and needs `{owner}/{repo}` to expand). Each
+    /// branch carries its short SHA and, when it tracks an upstream, the
+    /// ahead/behind counts. This is what a *local* repo manager should use.
+    pub async fn branches_local(
+        &self,
+        dir: impl AsRef<Path>,
+    ) -> Result<Vec<LocalBranch>, GhError> {
+        // Tab-delimited so branch names (which can't contain a tab) parse
+        // unambiguously. `%(upstream:track,nobracket)` is the safe way to get
+        // ahead/behind: it prints "ahead N, behind M" when an upstream exists
+        // and an empty string otherwise — never aborting (unlike
+        // `%(ahead-behind:...)`, which is fatal for branches with no upstream).
+        let out = self
+            .git(
+                dir,
+                [
+                    "for-each-ref",
+                    "--format=%(refname:short)\t%(objectname:short)\t%(upstream:short)\t%(upstream:track,nobracket)",
+                    "refs/heads/",
+                ],
+            )
+            .await?;
+        Ok(out.lines().filter_map(LocalBranch::parse_line).collect())
     }
 
     /// Create a new local branch in the repo at `dir` and check it out.
@@ -469,19 +496,64 @@ mod tests {
         assert_eq!(gh.current_branch(dir).await.unwrap(), base);
         // feat/y is merged-equal to base (empty), so a plain -d works.
         gh.delete_branch(dir, "feat/y", false).await.unwrap();
-        assert!(!gh.branches_local(dir).await.contains(&"feat/y".to_string()));
+        let names: Vec<String> = gh
+            .branches_local(dir)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+        assert!(!names.contains(&"feat/y".to_string()));
     }
 
-    impl Gh {
-        // test helper: local branch names via plain git.
-        async fn branches_local(&self, dir: &Path) -> Vec<String> {
-            self.git(dir, ["branch", "--format=%(refname:short)"])
-                .await
-                .unwrap()
-                .lines()
-                .map(|s| s.trim().to_string())
-                .collect()
+    #[tokio::test]
+    async fn branches_local_lists_without_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let gh = Gh::new();
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@t"],
+            &["config", "user.name", "t"],
+            &["commit", "--allow-empty", "-q", "-m", "root"],
+        ] {
+            gh.git(dir, args).await.unwrap();
         }
+        gh.create_branch(dir, "feat/x", None).await.unwrap();
+        // No remote configured at all — the GitHub-API `branches()` would fail
+        // here, but the local lister must still work.
+        let branches = gh.branches_local(dir).await.unwrap();
+        assert!(branches.iter().any(|b| b.name == "feat/x"));
+        // Without an upstream, ahead/behind are zero and upstream is None.
+        let feat = branches.iter().find(|b| b.name == "feat/x").unwrap();
+        assert_eq!(feat.upstream, None);
+        assert_eq!((feat.ahead, feat.behind), (0, 0));
+        assert!(!feat.sha.is_empty());
+    }
+
+    #[test]
+    fn local_branch_parses_with_and_without_upstream() {
+        let tracked =
+            LocalBranch::parse_line("master\t76c0afe\torigin/master\tahead 2, behind 1")
+                .unwrap();
+        assert_eq!(tracked.name, "master");
+        assert_eq!(tracked.sha, "76c0afe");
+        assert_eq!(tracked.upstream.as_deref(), Some("origin/master"));
+        assert_eq!((tracked.ahead, tracked.behind), (2, 1));
+
+        // ahead-only and behind-only forms.
+        let ahead_only =
+            LocalBranch::parse_line("a\tsha\torigin/a\tahead 3").unwrap();
+        assert_eq!((ahead_only.ahead, ahead_only.behind), (3, 0));
+        let behind_only =
+            LocalBranch::parse_line("b\tsha\torigin/b\tbehind 4").unwrap();
+        assert_eq!((behind_only.ahead, behind_only.behind), (0, 4));
+
+        let untracked = LocalBranch::parse_line("feat/x\ta1b2c3d\t\t").unwrap();
+        assert_eq!(untracked.upstream, None);
+        assert_eq!((untracked.ahead, untracked.behind), (0, 0));
+
+        assert!(LocalBranch::parse_line("").is_none());
     }
 
     #[tokio::test]
