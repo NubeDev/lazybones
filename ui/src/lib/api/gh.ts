@@ -3,6 +3,7 @@ import type {
   GhAuth,
   GhBranch,
   GhIssue,
+  GhLocalBranch,
   GhRepo,
   GhWorktree,
   IssueStateFilter,
@@ -38,6 +39,17 @@ export function createGhBranch(
     method: "POST",
     auth: true,
     body: { dir, name, from: from ?? null },
+  });
+}
+
+/** `GET /gh/local-branches?dir=` — local branches via `git` (no remote needed). */
+export function listGhLocalBranches(
+  dir: string,
+  signal?: AbortSignal,
+): Promise<GhLocalBranch[]> {
+  return request<GhLocalBranch[]>(`/gh/local-branches${dirq(dir)}`, {
+    auth: true,
+    signal,
   });
 }
 

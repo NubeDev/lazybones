@@ -24,8 +24,7 @@ import {
   useCheckoutGhBranch,
   useCreateGhBranch,
   useDeleteGhBranch,
-  useGhAuth,
-  useGhBranches,
+  useGhLocalBranches,
   useGhWorktrees,
   usePruneGhWorktrees,
   useRemoveGhWorktree,
@@ -41,18 +40,18 @@ function errMsg(e: unknown, fallback: string): string {
 }
 
 /** In-workflow Git manager: inspect + safely manage the repo's branches and the
- *  worktrees lazybones created. Operates on the workflow's fixed repo (`dir`);
- *  `tasks` are this workflow's tasks, used to mark worktrees in use. */
+ *  worktrees lazybones created. Operates on the workflow's fixed repo (`dir`)
+ *  using *local* git (no GitHub remote or `gh` auth required). `tasks` are this
+ *  workflow's tasks, used to mark worktrees in use. */
 export function WorkflowGit({ dir, tasks }: { dir: string; tasks: Task[] }) {
-  const auth = useGhAuth();
-
-  // Not logged in → same prompt the Issues tab shows.
-  if (auth.data && !auth.data.authenticated) {
+  // The repo is fixed by the workspace. If it's unset we can't do anything —
+  // say so plainly instead of firing failing git calls.
+  if (!dir.trim()) {
     return (
       <EmptyState
         icon={FolderGit2}
-        title="GitHub CLI not authenticated"
-        description={auth.data.detail ?? "Run `gh auth login`, then reload."}
+        title="No repository configured"
+        description="This workflow's workspace has no repo path set, so there's nothing to manage here."
       />
     );
   }
@@ -60,11 +59,17 @@ export function WorkflowGit({ dir, tasks }: { dir: string; tasks: Task[] }) {
   // The main worktree's branch is the repo's actual checked-out HEAD — more
   // accurate than the repo's *default* branch for marking "current".
   const worktrees = useGhWorktrees(dir);
-  const current =
-    worktrees.data?.find((w) => w.is_main)?.branch ?? null;
+  const current = worktrees.data?.find((w) => w.is_main)?.branch ?? null;
 
   return (
     <div className="space-y-4">
+      {/* Make it unambiguous which checkout we're operating on. */}
+      <Tooltip label={dir} side="bottom">
+        <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <FolderGit2 className="size-3.5" />
+          Operating on <span className="font-mono text-foreground">{dir}</span>
+        </p>
+      </Tooltip>
       <BranchesCard dir={dir} current={current} />
       <WorktreesCard dir={dir} tasks={tasks} />
     </div>
@@ -74,7 +79,7 @@ export function WorkflowGit({ dir, tasks }: { dir: string; tasks: Task[] }) {
 // ---- Card A: branches ---------------------------------------------------
 
 function BranchesCard({ dir, current }: { dir: string; current: string | null }) {
-  const { data: branches, isLoading, error } = useGhBranches(dir);
+  const { data: branches, isLoading, error } = useGhLocalBranches(dir);
   const create = useCreateGhBranch();
   const checkout = useCheckoutGhBranch();
   const del = useDeleteGhBranch();
@@ -147,58 +152,83 @@ function BranchesCard({ dir, current }: { dir: string; current: string | null })
 
       {isLoading && <Skeleton className="h-20 w-full" />}
       {error && (
-        <p className="text-xs text-status-blocked">
+        <p className="rounded-md bg-status-blocked/10 px-3 py-2 text-xs text-status-blocked">
           {errMsg(error, "Can't load branches.")}
         </p>
       )}
+      {branches && branches.length === 0 && !isLoading && (
+        <p className="text-xs text-muted-foreground">No local branches yet.</p>
+      )}
 
-      <ul className="divide-y divide-border rounded-md border border-border">
-        {branches?.map((b) => {
-          const isCurrent = b.name === current;
-          const switching =
-            checkout.isPending && checkout.variables?.branch === b.name;
-          const deleting = del.isPending && del.variables?.name === b.name;
-          return (
-            <li
-              key={b.name}
-              className="flex items-center gap-2 px-3 py-2 text-xs"
-            >
-              <span className="truncate font-mono">{b.name}</span>
-              {isCurrent && (
-                <span className="rounded-full bg-accent/15 px-1.5 py-px text-[10px] text-accent">
-                  current
+      {branches && branches.length > 0 && (
+        <ul className="divide-y divide-border rounded-md border border-border">
+          {branches.map((b) => {
+            const isCurrent = b.name === current;
+            const switching =
+              checkout.isPending && checkout.variables?.branch === b.name;
+            const deleting = del.isPending && del.variables?.name === b.name;
+            return (
+              <li
+                key={b.name}
+                className="flex items-center gap-2 px-3 py-2 text-xs"
+              >
+                <span className="truncate font-mono">{b.name}</span>
+                <span className="font-mono text-muted-foreground/70">
+                  {b.sha}
                 </span>
-              )}
-              {b.protected && (
-                <span className="rounded-full border border-border px-1.5 py-px text-[10px] text-muted-foreground">
-                  protected
-                </span>
-              )}
-              <div className="ml-auto flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={isCurrent || switching}
-                  onClick={() => checkout.mutate({ dir, branch: b.name })}
-                >
-                  {switching ? "Switching…" : "Switch"}
-                </Button>
-                <DeleteBranchButton
-                  disabled={isCurrent || b.protected || deleting}
-                  pending={deleting}
-                  branch={b.name}
-                  error={
-                    del.variables?.name === b.name && del.error
-                      ? errMsg(del.error, "Delete failed.")
-                      : null
-                  }
-                  onConfirm={(force) => del.mutate({ dir, name: b.name, force })}
-                />
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                {isCurrent && (
+                  <span className="rounded-full bg-accent/15 px-1.5 py-px text-[10px] text-accent">
+                    current
+                  </span>
+                )}
+                {b.ahead > 0 && (
+                  <Tooltip
+                    label={`${b.ahead} commit(s) ahead of ${b.upstream}`}
+                    side="top"
+                  >
+                    <span className="text-[10px] text-muted-foreground">
+                      ↑{b.ahead}
+                    </span>
+                  </Tooltip>
+                )}
+                {b.behind > 0 && (
+                  <Tooltip
+                    label={`${b.behind} commit(s) behind ${b.upstream}`}
+                    side="top"
+                  >
+                    <span className="text-[10px] text-muted-foreground">
+                      ↓{b.behind}
+                    </span>
+                  </Tooltip>
+                )}
+                <div className="ml-auto flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isCurrent || switching}
+                    onClick={() => checkout.mutate({ dir, branch: b.name })}
+                  >
+                    {switching ? "Switching…" : "Switch"}
+                  </Button>
+                  <DeleteBranchButton
+                    disabled={isCurrent || deleting}
+                    pending={deleting}
+                    branch={b.name}
+                    error={
+                      del.variables?.name === b.name && del.error
+                        ? errMsg(del.error, "Delete failed.")
+                        : null
+                    }
+                    onConfirm={(force) =>
+                      del.mutate({ dir, name: b.name, force })
+                    }
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

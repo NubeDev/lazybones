@@ -39,6 +39,16 @@ export interface GhBranch {
   protected: boolean;
 }
 
+/** One local branch (`GET /gh/local-branches`) — from `git`, no remote needed. */
+export interface GhLocalBranch {
+  name: string;
+  sha: string;
+  /** Upstream tracking ref (e.g. `origin/master`), if any. */
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
 /** One worktree row (`GET /gh/worktrees`). */
 export interface GhWorktree {
   path: string;

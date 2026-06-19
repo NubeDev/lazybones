@@ -10,6 +10,7 @@ import {
   getGhRepo,
   listGhBranches,
   listGhIssues,
+  listGhLocalBranches,
   listGhWorktrees,
   pruneGhWorktrees,
   removeGhWorktree,
@@ -56,14 +57,32 @@ export function useGhBranches(dir: string | null) {
   });
 }
 
-/** Make + check out a new branch, then refresh that dir's branch list. */
+/** Refresh everything a branch op can affect: both branch lists, the repo's
+ *  current branch, and worktrees (a switch/create moves the main worktree). */
+function invalidateBranchState(qc: ReturnType<typeof useQueryClient>, dir: string) {
+  qc.invalidateQueries({ queryKey: ["gh-branches", dir] });
+  qc.invalidateQueries({ queryKey: ["gh-local-branches", dir] });
+  qc.invalidateQueries({ queryKey: ["gh-repo", dir] });
+  qc.invalidateQueries({ queryKey: ["gh-worktrees", dir] });
+}
+
+/** Make + check out a new branch, then refresh that dir's branch state. */
 export function useCreateGhBranch() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ dir, name, from }: { dir: string; name: string; from?: string | null }) =>
       createGhBranch(dir, name, from),
-    onSuccess: (_res, { dir }) =>
-      qc.invalidateQueries({ queryKey: ["gh-branches", dir] }),
+    onSuccess: (_res, { dir }) => invalidateBranchState(qc, dir),
+  });
+}
+
+/** Local branches for a dir (via `git`, no remote required). */
+export function useGhLocalBranches(dir: string | null) {
+  return useQuery({
+    queryKey: ["gh-local-branches", dir],
+    queryFn: ({ signal }) => listGhLocalBranches(dir!, signal),
+    enabled: !!dir,
+    retry: false,
   });
 }
 
@@ -73,11 +92,7 @@ export function useCheckoutGhBranch() {
   return useMutation({
     mutationFn: ({ dir, branch }: { dir: string; branch: string }) =>
       checkoutGhBranch(dir, branch),
-    onSuccess: (_res, { dir }) => {
-      qc.invalidateQueries({ queryKey: ["gh-branches", dir] });
-      qc.invalidateQueries({ queryKey: ["gh-repo", dir] });
-      qc.invalidateQueries({ queryKey: ["gh-worktrees", dir] });
-    },
+    onSuccess: (_res, { dir }) => invalidateBranchState(qc, dir),
   });
 }
 
@@ -87,8 +102,7 @@ export function useDeleteGhBranch() {
   return useMutation({
     mutationFn: ({ dir, name, force }: { dir: string; name: string; force?: boolean }) =>
       deleteGhBranch(dir, name, force),
-    onSuccess: (_res, { dir }) =>
-      qc.invalidateQueries({ queryKey: ["gh-branches", dir] }),
+    onSuccess: (_res, { dir }) => invalidateBranchState(qc, dir),
   });
 }
 
