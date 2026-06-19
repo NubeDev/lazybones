@@ -272,3 +272,76 @@ async fn three_workflows_run_concurrently_with_reuse() {
         assert_eq!(detail["done_count"], detail["task_count"]);
     }
 }
+
+/// A `reuse`-mode task whose `reuse_from` points at a task that has never been
+/// claimed (so it has no stored `worktree`) must **block with a specific reason**
+/// when the scheduler tries to claim it — not panic, not silently fall back. This
+/// is the cross-workflow-reuse failure mode the docs require be guarded
+/// (workflows-scope.md §`reuse_from`).
+#[tokio::test]
+async fn reuse_from_missing_target_blocks_with_reason() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo_with_remote(tmp.path(), "abc");
+    let hcom_bin = write_fake_hcom(tmp.path());
+
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    // One workflow, reuse-by-default, with a single task pointing `reuse_from` at
+    // a task id that does not exist anywhere — so it can never have a worktree.
+    let (s, _) = send(
+        &app,
+        loop_post(
+            "/workflows",
+            json!({
+                "id": "wf-r",
+                "title": "wf-r",
+                "workspace": { "repo": repo.to_string_lossy(), "worktree_mode": "reuse" }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (s, _) = send(
+        &app,
+        loop_post(
+            "/workflows/wf-r/tasks",
+            json!({
+                "id": "wfr-ui",
+                "title": "needs a tree it can't get",
+                "spec": "x",
+                "reuse_from": "ghost-task"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(&repo), &hcom_bin);
+    assert_eq!(
+        send(&app, loop_post("/workflows/wf-r/start", json!(null))).await.0,
+        StatusCode::OK
+    );
+
+    engine.tick().await;
+    assert!(
+        wait_for(&store, "wfr-ui", Status::Blocked).await,
+        "task with a missing reuse_from target must block, not proceed"
+    );
+
+    // The block carries a clear, specific reason naming the missing source task —
+    // never a panic or a silent fall-through to a fresh tree.
+    let task = store.get_task("wfr-ui").await.unwrap().unwrap();
+    let reason = task.reason.unwrap_or_default();
+    assert!(
+        reason.contains("reuse_from") && reason.contains("ghost-task"),
+        "block reason should name the missing reuse_from target: {reason:?}"
+    );
+
+    // The workflow surfaces as needs-attention (a blocked task), not done.
+    let (_, detail) = send(&app, get("/workflows/wf-r")).await;
+    assert_eq!(detail["state"], "needs-attention", "blocked task → needs-attention");
+}
