@@ -39,6 +39,17 @@ export interface GhBranch {
   protected: boolean;
 }
 
+/** One worktree row (`GET /gh/worktrees`). */
+export interface GhWorktree {
+  path: string;
+  branch: string | null;
+  /** Tip commit SHA; `null` for a bare/unborn entry. */
+  head: string | null;
+  /** The repo's primary checkout (never removable from the UI). */
+  is_main: boolean;
+  locked: boolean;
+}
+
 /** Which issues to list. */
 export type IssueStateFilter = "open" | "closed" | "all";
 

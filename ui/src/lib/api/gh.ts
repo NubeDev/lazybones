@@ -4,6 +4,7 @@ import type {
   GhBranch,
   GhIssue,
   GhRepo,
+  GhWorktree,
   IssueStateFilter,
 } from "@/types/gh";
 
@@ -37,6 +38,60 @@ export function createGhBranch(
     method: "POST",
     auth: true,
     body: { dir, name, from: from ?? null },
+  });
+}
+
+/** `POST /gh/checkout` — switch to an existing branch. */
+export function checkoutGhBranch(
+  dir: string,
+  branch: string,
+): Promise<{ branch: string }> {
+  return request<{ branch: string }>("/gh/checkout", {
+    method: "POST",
+    auth: true,
+    body: { dir, branch },
+  });
+}
+
+/** `DELETE /gh/branches/:name?dir=&force=` — delete a local branch. */
+export function deleteGhBranch(
+  dir: string,
+  name: string,
+  force = false,
+): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(
+    `/gh/branches/${encodeURIComponent(name)}${dirq(dir)}&force=${force}`,
+    { method: "DELETE", auth: true },
+  );
+}
+
+/** `GET /gh/worktrees?dir=` — list the repo's worktrees. */
+export function listGhWorktrees(
+  dir: string,
+  signal?: AbortSignal,
+): Promise<GhWorktree[]> {
+  return request<GhWorktree[]>(`/gh/worktrees${dirq(dir)}`, { auth: true, signal });
+}
+
+/** `DELETE /gh/worktrees` — remove a worktree by path. */
+export function removeGhWorktree(
+  dir: string,
+  path: string,
+  force = false,
+): Promise<{ removed: string }> {
+  return request<{ removed: string }>("/gh/worktrees", {
+    method: "DELETE",
+    auth: true,
+    body: { dir, path, force },
+  });
+}
+
+/** `POST /gh/worktrees/prune` — drop stale worktree entries. */
+export function pruneGhWorktrees(dir: string): Promise<{ pruned: boolean }> {
+  return request<{ pruned: boolean }>("/gh/worktrees/prune", {
+    method: "POST",
+    auth: true,
+    body: { dir },
   });
 }
 

@@ -18,6 +18,7 @@ import { WorkflowEvents } from "./workflow-events";
 import { WorkflowControls } from "./workflow-controls";
 import { AddTaskDialog } from "./add-task-dialog";
 import { WorkflowIssues } from "./workflow-issues";
+import { WorkflowGit } from "./workflow-git";
 
 /** Workflow detail: workspace summary + derived state + progress, with Plan /
  *  Board / Events tabs. The board reuses the existing component, filtered to this
@@ -144,6 +145,7 @@ export function WorkflowDetail({
             <TabsList>
               <TabsTrigger value="plan">Plan</TabsTrigger>
               <TabsTrigger value="board">Board</TabsTrigger>
+              <TabsTrigger value="git">Git</TabsTrigger>
               <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="issues">Issues</TabsTrigger>
             </TabsList>
@@ -167,6 +169,10 @@ export function WorkflowDetail({
                 onSelect={() => {}}
               />
             </div>
+          </TabsContent>
+
+          <TabsContent value="git">
+            <WorkflowGit dir={wf.workspace.repo} tasks={runTasks} />
           </TabsContent>
 
           <TabsContent value="events">

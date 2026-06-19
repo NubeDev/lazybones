@@ -1,13 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listDir } from "@/lib/api/fs";
 import {
+  checkoutGhBranch,
   closeGhIssue,
   createGhBranch,
   createGhIssue,
+  deleteGhBranch,
   getGhAuth,
   getGhRepo,
   listGhBranches,
   listGhIssues,
+  listGhWorktrees,
+  pruneGhWorktrees,
+  removeGhWorktree,
 } from "@/lib/api/gh";
 import type { IssueStateFilter } from "@/types/gh";
 
@@ -59,6 +64,62 @@ export function useCreateGhBranch() {
       createGhBranch(dir, name, from),
     onSuccess: (_res, { dir }) =>
       qc.invalidateQueries({ queryKey: ["gh-branches", dir] }),
+  });
+}
+
+/** Switch to an existing branch, then refresh branches + repo (current branch). */
+export function useCheckoutGhBranch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dir, branch }: { dir: string; branch: string }) =>
+      checkoutGhBranch(dir, branch),
+    onSuccess: (_res, { dir }) => {
+      qc.invalidateQueries({ queryKey: ["gh-branches", dir] });
+      qc.invalidateQueries({ queryKey: ["gh-repo", dir] });
+      qc.invalidateQueries({ queryKey: ["gh-worktrees", dir] });
+    },
+  });
+}
+
+/** Delete a local branch (optionally forced), then refresh that dir's branches. */
+export function useDeleteGhBranch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dir, name, force }: { dir: string; name: string; force?: boolean }) =>
+      deleteGhBranch(dir, name, force),
+    onSuccess: (_res, { dir }) =>
+      qc.invalidateQueries({ queryKey: ["gh-branches", dir] }),
+  });
+}
+
+/** Worktrees for a dir. */
+export function useGhWorktrees(dir: string | null) {
+  return useQuery({
+    queryKey: ["gh-worktrees", dir],
+    queryFn: ({ signal }) => listGhWorktrees(dir!, signal),
+    enabled: !!dir,
+    retry: false,
+  });
+}
+
+/** Remove a worktree by path (optionally forced), then refresh the list. */
+export function useRemoveGhWorktree() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dir, path, force }: { dir: string; path: string; force?: boolean }) =>
+      removeGhWorktree(dir, path, force),
+    onSuccess: (_res, { dir }) =>
+      qc.invalidateQueries({ queryKey: ["gh-worktrees", dir] }),
+  });
+}
+
+/** Prune stale worktree entries, then refresh the list. */
+export function usePruneGhWorktrees() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dir }: { dir: string }) => pruneGhWorktrees(dir),
+    onSuccess: (_res, { dir }) =>
+      qc.invalidateQueries({ queryKey: ["gh-worktrees", dir] }),
   });
 }
 
