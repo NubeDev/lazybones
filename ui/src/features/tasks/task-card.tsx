@@ -1,9 +1,25 @@
-import { GitBranch, Boxes, Clock } from "lucide-react";
+import { GitBranch, Boxes, Clock, FolderGit2, Recycle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { StatusDot } from "@/components/ui/status-badge";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils/cn";
 import { relativeTime } from "@/lib/utils/platform";
-import type { Task } from "@/types/task";
+import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
+import type { Task, WorktreeMode } from "@/types/task";
+
+/** The mode the loop will actually use: a workflow-only override wins, else the
+ *  task's stored mode. Lets the board surface reuse chains at a glance without
+ *  re-fetching the parent workflow. */
+function effectiveMode(task: Task): WorktreeMode {
+  return task.worktree_mode_override ?? task.worktree_mode;
+}
+
+/** A worktree path shown short: its last two segments, enough to tell trees apart
+ *  while the full path lives in the tooltip. */
+function shortWorktree(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
+}
 
 /** A compact, clickable task tile for the board columns. Draggable when the task
  *  has a legal operator move (promote / block); the board enforces where it can
@@ -83,6 +99,30 @@ export function TaskCard({
           <span className="inline-flex items-center gap-1">
             <Clock className="size-3" />
             {relativeTime(task.heartbeat)}
+          </span>
+        )}
+      </div>
+
+      {/* Resolved worktree: mode + path + reuse source, so reuse chains across a
+          workflow's tasks are visible at a glance (docs/multi-repo-and-worktrees.md). */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground/80">
+        <Tooltip label={WORKTREE_MODES[effectiveMode(task)].hint} side="bottom">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-muted-foreground">
+            {WORKTREE_MODES[effectiveMode(task)].label}
+          </span>
+        </Tooltip>
+        {task.worktree && (
+          <Tooltip label={task.worktree} side="bottom">
+            <span className="inline-flex items-center gap-1 truncate">
+              <FolderGit2 className="size-3" />
+              <span className="truncate font-mono">{shortWorktree(task.worktree)}</span>
+            </span>
+          </Tooltip>
+        )}
+        {task.reuse_from && (
+          <span className="inline-flex items-center gap-1">
+            <Recycle className="size-3" />
+            <span className="font-mono">reuses {task.reuse_from}</span>
           </span>
         )}
       </div>

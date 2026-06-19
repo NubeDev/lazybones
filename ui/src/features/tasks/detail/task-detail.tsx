@@ -4,6 +4,7 @@ import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { FieldRow, Mono } from "./field-row";
 import { DepsList } from "./deps-list";
 import { BlockDialog } from "./block-dialog";
@@ -82,6 +83,15 @@ export function TaskDetail({
               <FieldRow label="Run">{task.run}</FieldRow>
               <FieldRow label="Tool">{task.tool ?? "config default"}</FieldRow>
               {task.session && <FieldRow label="Session"><Mono>{task.session}</Mono></FieldRow>}
+              <FieldRow label="Worktree mode">
+                {WORKTREE_MODES[task.worktree_mode_override ?? task.worktree_mode].label}
+                {task.worktree_mode_override && (
+                  <span className="ml-1 text-[10px] text-muted-foreground">(override)</span>
+                )}
+              </FieldRow>
+              {task.reuse_from && (
+                <FieldRow label="Reuses worktree of"><Mono>{task.reuse_from}</Mono></FieldRow>
+              )}
               {task.worktree && (
                 <FieldRow label="Worktree"><Mono>{task.worktree}</Mono></FieldRow>
               )}
