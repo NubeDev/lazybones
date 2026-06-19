@@ -68,6 +68,10 @@ pub struct AgentTestResult {
     pub ok: bool,
     /// Human-readable outcome (success summary or failure reason).
     pub detail: String,
+    /// The agent's own reply to the probe — the model id + identity it reported,
+    /// when we could read it back. Shown to the user as proof the live agent is
+    /// really theirs. `None` when the agent couldn't be read back.
+    pub reply: Option<String>,
 }
 
 /// How long a live probe may run before we give up (seconds).
@@ -86,10 +90,17 @@ pub fn test_agent(tool: &str, key: Option<&str>) -> Option<AgentTestResult> {
     let spec = AGENTS.iter().find(|s| s.tool == tool)?;
     let key_env = key.map(|v| (spec.env_var, v));
     let outcome = probe_agent(spec.tool, key_env, PROBE_TIMEOUT_SECS);
+    // When the agent answered, lead with what it actually said (model + who it
+    // is) so the user sees a concrete identity, not just "it launched".
+    let detail = match &outcome.reply {
+        Some(reply) => format!("authenticated — agent replied: {reply}"),
+        None => outcome.detail,
+    };
     Some(AgentTestResult {
         tool: spec.tool.to_owned(),
         ok: outcome.ok,
-        detail: outcome.detail,
+        detail,
+        reply: outcome.reply,
     })
 }
 

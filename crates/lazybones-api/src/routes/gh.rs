@@ -83,6 +83,28 @@ impl From<gh::Branch> for BranchDto {
     }
 }
 
+/// One local branch (from `git`, no remote required).
+#[derive(Debug, Serialize)]
+pub struct LocalBranchDto {
+    pub name: String,
+    pub sha: String,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+impl From<gh::LocalBranch> for LocalBranchDto {
+    fn from(b: gh::LocalBranch) -> Self {
+        Self {
+            name: b.name,
+            sha: b.sha,
+            upstream: b.upstream,
+            ahead: b.ahead,
+            behind: b.behind,
+        }
+    }
+}
+
 /// One issue.
 #[derive(Debug, Serialize)]
 pub struct IssueDto {
@@ -155,6 +177,19 @@ pub async fn gh_branches(
 ) -> ApiResult<Json<Vec<BranchDto>>> {
     session.require(Capability::Read, "gh:branches", &q.dir)?;
     let branches = Gh::new().branches(&q.dir).await?;
+    Ok(Json(branches.into_iter().map(Into::into).collect()))
+}
+
+/// `GET /gh/local-branches?dir=` — list **local** branches via `git`. Unlike
+/// `/gh/branches` (GitHub API, needs a remote), this works on any local repo,
+/// offline. Requires `Read`. This is what the in-workflow Git manager uses.
+pub async fn gh_branches_local(
+    State(_): State<AppState>,
+    session: Session,
+    Query(q): Query<DirQuery>,
+) -> ApiResult<Json<Vec<LocalBranchDto>>> {
+    session.require(Capability::Read, "gh:branches:local", &q.dir)?;
+    let branches = Gh::new().branches_local(&q.dir).await?;
     Ok(Json(branches.into_iter().map(Into::into).collect()))
 }
 

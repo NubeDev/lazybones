@@ -100,6 +100,7 @@ pub fn router(state: AppState) -> Router {
             "/gh/branches",
             get(gh::gh_branches).post(gh::gh_create_branch),
         )
+        .route("/gh/local-branches", get(gh::gh_branches_local))
         .route("/gh/branches/:name", delete(gh::gh_delete_branch))
         .route("/gh/checkout", post(gh::gh_checkout))
         .route(

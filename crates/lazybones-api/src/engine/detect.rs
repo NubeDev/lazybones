@@ -70,7 +70,18 @@ pub(crate) struct ProbeOutcome {
     pub ok: bool,
     /// A short human-readable explanation (success summary or failure reason).
     pub detail: String,
+    /// The agent's own reply to the probe, when we could read it back: the model
+    /// id + identity it reported. Proof to the user it's really their agent, not
+    /// just that a process launched. `None` if the agent didn't get far enough to
+    /// answer (e.g. blocked on a prompt) or its transcript couldn't be read.
+    pub reply: Option<String>,
 }
+
+/// What we ask the probe agent to answer: its model id and who it is, on one
+/// line, so the test can echo a concrete identity back to the user.
+const PROBE_PROMPT: &str =
+    "Reply with exactly one line and nothing else, in this format: \
+     model=<your exact model id>, who=<a short phrase for who you are>";
 
 /// Actually run the agent through hcom to prove its credential works.
 ///
@@ -97,6 +108,7 @@ pub(crate) fn probe_agent(
         return ProbeOutcome {
             ok: false,
             detail: "hcom (the engine that launches agents) is not installed".to_owned(),
+            reply: None,
         };
     };
 
@@ -106,7 +118,7 @@ pub(crate) fn probe_agent(
         tool,
         "--headless",
         "--hcom-prompt",
-        "Reply with exactly: ok",
+        PROBE_PROMPT,
         "--go",
     ]);
     if let Some((var, value)) = key_env {
@@ -118,6 +130,7 @@ pub(crate) fn probe_agent(
             return ProbeOutcome {
                 ok: false,
                 detail: format!("could not launch hcom: {e}"),
+                reply: None,
             };
         }
     };
@@ -135,19 +148,92 @@ pub(crate) fn probe_agent(
         return ProbeOutcome {
             ok: false,
             detail: reason.trim().to_owned(),
+            reply: None,
         };
     }
     let Some(batch) = parse_batch_id(&launch_text) else {
         return ProbeOutcome {
             ok: false,
             detail: "hcom did not start a launch batch (see daemon logs)".to_owned(),
+            reply: None,
         };
     };
+    // The agent's name (from the `Names:` line) is how we read its reply back.
+    let name = parse_agent_name(&launch_text);
 
-    // 2. Block until the batch settles, then 3. tear it down regardless.
-    let outcome = wait_for_batch(&hcom, &batch, timeout_secs);
-    let _ = Command::new(&hcom).args(["kill", &batch]).output();
+    // 2. Block until the batch settles. On success, read the agent's own reply
+    //    back so the user sees a concrete model + identity. 3. Tear it down.
+    let mut outcome = wait_for_batch(&hcom, &batch, timeout_secs);
+    if outcome.ok
+        && let Some(name) = &name
+    {
+        outcome.reply = read_agent_reply(&hcom, name);
+    }
+    // Kill by name when we have it (kills the exact agent), else by batch.
+    let target = name.as_deref().unwrap_or(&batch);
+    let _ = Command::new(&hcom).args(["kill", target]).output();
     outcome
+}
+
+/// Pull the agent name hcom prints on the `Names: <name>` line at launch. A probe
+/// launches exactly one agent, so the first name is the one we want.
+fn parse_agent_name(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("Names:"))
+        .and_then(|names| names.split(',').next())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+}
+
+/// Read the probe agent's last reply via `hcom transcript <name> --full --json`
+/// and pull out the assistant's answer (the model + identity line we asked for).
+/// Best-effort: any failure (no transcript yet, unparseable output) yields `None`
+/// and the caller falls back to the generic "agent is running" detail.
+fn read_agent_reply(hcom: &std::path::Path, name: &str) -> Option<String> {
+    let out = Command::new(hcom)
+        .args(["transcript", name, "--full", "--json"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let json = serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()?;
+    // The transcript is a list of exchanges; we want the assistant's text from
+    // the most recent one. hcom nests the reply under an exchange's assistant
+    // field — accept either a flat string or the common `{role, text}` shapes.
+    let exchanges = json.as_array().or_else(|| json.get("exchanges").and_then(|e| e.as_array()))?;
+    let reply = exchanges.iter().rev().find_map(extract_assistant_text)?;
+    let reply = reply.trim();
+    if reply.is_empty() {
+        return None;
+    }
+    // Keep it to the single answer line, and bound the length defensively.
+    let line = reply.lines().map(str::trim).find(|l| !l.is_empty())?;
+    Some(line.chars().take(200).collect())
+}
+
+/// Best-effort dig for an assistant reply string inside one transcript exchange,
+/// tolerating the few shapes hcom's `--json` uses (`assistant` as a string, or an
+/// object/array of content blocks with a `text` field).
+fn extract_assistant_text(exchange: &serde_json::Value) -> Option<String> {
+    let assistant = exchange.get("assistant").or_else(|| exchange.get("response"))?;
+    if let Some(s) = assistant.as_str() {
+        return Some(s.to_owned());
+    }
+    if let Some(s) = assistant.get("text").and_then(serde_json::Value::as_str) {
+        return Some(s.to_owned());
+    }
+    if let Some(blocks) = assistant.as_array() {
+        let text: String = blocks
+            .iter()
+            .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+    None
 }
 
 /// Pull the `Batch id: <id>` hcom prints on launch out of its output.
@@ -171,6 +257,7 @@ fn wait_for_batch(hcom: &std::path::Path, batch: &str, timeout_secs: u64) -> Pro
             return ProbeOutcome {
                 ok: false,
                 detail: format!("error waiting on agent: {e}"),
+                reply: None,
             };
         }
     };
@@ -188,6 +275,7 @@ fn wait_for_batch(hcom: &std::path::Path, batch: &str, timeout_secs: u64) -> Pro
             return ProbeOutcome {
                 ok: true,
                 detail: "authenticated; agent launched and is running".to_owned(),
+                reply: None,
             };
         }
         if failed > 0 {
@@ -198,6 +286,7 @@ fn wait_for_batch(hcom: &std::path::Path, batch: &str, timeout_secs: u64) -> Pro
             return ProbeOutcome {
                 ok: false,
                 detail: first_line(why),
+                reply: None,
             };
         }
     }
@@ -207,11 +296,13 @@ fn wait_for_batch(hcom: &std::path::Path, batch: &str, timeout_secs: u64) -> Pro
         ProbeOutcome {
             ok: true,
             detail: "authenticated; agent launched".to_owned(),
+            reply: None,
         }
     } else {
         ProbeOutcome {
             ok: false,
             detail: first_line(text.trim()),
+            reply: None,
         }
     }
 }

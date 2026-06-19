@@ -154,6 +154,49 @@ async fn gh_worktrees_lists_main_and_extra() {
     );
 }
 
+#[tokio::test]
+async fn gh_local_branches_works_without_remote() {
+    let app = app().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let run_git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "t@t"],
+        &["config", "user.name", "t"],
+        &["commit", "--allow-empty", "-q", "-m", "root"],
+        &["branch", "feat/x"],
+    ] {
+        run_git(args);
+    }
+
+    let uri = format!("/gh/local-branches?dir={}", urlencode(&dir.to_string_lossy()));
+    let (status, body) = send(&app, loop_req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"feat/x"));
+    // No remote → upstream null, ahead/behind 0 — and no error.
+    let feat = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["name"] == json!("feat/x"))
+        .unwrap();
+    assert_eq!(feat["upstream"], Value::Null);
+    assert_eq!(feat["ahead"], json!(0));
+}
+
 /// Minimal percent-encoding for a filesystem path used in a query string.
 fn urlencode(s: &str) -> String {
     s.bytes()
