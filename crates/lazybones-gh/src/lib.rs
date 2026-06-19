@@ -26,7 +26,7 @@ mod repo;
 
 pub use error::GhError;
 pub use issue::{Issue, IssueState};
-pub use repo::{Branch, RepoView};
+pub use repo::{Branch, RepoView, Worktree};
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -151,6 +151,54 @@ impl Gh {
     /// The current checked-out branch of the repo at `dir`.
     pub async fn current_branch(&self, dir: impl AsRef<Path>) -> Result<String, GhError> {
         self.git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]).await
+    }
+
+    /// Switch the repo at `dir` to an existing `branch` (`git checkout`).
+    pub async fn checkout(&self, dir: impl AsRef<Path>, branch: &str) -> Result<(), GhError> {
+        self.git(dir, ["checkout", branch]).await.map(|_| ())
+    }
+
+    /// Delete a local branch. `force` uses `-D` (delete even if unmerged);
+    /// otherwise `-d` (refuses to drop unmerged work).
+    pub async fn delete_branch(
+        &self,
+        dir: impl AsRef<Path>,
+        name: &str,
+        force: bool,
+    ) -> Result<(), GhError> {
+        let flag = if force { "-D" } else { "-d" };
+        self.git(dir, ["branch", flag, name]).await.map(|_| ())
+    }
+
+    // ---- worktrees ------------------------------------------------------
+
+    /// List the repo's worktrees (`git worktree list --porcelain`).
+    pub async fn worktrees(&self, dir: impl AsRef<Path>) -> Result<Vec<Worktree>, GhError> {
+        let out = self
+            .git(dir, ["worktree", "list", "--porcelain"])
+            .await?;
+        Ok(Worktree::parse_list(&out))
+    }
+
+    /// Remove a worktree by path (`git worktree remove`). `force` overrides the
+    /// "contains modifications" / locked guards.
+    pub async fn remove_worktree(
+        &self,
+        dir: impl AsRef<Path>,
+        path: &str,
+        force: bool,
+    ) -> Result<(), GhError> {
+        let mut args = vec!["worktree".to_string(), "remove".to_string()];
+        if force {
+            args.push("--force".to_string());
+        }
+        args.push(path.to_string());
+        self.git(dir, args).await.map(|_| ())
+    }
+
+    /// Prune stale worktree administrative entries (`git worktree prune`).
+    pub async fn prune_worktrees(&self, dir: impl AsRef<Path>) -> Result<(), GhError> {
+        self.git(dir, ["worktree", "prune"]).await.map(|_| ())
     }
 
     /// Run `git <args...>` in `dir`. Shares [`run`](Self::run)'s spawn + error
@@ -347,6 +395,93 @@ mod tests {
         }
         gh.create_branch(dir, "feat/x", None).await.unwrap();
         assert_eq!(gh.current_branch(dir).await.unwrap(), "feat/x");
+    }
+
+    #[test]
+    fn worktree_porcelain_parses() {
+        let out = "worktree /repo\nHEAD abc123\nbranch refs/heads/master\n\n\
+                   worktree /repo/.lazy/wt/feat-x\nHEAD def456\nbranch refs/heads/feat/x\nlocked\n\n\
+                   worktree /repo/detached\nHEAD 0099aa\ndetached\n";
+        let trees = Worktree::parse_list(out);
+        assert_eq!(trees.len(), 3);
+
+        assert_eq!(trees[0].path, "/repo");
+        assert_eq!(trees[0].branch.as_deref(), Some("master"));
+        assert_eq!(trees[0].head.as_deref(), Some("abc123"));
+        assert!(trees[0].is_main);
+        assert!(!trees[0].locked);
+
+        assert_eq!(trees[1].branch.as_deref(), Some("feat/x"));
+        assert!(!trees[1].is_main);
+        assert!(trees[1].locked);
+
+        // Detached HEAD: no branch.
+        assert_eq!(trees[2].branch, None);
+        assert_eq!(trees[2].head.as_deref(), Some("0099aa"));
+    }
+
+    #[tokio::test]
+    async fn worktree_add_list_remove() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let gh = Gh::new();
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@t"],
+            &["config", "user.name", "t"],
+            &["commit", "--allow-empty", "-q", "-m", "root"],
+        ] {
+            gh.git(dir, args).await.unwrap();
+        }
+        let wt = dir.join("wt-extra");
+        gh.git(dir, ["worktree", "add", "-q", "-b", "feat/wt", wt.to_str().unwrap()])
+            .await
+            .unwrap();
+
+        let trees = gh.worktrees(dir).await.unwrap();
+        assert_eq!(trees.len(), 2);
+        assert!(trees[0].is_main);
+        assert!(trees.iter().any(|w| w.branch.as_deref() == Some("feat/wt")));
+
+        gh.remove_worktree(dir, wt.to_str().unwrap(), false)
+            .await
+            .unwrap();
+        assert_eq!(gh.worktrees(dir).await.unwrap().len(), 1);
+        gh.prune_worktrees(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn checkout_and_delete_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let gh = Gh::new();
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@t"],
+            &["config", "user.name", "t"],
+            &["commit", "--allow-empty", "-q", "-m", "root"],
+        ] {
+            gh.git(dir, args).await.unwrap();
+        }
+        let base = gh.current_branch(dir).await.unwrap();
+        gh.create_branch(dir, "feat/y", None).await.unwrap();
+        gh.checkout(dir, &base).await.unwrap();
+        assert_eq!(gh.current_branch(dir).await.unwrap(), base);
+        // feat/y is merged-equal to base (empty), so a plain -d works.
+        gh.delete_branch(dir, "feat/y", false).await.unwrap();
+        assert!(!gh.branches_local(dir).await.contains(&"feat/y".to_string()));
+    }
+
+    impl Gh {
+        // test helper: local branch names via plain git.
+        async fn branches_local(&self, dir: &Path) -> Vec<String> {
+            self.git(dir, ["branch", "--format=%(refname:short)"])
+                .await
+                .unwrap()
+                .lines()
+                .map(|s| s.trim().to_string())
+                .collect()
+        }
     }
 
     #[tokio::test]
