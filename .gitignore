@@ -3,3 +3,5 @@
 /.lazy
 # secrets: agent CLI keys + run tokens — never commit. Template is .env.example.
 /.env
+# local hcom binary dir — installed per-machine, not part of the repo.
+/bin
