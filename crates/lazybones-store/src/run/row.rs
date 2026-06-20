@@ -25,6 +25,9 @@ pub(crate) struct WorkspaceRow {
     pub(crate) tool: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
+    /// Per-workflow gate commands; `None` inherits the global, `Some([])` = no gate.
+    /// `Option` so rows written before this column read back as `None`.
+    pub(crate) gate: Option<Vec<String>>,
 }
 
 /// SurrealDB-facing run: the reserved `id` thing plus the workflow fields.
@@ -56,6 +59,7 @@ impl RunRow {
                 tool: run.workspace.tool.clone(),
                 model: run.workspace.model.clone(),
                 effort: run.workspace.effort.clone(),
+                gate: run.workspace.gate.clone(),
             },
             lifecycle: Some(run.lifecycle.as_str().to_owned()),
             created_at: Some(run.created_at.clone()),
@@ -77,6 +81,7 @@ impl RunRow {
                 tool: self.workspace.tool,
                 model: self.workspace.model,
                 effort: self.workspace.effort,
+                gate: self.workspace.gate,
             },
             lifecycle: Lifecycle::parse(self.lifecycle.as_deref()),
             created_at: self.created_at.unwrap_or_default(),

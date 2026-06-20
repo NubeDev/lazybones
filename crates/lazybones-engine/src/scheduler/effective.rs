@@ -12,7 +12,13 @@
 //! tool          = task.tool                     ?? run.workspace.tool   ?? global agent_tool
 //! model         = task.model                    ?? run.workspace.model  ?? global agent_model
 //! effort        = task.effort                   ?? run.workspace.effort ?? global agent_effort
+//! gate          = run.workspace.gate            ?? global gate
 //! ```
+//!
+//! The gate has no task layer: it is a property of the *workspace's* stack (a Rust
+//! workflow gates with `cargo`, a Node one with `npm`), so every task in a workflow
+//! shares it. `Some([])` on the workspace is an explicit **no gate**; `None` inherits
+//! the global default.
 //!
 //! The agent triple (`tool`/`model`/`effort`) follows the same most-specific-wins
 //! rule so a workflow or template can set a default that every task inherits, and
@@ -47,6 +53,10 @@ pub struct EffectiveGit {
     pub model: Option<String>,
     /// The effort forwarded to the agent CLI; `None` = the CLI's own default.
     pub effort: Option<String>,
+    /// The green-build gate commands to run in the worktree before landing. An
+    /// empty `Vec` means **no gate** (land on agent DONE); resolved from the
+    /// workflow's workspace, else the global `EngineConfig.gate`.
+    pub gate: Vec<String>,
 }
 
 /// Resolve `task`'s effective git settings given its (optional) parent `run` and
@@ -67,6 +77,8 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
             tool: task.tool.clone().unwrap_or_else(|| cfg.agent_tool.clone()),
             model: task.model.clone().or_else(|| cfg.agent_model.clone()),
             effort: task.effort.clone().or_else(|| cfg.agent_effort.clone()),
+            // Standalone: no workspace gate; the global default is the contract.
+            gate: cfg.gate.clone(),
         },
         Some(run) => {
             let ws = &run.workspace;
@@ -95,6 +107,9 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
                     .clone()
                     .or_else(|| ws.effort.clone())
                     .or_else(|| cfg.agent_effort.clone()),
+                // workspace ?? global. `Some([])` is an explicit no-gate, so we
+                // honour the present-but-empty list rather than falling back.
+                gate: ws.gate.clone().unwrap_or_else(|| cfg.gate.clone()),
             }
         }
     }
@@ -120,6 +135,7 @@ mod tests {
             agent_tool: "claude".into(),
             agent_model: None,
             agent_effort: None,
+            permission_flags: std::collections::HashMap::new(),
             stale_after_secs: 300,
             tick_secs: 2,
         }
@@ -151,6 +167,7 @@ mod tests {
             tool: None,
             model: None,
             effort: None,
+            gate: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.repo, PathBuf::from("/repo/abc"));
@@ -171,6 +188,7 @@ mod tests {
             tool: None,
             model: None,
             effort: None,
+            gate: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.base_branch, "dev");
@@ -193,6 +211,7 @@ mod tests {
             tool: Some("codex".into()),
             model: None,
             effort: Some("medium".into()),
+            gate: None,
         });
 
         // A task with no agent fields inherits workspace tool/effort + global model.
@@ -237,8 +256,51 @@ mod tests {
             tool: None,
             model: None,
             effort: None,
+            gate: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.worktree_mode, WorktreeMode::Branch);
+    }
+
+    /// A workspace with `gate` set; every other field left to inherit.
+    fn ws_with_gate(gate: Option<Vec<String>>) -> Workspace {
+        Workspace {
+            repo: "/repo/abc".into(),
+            base_branch: None,
+            branch_prefix: None,
+            worktree_mode: WorktreeMode::New,
+            tool: None,
+            model: None,
+            effort: None,
+            gate,
+        }
+    }
+
+    #[test]
+    fn gate_resolves_workspace_then_empty_then_global() {
+        let mut cfg = cfg();
+        cfg.gate = vec!["cargo test --workspace".into()];
+        let task = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+
+        // Workspace gate wins over the global default.
+        let run = run_with(ws_with_gate(Some(vec!["npm test".into()])));
+        assert_eq!(resolve(&task, Some(&run), &cfg).gate, vec!["npm test".to_owned()]);
+
+        // Explicit empty list is honoured as "no gate", not a fallback to global.
+        let run = run_with(ws_with_gate(Some(vec![])));
+        assert!(resolve(&task, Some(&run), &cfg).gate.is_empty());
+
+        // Absent (None) inherits the global gate.
+        let run = run_with(ws_with_gate(None));
+        assert_eq!(
+            resolve(&task, Some(&run), &cfg).gate,
+            vec!["cargo test --workspace".to_owned()]
+        );
+
+        // A standalone task always uses the global gate.
+        assert_eq!(
+            resolve(&task, None, &cfg).gate,
+            vec!["cargo test --workspace".to_owned()]
+        );
     }
 }

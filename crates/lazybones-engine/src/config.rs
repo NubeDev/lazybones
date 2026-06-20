@@ -5,6 +5,7 @@
 //! worktree layout, and merge strategy. Same precedence as the boot config —
 //! env wins over the file wins over the baked-in defaults.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -62,6 +63,13 @@ pub struct EngineConfig {
     /// The default effort forwarded to the agent CLI; `None` lets the CLI use its
     /// own default. A task's / workflow's effort wins over this.
     pub agent_effort: Option<String>,
+    /// Extra CLI flags forwarded per agent tool to bypass that CLI's own
+    /// interactive gates (folder-trust, per-tool approval) in a headless run.
+    /// Keyed by tool id (`claude`, `codex`, …); a tool with no entry gets none.
+    /// Defaults `claude` → `--dangerously-skip-permissions` so a fresh, never-
+    /// trusted worktree runs unattended. Each CLI has its own flag, so this is a
+    /// map, not a single hard-coded flag.
+    pub permission_flags: HashMap<String, Vec<String>>,
     /// A running task whose agent is gone and whose heartbeat is older than this
     /// is reclaimed to `ready` on the next tick.
     pub stale_after_secs: u64,
@@ -84,6 +92,7 @@ struct File {
     agent_tool: Option<String>,
     agent_model: Option<String>,
     agent_effort: Option<String>,
+    permission_flags: Option<HashMap<String, Vec<String>>>,
     stale_after_secs: Option<u64>,
     tick_secs: Option<u64>,
 }
@@ -120,6 +129,7 @@ impl EngineConfig {
             agent_tool: env_or("LAZYBONES_AGENT_TOOL", file.agent_tool, "claude"),
             agent_model: env_opt("LAZYBONES_AGENT_MODEL", file.agent_model),
             agent_effort: env_opt("LAZYBONES_AGENT_EFFORT", file.agent_effort),
+            permission_flags: permission_flags(file.permission_flags),
             stale_after_secs: env_num("LAZYBONES_STALE_AFTER_SECS", file.stale_after_secs, 300),
             tick_secs: env_num("LAZYBONES_TICK_SECS", file.tick_secs, 2),
         })
@@ -137,6 +147,19 @@ fn gate(file: Option<Vec<String>>) -> Vec<String> {
             "cargo test --workspace".to_owned(),
             "cargo clippy --workspace --all-targets -- -D warnings".to_owned(),
         ]
+    })
+}
+
+/// Resolve the per-tool permission-bypass flags: the file map if present, else
+/// the baked-in default that lets a headless `claude` clear its trust + approval
+/// gates. A file value (even an empty map) replaces the default wholesale, so an
+/// operator can opt a tool out by giving it `[]` or omitting its key.
+fn permission_flags(file: Option<HashMap<String, Vec<String>>>) -> HashMap<String, Vec<String>> {
+    file.unwrap_or_else(|| {
+        HashMap::from([(
+            "claude".to_owned(),
+            vec!["--dangerously-skip-permissions".to_owned()],
+        )])
     })
 }
 
@@ -224,6 +247,35 @@ mod tests {
         assert_eq!(
             split_gate_env("  cargo test  \n\n cargo clippy \n"),
             vec!["cargo test".to_owned(), "cargo clippy".to_owned()]
+        );
+    }
+
+    #[test]
+    fn permission_flags_default_skips_claude_gates() {
+        let cfg = EngineConfig::load(Path::new("/no/such/lazybones-engine-test.yaml")).unwrap();
+        assert_eq!(
+            cfg.permission_flags.get("claude").map(Vec::as_slice),
+            Some(&["--dangerously-skip-permissions".to_owned()][..])
+        );
+        // No mapping for other tools by default.
+        assert!(!cfg.permission_flags.contains_key("codex"));
+    }
+
+    #[test]
+    fn permission_flags_file_replaces_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lazybones.yaml");
+        std::fs::write(
+            &path,
+            "permission_flags:\n  codex:\n    - --yolo\n",
+        )
+        .unwrap();
+        let cfg = EngineConfig::load(&path).unwrap();
+        // A file map replaces the baked-in default wholesale.
+        assert!(!cfg.permission_flags.contains_key("claude"));
+        assert_eq!(
+            cfg.permission_flags.get("codex").map(Vec::as_slice),
+            Some(&["--yolo".to_owned()][..])
         );
     }
 

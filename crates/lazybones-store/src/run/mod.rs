@@ -50,6 +50,7 @@ mod tests {
                 tool: None,
                 model: None,
                 effort: None,
+                gate: None,
             },
             "2026-01-01T00:00:00Z",
         )

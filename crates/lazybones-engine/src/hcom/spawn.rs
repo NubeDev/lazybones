@@ -9,13 +9,27 @@ use std::path::Path;
 
 use super::Hcom;
 
+/// The tool-CLI args a launch forwards beyond the fixed hcom flags — the bits
+/// resolved per task/workflow/tool, kept together so `spawn`'s signature stays
+/// small (hcom passes anything it doesn't recognise straight to the CLI).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AgentLaunch<'a> {
+    /// `--model <model>` when set; `None` lets the CLI use its own default.
+    pub model: Option<&'a str>,
+    /// `--effort <effort>` when set; `None` lets the CLI use its own default.
+    pub effort: Option<&'a str>,
+    /// Extra flags forwarded verbatim to bypass the CLI's interactive gates
+    /// (e.g. `--dangerously-skip-permissions` for `claude`); empty for a tool
+    /// with no configured mapping. Without them a headless agent in a never-
+    /// trusted worktree freezes on a TUI prompt.
+    pub permission_flags: &'a [String],
+}
+
 impl Hcom {
     /// Spawn one headless agent for `tag`, working in `dir`, with `prompt`.
     ///
-    /// `model` and `effort`, when set, are forwarded to the tool CLI as
-    /// `--model`/`--effort` tool-args (hcom passes through anything it doesn't
-    /// recognise). They come from the task's catalog selection; `None` lets the
-    /// CLI use its own default.
+    /// `launch` carries the tool-CLI args (model/effort/permission flags); see
+    /// [`AgentLaunch`]. They come from the resolved task/workflow/global config.
     ///
     /// Returns the hcom name parsed from the `Names:` line — the handle the
     /// scheduler stores as the task's `session`.
@@ -29,8 +43,7 @@ impl Hcom {
         tag: &str,
         dir: &Path,
         prompt: &str,
-        model: Option<&str>,
-        effort: Option<&str>,
+        launch: AgentLaunch<'_>,
     ) -> anyhow::Result<String> {
         let mut cmd = self.command();
         // `1 <tool>` launches a single instance of that tool; `--go` skips the
@@ -46,11 +59,15 @@ impl Hcom {
             .arg("--hcom-prompt")
             .arg(prompt);
         // Forwarded to the tool CLI (hcom passes unrecognised args through).
-        if let Some(model) = model {
+        if let Some(model) = launch.model {
             cmd.arg("--model").arg(model);
         }
-        if let Some(effort) = effort {
+        if let Some(effort) = launch.effort {
             cmd.arg("--effort").arg(effort);
+        }
+        // Per-tool gate-bypass flags (hcom passes them through to the CLI).
+        for flag in launch.permission_flags {
+            cmd.arg(flag);
         }
         for (k, v) in &self.env {
             cmd.env(k, v);

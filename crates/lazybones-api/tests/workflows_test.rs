@@ -95,6 +95,7 @@ fn engine_cfg(default_repo: &Path) -> EngineConfig {
         agent_tool: "claude".into(),
         agent_model: None,
         agent_effort: None,
+        permission_flags: std::collections::HashMap::new(),
         stale_after_secs: 300,
         tick_secs: 1,
     }

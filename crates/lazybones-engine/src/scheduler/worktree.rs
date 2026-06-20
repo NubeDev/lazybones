@@ -183,6 +183,7 @@ mod tests {
             agent_tool: "claude".into(),
             agent_model: None,
             agent_effort: None,
+            permission_flags: std::collections::HashMap::new(),
             stale_after_secs: 300,
             tick_secs: 2,
         }
@@ -198,6 +199,7 @@ mod tests {
             tool: "claude".into(),
             model: None,
             effort: None,
+            gate: vec![],
         }
     }
 

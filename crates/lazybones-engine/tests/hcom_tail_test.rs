@@ -54,6 +54,7 @@ fn engine_cfg(repo: &Path) -> EngineConfig {
         agent_tool: "claude".into(),
         agent_model: None,
         agent_effort: None,
+        permission_flags: std::collections::HashMap::new(),
         stale_after_secs: 300,
         tick_secs: 1,
     }
@@ -82,6 +83,7 @@ async fn tail_ingests_event_and_advances_cursor() {
             tool: None,
             model: None,
             effort: None,
+            gate: None,
         },
         "2026-01-01T00:00:00Z",
     );

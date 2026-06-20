@@ -17,10 +17,24 @@ concurrency: 3                            # [LAZYBONES_CONCURRENCY] max agents r
 worktrees: true                           # [LAZYBONES_WORKTREES]   false = serialize on base_branch
 worktree_root: .lazy/wt                   # [LAZYBONES_WORKTREE_ROOT] where `git worktree add` lands
 branch_prefix: lazy/                      # [LAZYBONES_BRANCH_PREFIX] task `auth` -> branch `lazy/auth`
-merge: fast-forward                       # [LAZYBONES_MERGE] fast-forward | merge | pr
+merge: merge                              # [LAZYBONES_MERGE] fast-forward | merge | pr
+                                          # 'merge' (not fast-forward) so parallel task branches that
+                                          # diverged from base integrate via a merge commit instead of
+                                          # failing --ff-only. Use fast-forward only for serialized runs.
 
 # --- which agent tool runs a task (per-task `tool:` in workfile.yaml overrides) ---
 agent_tool: claude                        # [LAZYBONES_AGENT_TOOL] claude | codex | gemini | opencode ...
+
+# --- per-tool flags that bypass the CLI's own interactive gates in a headless run ---
+# Without these a fresh, never-trusted worktree freezes on the tool's trust/approval
+# prompt. Keyed by tool id; a tool with no entry gets none. Setting this map (even to
+# {}) REPLACES the default below wholesale, so re-list any tool you still want covered.
+permission_flags:                          # default when omitted: claude -> --dangerously-skip-permissions
+  # claude skip flag intentionally DISABLED: --dangerously-skip-permissions triggers a
+  # one-time GLOBAL bypass-mode acceptance prompt (~/.claude.json), which we won't enable.
+  # Instead, headless claude relies on a repo-scoped .claude/settings.json allow-list
+  # (committed in the target repo) plus pre-trusted worktree paths. Empty list = no flag.
+  claude: []
 
 # --- the brain: lazybonesd REST + embedded SurrealDB ---
 api:

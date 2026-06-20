@@ -92,7 +92,9 @@ fn blocked_reason(text: &str) -> String {
 /// Run the gate; on green, merge + record `done` + teardown; on red, block.
 async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveGit, task: &Task) {
     let worktree_path = task.worktree.clone().unwrap_or_default();
-    let outcome = match gate::run(std::path::Path::new(&worktree_path), &cfg.gate).await {
+    // The effective gate is workspace ?? global; an empty list is an explicit
+    // no-gate and `gate::run` returns Green over zero commands, landing on DONE.
+    let outcome = match gate::run(std::path::Path::new(&worktree_path), &eff.gate).await {
         Ok(o) => o,
         Err(e) => {
             block(store, &task.id, format!("gate could not run: {e}")).await;

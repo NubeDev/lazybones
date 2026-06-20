@@ -154,6 +154,11 @@ pub struct WorkspaceBody {
     /// Default effort for this workflow's tasks; omitted inherits the global.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Green-build gate for this workflow's tasks (e.g. `["npm test --prefix backend"]`).
+    /// Omitted/`null` inherits the global `EngineConfig.gate`; an explicit empty list
+    /// `[]` disables the gate (tasks land on agent DONE with no command run).
+    #[serde(default)]
+    pub gate: Option<Vec<String>>,
 }
 
 /// `POST /workflows` body: a new workflow bound to a workspace.

@@ -63,7 +63,21 @@ async fn checkout(repo: &std::path::Path, branch: &str) -> anyhow::Result<()> {
 }
 
 /// `git push <remote> <ref>`.
+///
+/// If `remote` is not configured on the repo (e.g. a purely local target with no
+/// `origin`), the push is **skipped** rather than failed: landing locally is a
+/// valid end state. A configured remote whose push genuinely fails (auth, network,
+/// rejected) is still surfaced as an error.
 async fn push(repo: &std::path::Path, remote: &str, refname: &str) -> anyhow::Result<()> {
+    // Probe the remote first; absence is not an error, just "nothing to push to".
+    let has_remote = git(repo, &["remote", "get-url", remote])
+        .await
+        .map(|o| o.ok)
+        .unwrap_or(false);
+    if !has_remote {
+        tracing::warn!(remote, refname, "no such remote configured; skipping push (landed locally)");
+        return Ok(());
+    }
     let out = git(repo, &["push", remote, refname]).await?;
     if !out.ok {
         anyhow::bail!("git push {remote} {refname} failed: {}", out.stderr);
@@ -121,6 +135,7 @@ mod tests {
             agent_tool: "claude".into(),
             agent_model: None,
             agent_effort: None,
+            permission_flags: std::collections::HashMap::new(),
             stale_after_secs: 300,
             tick_secs: 2,
         }
@@ -148,6 +163,7 @@ mod tests {
             tool: "claude".into(),
             model: None,
             effort: None,
+            gate: vec![],
         };
         // No remote configured, so the push step fails — assert the merge itself
         // landed by checking base before the push error.

@@ -40,6 +40,11 @@ pub struct Workspace {
     /// Default effort for this workflow's tasks; `None` inherits the global.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Green-build gate commands for this workflow's tasks. `None`/absent inherits
+    /// the global `EngineConfig.gate`; `Some([])` (explicit empty) means **no gate**
+    /// — a task lands as soon as its agent reports DONE, running no command.
+    #[serde(default)]
+    pub gate: Option<Vec<String>>,
 }
 
 /// The human-set lifecycle of a Run. Distinct from the derived *state*.

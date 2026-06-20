@@ -105,14 +105,24 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
             &provisioned.branch,
             &cfg.remote,
         );
+        // Gate-bypass flags for this tool (empty if none configured); without
+        // them a headless claude in a fresh worktree stalls on its trust prompt.
+        let perm_flags = cfg
+            .permission_flags
+            .get(&eff.tool)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let session = match hcom
             .spawn(
                 &eff.tool,
                 &task.id,
                 std::path::Path::new(&provisioned.worktree),
                 &agent_prompt,
-                eff.model.as_deref(),
-                eff.effort.as_deref(),
+                crate::hcom::AgentLaunch {
+                    model: eff.model.as_deref(),
+                    effort: eff.effort.as_deref(),
+                    permission_flags: perm_flags,
+                },
             )
             .await
         {
