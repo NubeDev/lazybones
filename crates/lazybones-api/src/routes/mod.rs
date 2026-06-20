@@ -5,6 +5,7 @@
 //! the `memory` table so it can land behind this same router without a migration.
 
 mod activity;
+mod agent_catalog;
 mod agent_test;
 mod agents;
 mod block;
@@ -18,6 +19,7 @@ mod fs_list;
 mod gate;
 mod get;
 mod gh;
+mod hcom_log;
 mod health;
 mod heartbeat;
 mod list;
@@ -34,6 +36,7 @@ mod templates_create;
 mod templates_delete;
 mod templates_get;
 mod templates_list;
+mod transcript;
 mod update;
 mod workflows_add_task;
 mod workflows_cancel;
@@ -70,6 +73,9 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks/:id/block", post(block::block_task))
         // Operator cancel: kill the live agent (hcom) then block the task.
         .route("/tasks/:id/cancel", post(cancel::cancel_task))
+        // The fabric's record: one agent's raw hcom log + its deep transcript.
+        .route("/tasks/:id/hcom", get(hcom_log::task_hcom_log))
+        .route("/tasks/:id/transcript", get(transcript::task_transcript))
         // Reusable task templates (global, stateless recipes).
         .route(
             "/templates",
@@ -89,6 +95,8 @@ pub fn router(state: AppState) -> Router {
         .route("/workflows/:id/start", post(workflows_start::start_workflow))
         .route("/workflows/:id/cancel", post(workflows_cancel::cancel_workflow))
         .route("/runs/:id", get(runs::run_history))
+        // The fabric's record for a whole run: the raw hcom log of every agent.
+        .route("/runs/:id/hcom", get(hcom_log::run_hcom_log))
         // Live push feed of status transitions (SSE) — for the dashboard + loop.
         .route("/stream", get(stream::stream))
         // Native filesystem browse for the UI's repo/dir picker (New workflow).
@@ -119,6 +127,19 @@ pub fn router(state: AppState) -> Router {
         .route("/agents", get(agents::list_agents))
         // Live-test one agent's credential by launching it through hcom.
         .route("/agents/:tool/test", post(agent_test::test_agent_route))
+        // The CRUD-able agent catalog: agent CLIs + their model/effort menus,
+        // seeded with defaults and editable by an operator. Drives the add-task
+        // UI's agent/model/effort pickers. Reads open; mutations loop-only.
+        .route(
+            "/agent-catalog",
+            get(agent_catalog::list_agents).post(agent_catalog::create_agent),
+        )
+        .route(
+            "/agent-catalog/:id",
+            get(agent_catalog::get_agent)
+                .patch(agent_catalog::update_agent)
+                .delete(agent_catalog::delete_agent),
+        )
         // The secret store: agent CLI credentials, encrypted at rest. The `env`
         // export (decrypts) and all mutations are loop-guarded by `Secret`.
         .route("/secrets", get(secrets_list::list_secrets))

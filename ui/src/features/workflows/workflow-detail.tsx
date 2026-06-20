@@ -15,6 +15,7 @@ import { TaskBoard } from "@/features/tasks/task-board";
 import { repoBasename } from "./repo-path";
 import { PlanGraphView } from "./plan-graph-view";
 import { WorkflowEvents } from "./workflow-events";
+import { WorkflowHcomLog } from "./workflow-hcom-log";
 import { WorkflowControls } from "./workflow-controls";
 import { AddTaskDialog } from "./add-task-dialog";
 import { WorkflowIssues } from "./workflow-issues";
@@ -147,6 +148,7 @@ export function WorkflowDetail({
               <TabsTrigger value="board">Board</TabsTrigger>
               <TabsTrigger value="git">Git</TabsTrigger>
               <TabsTrigger value="events">Events</TabsTrigger>
+              <TabsTrigger value="logs">Logs</TabsTrigger>
               <TabsTrigger value="issues">Issues</TabsTrigger>
             </TabsList>
             <AddTaskDialog
@@ -177,6 +179,10 @@ export function WorkflowDetail({
 
           <TabsContent value="events">
             <WorkflowEvents tasks={runTasks} />
+          </TabsContent>
+
+          <TabsContent value="logs">
+            <WorkflowHcomLog tasks={runTasks} />
           </TabsContent>
 
           <TabsContent value="issues">

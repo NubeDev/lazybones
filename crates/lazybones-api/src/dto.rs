@@ -120,6 +120,12 @@ pub struct CreateTemplateBody {
     /// Agent tool inherited by the task unless overridden.
     #[serde(default)]
     pub default_tool: Option<String>,
+    /// Model inherited by the task unless overridden; omitted inherits.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// Effort inherited by the task unless overridden; omitted inherits.
+    #[serde(default)]
+    pub default_effort: Option<String>,
     /// Rarely-set worktree mode intrinsic to the recipe; usually omitted.
     #[serde(default)]
     pub default_worktree_mode: Option<WorktreeMode>,
@@ -139,6 +145,15 @@ pub struct WorkspaceBody {
     /// Default git mode for this workflow's tasks.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
+    /// Default agent tool for this workflow's tasks; omitted inherits the global.
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// Default model for this workflow's tasks; omitted inherits the global.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Default effort for this workflow's tasks; omitted inherits the global.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 /// `POST /workflows` body: a new workflow bound to a workspace.
@@ -177,6 +192,14 @@ pub struct AddWorkflowTaskBody {
     /// Per-task agent tool override.
     #[serde(default)]
     pub tool: Option<String>,
+    /// Per-task model id forwarded to the agent CLI (one of the agent catalog's
+    /// `models`); omitted lets the CLI use its default.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Per-task effort level forwarded to the agent CLI (one of the agent
+    /// catalog's `efforts`); omitted lets the CLI use its default.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Workflow-only worktree-mode override; omitted inherits the workspace mode.
     #[serde(default)]
     pub worktree_mode_override: Option<WorktreeMode>,
@@ -234,4 +257,55 @@ pub struct SecretBody {
     pub env_var: String,
     /// The secret value (API key / token). Sealed at rest; never read back.
     pub value: String,
+}
+
+/// `POST /agent-catalog` body: author a new agent catalog entry.
+#[derive(Debug, Deserialize)]
+pub struct CreateAgentBody {
+    /// The tool id — must match the hcom tool key (e.g. `claude`); `409` if taken.
+    pub id: String,
+    /// Human label for the UI.
+    pub label: String,
+    /// The env var the CLI reads its credential from.
+    pub env_var: String,
+    /// How to obtain a credential / log in (shown as a hint).
+    #[serde(default)]
+    pub login_hint: String,
+    /// Selectable model ids, most-preferred first; empty = no model picker.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Default model when a task names none.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// Selectable effort levels; empty = no effort picker.
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    /// Default effort when a task names none.
+    #[serde(default)]
+    pub default_effort: Option<String>,
+}
+
+/// `PATCH /agent-catalog/:id` body: the authored fields to overwrite. `id` and
+/// `created_at` are preserved; `updated_at` is bumped server-side.
+#[derive(Debug, Deserialize)]
+pub struct UpdateAgentBody {
+    /// New human label.
+    pub label: String,
+    /// New credential env var.
+    pub env_var: String,
+    /// New login hint.
+    #[serde(default)]
+    pub login_hint: String,
+    /// New model menu.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// New default model.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// New effort menu.
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    /// New default effort.
+    #[serde(default)]
+    pub default_effort: Option<String>,
 }

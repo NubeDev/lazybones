@@ -68,6 +68,15 @@ pub struct Task {
     pub owns: Vec<String>,
     /// Per-task agent tool override; `None` falls back to the run config.
     pub tool: Option<String>,
+    /// Per-task model id forwarded to the agent CLI (e.g. `claude-opus-4-8`);
+    /// `None` lets the CLI use its own default. One of the agent's catalog
+    /// `models`. See [`AgentCatalog`](crate::AgentCatalog).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Per-task effort level forwarded to the agent CLI (e.g. `high`); `None`
+    /// lets the CLI use its own default. One of the agent's catalog `efforts`.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// How the loop should provision the working tree on claim. Defaults to
     /// `New` (isolated worktree); `#[serde(default)]` keeps tasks stored before
     /// this field readable.
@@ -132,6 +141,8 @@ impl Task {
             deps,
             owns,
             tool,
+            model: None,
+            effort: None,
             worktree_mode: WorktreeMode::default(),
             session: None,
             worktree: None,

@@ -4,6 +4,7 @@ mod effective;
 mod finish;
 mod gate;
 mod git;
+mod hcom_tail;
 mod merge;
 mod prompt;
 mod reclaim;

@@ -61,7 +61,8 @@ impl IntoResponse for ApiError {
             ApiError::Store(
                 StoreError::TaskNotFound(_)
                 | StoreError::TemplateNotFound(_)
-                | StoreError::RunNotFound(_),
+                | StoreError::RunNotFound(_)
+                | StoreError::AgentNotFound(_),
             ) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Store(StoreError::IllegalTransition { .. }) => {
                 (StatusCode::CONFLICT, self.to_string())
@@ -69,7 +70,8 @@ impl IntoResponse for ApiError {
             ApiError::Store(
                 StoreError::TaskExists(_)
                 | StoreError::TemplateExists(_)
-                | StoreError::RunExists(_),
+                | StoreError::RunExists(_)
+                | StoreError::AgentExists(_),
             ) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),

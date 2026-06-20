@@ -9,7 +9,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use lazybones_auth::Capability;
-use lazybones_store::{StoreError, Task, instantiate};
+use lazybones_store::{StoreError, Task, deps_with_reuse, instantiate};
 
 use crate::dto::AddWorkflowTaskBody;
 use crate::error::ApiResult;
@@ -64,13 +64,33 @@ pub async fn add_workflow_task(
     if body.tool.is_some() {
         task.tool = body.tool.clone();
     }
+    task.model = body.model.clone();
+    task.effort = body.effort.clone();
     if body.worktree_mode_override.is_some() {
         task.worktree_mode_override = body.worktree_mode_override;
     }
     task.reuse_from = body.reuse_from.clone();
 
+    // `reuse_from` implies a dependency on the source task: its worktree must
+    // exist before this one claims it. When the source is a *known* task, fold it
+    // into the dep set so the readiness graph orders them and the plan graph shows
+    // the edge — one source of truth. When it's unknown here (a missing id, or a
+    // task in another workflow), it stays out of the graph and the claim-time
+    // `resolve_reuse` guard handles it (→ blocked with a reason), rather than
+    // leaving the task wedged `pending` on a dep that this run never resolves.
+    let source_known = match &body.reuse_from {
+        Some(src) => state.store.get_task(src).await?.is_some(),
+        None => false,
+    };
+    let deps = if source_known {
+        deps_with_reuse(&body.deps, body.reuse_from.as_deref())
+    } else {
+        body.deps.clone()
+    };
+    task.deps = deps.clone();
+
     let created = state.store.create_task(&task).await?;
-    for dep in &body.deps {
+    for dep in &deps {
         state.store.relate_dep(&body.id, dep).await?;
     }
     Ok(Json(created))

@@ -93,6 +93,8 @@ fn engine_cfg(default_repo: &Path) -> EngineConfig {
         branch_prefix: "lazy/".into(),
         merge: MergeMode::FastForward,
         agent_tool: "claude".into(),
+        agent_model: None,
+        agent_effort: None,
         stale_after_secs: 300,
         tick_secs: 1,
     }

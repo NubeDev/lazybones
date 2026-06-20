@@ -27,6 +27,7 @@ async fn app() -> Router {
                 deps: vec![],
                 owns: vec![],
                 tool: None,
+                reuse_from: None,
             },
             SeedTask {
                 id: "api".into(),
@@ -35,6 +36,7 @@ async fn app() -> Router {
                 deps: vec!["store".into()],
                 owns: vec![],
                 tool: None,
+                reuse_from: None,
             },
         ],
     )
@@ -412,6 +414,31 @@ async fn ready_promotes_one_task() {
     // A second promote of an already-ready task is an illegal transition -> 409.
     let (status, _) = send(&app, loop_post("/tasks/store/ready", json!(null))).await;
     assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn hcom_log_routes_are_wired_and_read_the_durable_log() {
+    let app = app().await;
+
+    // The run's hcom log is empty (nothing tailed yet) but the route is wired and
+    // reads the durable table: 200 with an empty array.
+    let (status, body) = send(&app, get("/runs/run/hcom")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+
+    // `GET /tasks/:id/hcom` resolves the task's run, then filters to it: 200, [].
+    let (status, body) = send(&app, get("/tasks/store/hcom")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+
+    // An unknown task is a 404, not an empty log.
+    let (status, _) = send(&app, get("/tasks/nope/hcom")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Filter params parse and apply without error.
+    let (status, body) = send(&app, get("/runs/run/hcom?kind=message&after=0&limit=10")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
 }
 
 #[tokio::test]

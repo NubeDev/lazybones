@@ -4,6 +4,7 @@
 
 mod cancel;
 mod create;
+mod cursor;
 mod derived;
 mod get;
 mod list;
@@ -13,6 +14,7 @@ mod start;
 
 pub use cancel::cancel_run;
 pub use create::create_run;
+pub use cursor::advance_hcom_cursor;
 pub use derived::{RunState, derived_state};
 pub use get::get_run;
 pub use list::{list_run_tasks, list_runs};
@@ -45,6 +47,9 @@ mod tests {
                 base_branch: None,
                 branch_prefix: None,
                 worktree_mode: WorktreeMode::New,
+                tool: None,
+                model: None,
+                effort: None,
             },
             "2026-01-01T00:00:00Z",
         )
@@ -102,6 +107,23 @@ mod tests {
         // Idempotent: a second start keeps the first stamp.
         let r2 = mark_started(&db, "workflow-1", "2026-03-03T00:00:00Z").await.unwrap();
         assert_eq!(r2.started_at.as_deref(), Some("2026-02-02T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn hcom_cursor_advances_monotonically() {
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+        // Starts unset.
+        assert_eq!(get_run(&db, "workflow-1").await.unwrap().unwrap().hcom_log_cursor, None);
+
+        let r = advance_hcom_cursor(&db, "workflow-1", 5).await.unwrap();
+        assert_eq!(r.hcom_log_cursor, Some(5));
+        // A lower value never moves it backwards.
+        let r = advance_hcom_cursor(&db, "workflow-1", 3).await.unwrap();
+        assert_eq!(r.hcom_log_cursor, Some(5));
+        // A higher value advances it.
+        let r = advance_hcom_cursor(&db, "workflow-1", 9).await.unwrap();
+        assert_eq!(r.hcom_log_cursor, Some(9));
     }
 
     #[tokio::test]

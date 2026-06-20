@@ -11,12 +11,20 @@ use surrealdb::engine::local::Db;
 
 use crate::bootstrap::use_namespace;
 use crate::check_health::probe;
+use crate::agent::{
+    AgentCatalog, AgentCatalogEdit, create_agent, delete_agent, get_agent, list_agents,
+    seed_default_agents, update_agent,
+};
 use crate::connect::{StoreEngine, open_engine};
 use crate::error::Result;
 use crate::event::{Activity, Event, EventBus, LiveEvent, run_history};
+use crate::hcom_log::{
+    HcomLogEntry, HcomLogFilter, NewHcomLogEntry, append_hcom_log, run_hcom_log,
+};
 use crate::init_schema::init_schema;
 use crate::run::{
-    Run, cancel_run, create_run, get_run, list_run_tasks, list_runs, mark_started,
+    Run, advance_hcom_cursor, cancel_run, create_run, get_run, list_run_tasks, list_runs,
+    mark_started,
 };
 use crate::secret::{
     Cipher, SecretEnv, SecretMeta, delete_secret, list_secrets, put_secret, secret_env,
@@ -203,6 +211,42 @@ impl StoreHandle {
         run_history(&self.db, run).await
     }
 
+    /// Append one raw hcom event to the durable hcom log (idempotent on
+    /// `(run, hcom_id)`) and publish it on the live bus for SSE subscribers.
+    ///
+    /// Persistence happens *before* publish, so anything streamed is already
+    /// re-fetchable via [`run_hcom_log`](Self::run_hcom_log).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn append_hcom_log(&self, entry: NewHcomLogEntry) -> Result<HcomLogEntry> {
+        let stored = append_hcom_log(&self.db, entry).await?;
+        self.bus.publish(LiveEvent::HcomLog(stored.clone()));
+        Ok(stored)
+    }
+
+    /// Read a run's durable hcom log, oldest first, narrowed by `filter`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn run_hcom_log(
+        &self,
+        run: &str,
+        filter: &HcomLogFilter,
+    ) -> Result<Vec<HcomLogEntry>> {
+        run_hcom_log(&self.db, run, filter).await
+    }
+
+    /// Advance a run's `hcom_log_cursor` to `max(current, cursor)` (monotonic).
+    /// Returns the updated run.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
+    /// write fails.
+    pub async fn advance_hcom_cursor(&self, id: &str, cursor: u64) -> Result<Run> {
+        advance_hcom_cursor(&self.db, id, cursor).await
+    }
+
     /// The current time as an RFC3339 string — the one timestamp source callers
     /// (the API) use to stamp `created_at`/`started_at` so they need not depend
     /// on SurrealDB directly.
@@ -242,6 +286,63 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
     pub async fn delete_template(&self, id: &str) -> Result<bool> {
         delete_template(&self.db, id).await
+    }
+
+    /// Seed the bundled default agent catalog, never clobbering existing ids.
+    /// Returns how many entries were newly created.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the bundled YAML can't be
+    /// parsed or a write fails.
+    pub async fn seed_default_agents(&self, now: &str) -> Result<usize> {
+        seed_default_agents(&self.db, now).await
+    }
+
+    /// Create an agent catalog entry, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_agent(&self, agent: &AgentCatalog) -> Result<AgentCatalog> {
+        create_agent(&self.db, agent).await
+    }
+
+    /// Read a single agent catalog entry by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_agent(&self, id: &str) -> Result<Option<AgentCatalog>> {
+        get_agent(&self.db, id).await
+    }
+
+    /// List every agent catalog entry (ordered by id).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_agents(&self) -> Result<Vec<AgentCatalog>> {
+        list_agents(&self.db).await
+    }
+
+    /// Update an agent catalog entry's authored fields, bumping `updated_at`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no such agent exists or the
+    /// write fails.
+    pub async fn update_agent(
+        &self,
+        id: &str,
+        edit: AgentCatalogEdit,
+        now: &str,
+    ) -> Result<AgentCatalog> {
+        update_agent(&self.db, id, edit, now).await
+    }
+
+    /// Delete an agent catalog entry by id. Returns whether one existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_agent(&self, id: &str) -> Result<bool> {
+        delete_agent(&self.db, id).await
     }
 
     /// Create a workflow (run), failing if its id is already taken.

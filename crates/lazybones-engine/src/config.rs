@@ -56,6 +56,12 @@ pub struct EngineConfig {
     pub merge: MergeMode,
     /// The default agent tool; a per-task `tool:` overrides it.
     pub agent_tool: String,
+    /// The default model forwarded to the agent CLI; `None` lets the CLI use its
+    /// own default. A task's / workflow's model wins over this.
+    pub agent_model: Option<String>,
+    /// The default effort forwarded to the agent CLI; `None` lets the CLI use its
+    /// own default. A task's / workflow's effort wins over this.
+    pub agent_effort: Option<String>,
     /// A running task whose agent is gone and whose heartbeat is older than this
     /// is reclaimed to `ready` on the next tick.
     pub stale_after_secs: u64,
@@ -76,6 +82,8 @@ struct File {
     branch_prefix: Option<String>,
     merge: Option<String>,
     agent_tool: Option<String>,
+    agent_model: Option<String>,
+    agent_effort: Option<String>,
     stale_after_secs: Option<u64>,
     tick_secs: Option<u64>,
 }
@@ -110,6 +118,8 @@ impl EngineConfig {
             branch_prefix: env_or("LAZYBONES_BRANCH_PREFIX", file.branch_prefix, "lazy/"),
             merge: MergeMode::parse(&env_or("LAZYBONES_MERGE", file.merge, "fast-forward")),
             agent_tool: env_or("LAZYBONES_AGENT_TOOL", file.agent_tool, "claude"),
+            agent_model: env_opt("LAZYBONES_AGENT_MODEL", file.agent_model),
+            agent_effort: env_opt("LAZYBONES_AGENT_EFFORT", file.agent_effort),
             stale_after_secs: env_num("LAZYBONES_STALE_AFTER_SECS", file.stale_after_secs, 300),
             tick_secs: env_num("LAZYBONES_TICK_SECS", file.tick_secs, 2),
         })
@@ -146,6 +156,12 @@ fn env_or(var: &str, file: Option<String>, default: &str) -> String {
         .ok()
         .or(file)
         .unwrap_or_else(|| default.to_owned())
+}
+
+/// Resolve an optional string setting: env var wins, then the file value, else
+/// `None` (no default — the agent CLI applies its own).
+fn env_opt(var: &str, file: Option<String>) -> Option<String> {
+    std::env::var(var).ok().or(file)
 }
 
 /// Resolve a numeric setting; an unparseable env value falls through to file/default.

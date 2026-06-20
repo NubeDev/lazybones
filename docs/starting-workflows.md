@@ -288,7 +288,7 @@ Because the scheduler lives in the daemon, there is nothing extra to start. A Ru
 begins executing the moment it is activated over the API:
 
 ```sh
-curl -X POST localhost:7878/runs/feat-checkout/start   # activate → scheduler picks it up
+curl -X POST localhost:46787/runs/feat-checkout/start   # activate → scheduler picks it up
 ```
 
 There is no `hcom run lazybones`, and **no `--plan … --input …` form**:

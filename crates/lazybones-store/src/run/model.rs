@@ -30,6 +30,16 @@ pub struct Workspace {
     /// The default git mode for this workflow's tasks.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
+    /// Default agent tool for this workflow's tasks; `None` inherits the global
+    /// `EngineConfig`. A task's own `tool` still wins.
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// Default model for this workflow's tasks; `None` inherits the global.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Default effort for this workflow's tasks; `None` inherits the global.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 /// The human-set lifecycle of a Run. Distinct from the derived *state*.
@@ -80,6 +90,13 @@ pub struct Run {
     /// RFC3339 activation timestamp, set on `start`.
     #[serde(default)]
     pub started_at: Option<String>,
+    /// Highest hcom event id ingested into this run's hcom log; `None` = nothing
+    /// yet. The persisted ingestion cursor (docs/hcom-logs-scope.md) — the tail
+    /// resumes the drain from here on restart, so it holds no in-memory state
+    /// (SCOPE.md principle 3). Additive on a `SCHEMALESS` table, so rows written
+    /// before it read back as `None` with no migration.
+    #[serde(default)]
+    pub hcom_log_cursor: Option<u64>,
 }
 
 impl Run {
@@ -98,6 +115,7 @@ impl Run {
             lifecycle: Lifecycle::Active,
             created_at: now.into(),
             started_at: None,
+            hcom_log_cursor: None,
         }
     }
 }

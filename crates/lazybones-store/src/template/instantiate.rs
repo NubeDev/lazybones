@@ -39,6 +39,8 @@ pub fn instantiate(
     );
     task.run_id = Some(run_id.into());
     task.template_id = Some(template.id.clone());
+    task.model = template.default_model.clone();
+    task.effort = template.default_effort.clone();
     task.worktree_mode_override = template.default_worktree_mode;
     task
 }

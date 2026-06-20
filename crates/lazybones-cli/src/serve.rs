@@ -16,6 +16,14 @@ async fn open_store(config: &Config) -> anyhow::Result<StoreHandle> {
     };
     let store =
         StoreHandle::open(&engine, &config.namespace, &config.database, &config.secret_key).await?;
+    // Seed the bundled default agent catalog on every boot. It's idempotent and
+    // never clobbers operator edits, so a fresh install gets a usable catalog and
+    // an existing one is left exactly as the operator left it.
+    match store.seed_default_agents(&store.now()).await {
+        Ok(n) if n > 0 => tracing::info!(seeded = n, "agent catalog seeded with defaults"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("agent catalog seed failed: {e}"),
+    }
     Ok(store)
 }
 

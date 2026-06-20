@@ -37,10 +37,10 @@ WORKFILE     ?= workfile.yaml
 # LAZYBONES_CONFIG to find the file. Export it for every recipe that runs the binary.
 export LAZYBONES_CONFIG := $(CONFIG)
 
-# API bind. Must MATCH `api.bind` in $(CONFIG) (default 127.0.0.1:7878) — it's used
+# API bind. Must MATCH `api.bind` in $(CONFIG) (default 127.0.0.1:46787) — it's used
 # here only to curl the demo and to target `make kill`. Override BOTH together
 # (e.g. `make serve LAZYBONES_BIND=127.0.0.1:9000 BIND=127.0.0.1:9000`).
-BIND ?= 127.0.0.1:7878
+BIND ?= 127.0.0.1:46787
 HOST := $(word 1,$(subst :, ,$(BIND)))
 PORT := $(word 2,$(subst :, ,$(BIND)))
 
@@ -120,7 +120,7 @@ dev: import ui-install
 		sleep 0.1; \
 	done; \
 	echo "lazybonesd ready → http://$(BIND)  (log: /tmp/lazybones-dev.log)"; \
-	echo "--- starting dashboard (browser) → http://localhost:1420 ---"; \
+	echo "--- starting dashboard (browser) → http://localhost:51840 ---"; \
 	cd $(UI_DIR) && $(NPM) run dev
 
 # Backend-only quickstart: seed the queue, then serve in the foreground (no UI).
@@ -266,10 +266,10 @@ ui-install:
 		echo "UI deps present ($(UI_DIR)/node_modules) — skipping install"; \
 	fi
 
-# Run the dashboard in the browser (Vite dev server on :1420). Point it at a
+# Run the dashboard in the browser (Vite dev server on :51840). Point it at a
 # running daemon in Settings (default http://$(BIND)). Ctrl-C stops it.
 ui-dev: ui-install
-	@echo "dashboard (browser) → http://localhost:1420   (daemon: http://$(BIND))"
+	@echo "dashboard (browser) → http://localhost:51840   (daemon: http://$(BIND))"
 	cd $(UI_DIR) && $(NPM) run dev
 
 # Run the dashboard as a native desktop window (Tauri runs Vite under the hood).

@@ -26,7 +26,7 @@ There is no desktop-only render path; the bridge is feature-detected at runtime
 cd ui
 npm install
 
-# browser (Vite dev server on :1420)
+# browser (Vite dev server on :51840)
 npm run dev
 
 # desktop (native window; runs Vite under the hood)
@@ -39,7 +39,7 @@ npm run build && npm run preview
 npm run desktop:build
 ```
 
-Point it at a running daemon in **Settings** (default `http://127.0.0.1:7878`,
+Point it at a running daemon in **Settings** (default `http://127.0.0.1:46787`,
 loop token `lazybones-loop`), or bake it in with `VITE_API_BASE`.
 
 ## Layout

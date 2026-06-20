@@ -7,6 +7,8 @@ export interface Template {
   description: string;
   spec_template: string;
   default_tool: string | null;
+  default_model: string | null;
+  default_effort: string | null;
   default_worktree_mode: WorktreeMode | null;
   created_at: string;
   updated_at: string;
@@ -18,6 +20,10 @@ export interface Workspace {
   base_branch: string | null;
   branch_prefix: string | null;
   worktree_mode: WorktreeMode;
+  /** Default agent triple for the workflow's tasks; null inherits the global. */
+  tool: string | null;
+  model: string | null;
+  effort: string | null;
 }
 
 /** Human-set lifecycle (the only stored workflow state). */

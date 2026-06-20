@@ -12,6 +12,11 @@ use super::Hcom;
 impl Hcom {
     /// Spawn one headless agent for `tag`, working in `dir`, with `prompt`.
     ///
+    /// `model` and `effort`, when set, are forwarded to the tool CLI as
+    /// `--model`/`--effort` tool-args (hcom passes through anything it doesn't
+    /// recognise). They come from the task's catalog selection; `None` lets the
+    /// CLI use its own default.
+    ///
     /// Returns the hcom name parsed from the `Names:` line — the handle the
     /// scheduler stores as the task's `session`.
     ///
@@ -24,6 +29,8 @@ impl Hcom {
         tag: &str,
         dir: &Path,
         prompt: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
     ) -> anyhow::Result<String> {
         let mut cmd = self.command();
         // `1 <tool>` launches a single instance of that tool; `--go` skips the
@@ -38,6 +45,13 @@ impl Hcom {
             .arg("--headless")
             .arg("--hcom-prompt")
             .arg(prompt);
+        // Forwarded to the tool CLI (hcom passes unrecognised args through).
+        if let Some(model) = model {
+            cmd.arg("--model").arg(model);
+        }
+        if let Some(effort) = effort {
+            cmd.arg("--effort").arg(effort);
+        }
         for (k, v) in &self.env {
             cmd.env(k, v);
         }

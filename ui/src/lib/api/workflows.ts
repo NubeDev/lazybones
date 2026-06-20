@@ -23,6 +23,10 @@ export interface WorkspaceDraft {
   base_branch: string | null;
   branch_prefix: string | null;
   worktree_mode: WorktreeMode;
+  /** Default agent triple for the workflow's tasks; null inherits the global. */
+  tool: string | null;
+  model: string | null;
+  effort: string | null;
 }
 
 /** `POST /workflows` — create a workflow bound to a workspace. `409` if id taken. */
@@ -47,6 +51,8 @@ export interface WorkflowTaskDraft {
   deps?: string[];
   owns?: string[];
   tool?: string | null;
+  model?: string | null;
+  effort?: string | null;
   worktree_mode_override?: WorktreeMode | null;
   reuse_from?: string | null;
 }

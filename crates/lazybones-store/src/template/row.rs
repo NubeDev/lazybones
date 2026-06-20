@@ -22,6 +22,8 @@ pub(crate) struct TemplateRow {
     /// `Option` columns so rows written before a field existed read back fine.
     pub(crate) description: Option<String>,
     pub(crate) default_tool: Option<String>,
+    pub(crate) default_model: Option<String>,
+    pub(crate) default_effort: Option<String>,
     /// Worktree mode intent, stored as its lowercase string form; `None` = unset.
     pub(crate) default_worktree_mode: Option<String>,
     pub(crate) created_at: Option<String>,
@@ -37,6 +39,8 @@ impl TemplateRow {
             spec_template: t.spec_template.clone(),
             description: Some(t.description.clone()),
             default_tool: t.default_tool.clone(),
+            default_model: t.default_model.clone(),
+            default_effort: t.default_effort.clone(),
             default_worktree_mode: t.default_worktree_mode.map(|m| m.as_str().to_owned()),
             created_at: Some(t.created_at.clone()),
             updated_at: Some(t.updated_at.clone()),
@@ -51,6 +55,8 @@ impl TemplateRow {
             spec_template: self.spec_template,
             description: self.description.unwrap_or_default(),
             default_tool: self.default_tool,
+            default_model: self.default_model,
+            default_effort: self.default_effort,
             default_worktree_mode: self
                 .default_worktree_mode
                 .as_deref()

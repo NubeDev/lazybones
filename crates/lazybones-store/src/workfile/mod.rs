@@ -4,4 +4,4 @@ mod seed;
 mod sync;
 
 pub use seed::SeedTask;
-pub use sync::sync_seeds;
+pub use sync::{deps_with_reuse, sync_seeds};

@@ -23,6 +23,9 @@ pub async fn create_workflow(
         base_branch: body.workspace.base_branch,
         branch_prefix: body.workspace.branch_prefix,
         worktree_mode: body.workspace.worktree_mode,
+        tool: body.workspace.tool,
+        model: body.workspace.model,
+        effort: body.workspace.effort,
     };
     let run = Run::new(&body.id, &body.title, workspace, state.store.now());
     Ok(Json(state.store.create_run(&run).await?))

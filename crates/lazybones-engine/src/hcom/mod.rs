@@ -10,6 +10,7 @@ mod events;
 mod spawn;
 
 pub use control::HcomAgent;
+pub use events::HcomEvent;
 
 use std::path::PathBuf;
 

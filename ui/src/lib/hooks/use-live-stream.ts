@@ -25,6 +25,14 @@ export function useLiveStream() {
       qc.invalidateQueries({ queryKey: ["run"] });
     }
 
+    // The hcom log feed maintains its own live state in `useHcomLogFeed` (it
+    // appends entries rather than refetching), so a global `hcom_log` listener
+    // only needs to reconcile the durable `["hcom", …]` queries that back the
+    // per-task drill-in trace.
+    function refreshHcom() {
+      qc.invalidateQueries({ queryKey: ["hcom"] });
+    }
+
     try {
       es = new EventSource(url);
     } catch {
@@ -34,12 +42,14 @@ export function useLiveStream() {
     es.addEventListener("open", refresh);
     es.addEventListener("transition", refresh);
     es.addEventListener("activity", refresh);
+    es.addEventListener("hcom_log", refreshHcom);
 
     return () => {
       closed = true;
       es?.removeEventListener("open", refresh);
       es?.removeEventListener("transition", refresh);
       es?.removeEventListener("activity", refresh);
+      es?.removeEventListener("hcom_log", refreshHcom);
       es?.close();
       void closed;
     };

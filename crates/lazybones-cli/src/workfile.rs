@@ -22,6 +22,8 @@ struct WorkfileTask {
     owns: Vec<String>,
     #[serde(default)]
     tool: Option<String>,
+    #[serde(default)]
+    reuse_from: Option<String>,
 }
 
 /// The `workfile.yaml` document.
@@ -51,6 +53,7 @@ pub fn parse_workfile(path: &Path) -> anyhow::Result<Vec<SeedTask>> {
                 deps: t.deps,
                 owns: t.owns,
                 tool: t.tool,
+                reuse_from: t.reuse_from,
             })
         })
         .collect()

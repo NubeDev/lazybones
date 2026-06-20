@@ -58,6 +58,18 @@ pub enum StoreError {
     #[error("run already exists: {0}")]
     RunExists(String),
 
+    /// An agent catalog id was referenced that does not exist in the store.
+    #[error("agent not found: {0}")]
+    AgentNotFound(String),
+
+    /// An agent catalog entry was created with an id that is already taken.
+    #[error("agent already exists: {0}")]
+    AgentExists(String),
+
+    /// The bundled default agent catalog (YAML) failed to parse on seed.
+    #[error("agent catalog seed failed: {0}")]
+    AgentSeed(String),
+
     /// Sealing or opening a secret failed (bad master key, corrupt blob, …).
     #[error("secret error: {0}")]
     Secret(String),

@@ -1,8 +1,8 @@
 //! Cross-origin policy for the REST surface.
 //!
 //! The dashboard UI runs on a *different origin* than the daemon — the browser
-//! dev server is `http://localhost:1420` and the desktop shell serves from
-//! `tauri://localhost`, while the API binds `127.0.0.1:7878`. Without CORS the
+//! dev server is `http://localhost:51840` and the desktop shell serves from
+//! `tauri://localhost`, while the API binds `127.0.0.1:46787`. Without CORS the
 //! browser blocks every cross-origin response (curl is unaffected, which is why
 //! the daemon looked healthy from the shell but the UI showed everything
 //! "offline"). lazybones is a single-user local tool authenticated by a bearer

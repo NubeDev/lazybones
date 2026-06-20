@@ -77,11 +77,16 @@ pub(crate) struct ProbeOutcome {
     pub reply: Option<String>,
 }
 
+/// The sentinel we ask the agent to start its reply with, so we can pick its
+/// answer out of the PTY screen (which also holds the banner + prompt echo).
+const ANSWER_TAG: &str = "ANSWER::";
+
 /// What we ask the probe agent to answer: its model id and who it is, on one
-/// line, so the test can echo a concrete identity back to the user.
+/// line prefixed with [`ANSWER_TAG`], so the test can echo a concrete identity
+/// back to the user.
 const PROBE_PROMPT: &str =
-    "Reply with exactly one line and nothing else, in this format: \
-     model=<your exact model id>, who=<a short phrase for who you are>";
+    "Reply with exactly one line and nothing else, starting with ANSWER:: \
+     and then `model=<your exact model id>, who=<a short phrase for who you are>`";
 
 /// Actually run the agent through hcom to prove its credential works.
 ///
@@ -175,6 +180,13 @@ pub(crate) fn probe_agent(
     outcome
 }
 
+/// How long to keep polling the agent's screen for its `ANSWER::` line, and how
+/// often. A headless Claude launch authenticates within a couple seconds but
+/// takes a few more to emit its first reply, so a tight poll converges fast
+/// without blocking the request for long.
+const REPLY_POLL_ATTEMPTS: u32 = 12;
+const REPLY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// Pull the agent name hcom prints on the `Names: <name>` line at launch. A probe
 /// launches exactly one agent, so the first name is the one we want.
 fn parse_agent_name(text: &str) -> Option<String> {
@@ -185,55 +197,91 @@ fn parse_agent_name(text: &str) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
-/// Read the probe agent's last reply via `hcom transcript <name> --full --json`
-/// and pull out the assistant's answer (the model + identity line we asked for).
-/// Best-effort: any failure (no transcript yet, unparseable output) yields `None`
-/// and the caller falls back to the generic "agent is running" detail.
+/// Read the probe agent's reply off its live PTY screen.
+///
+/// A headless agent's answer doesn't land in `hcom transcript` (that reads the
+/// CLI's own session journal, which a `--hcom-prompt` launch never writes where
+/// the command looks) nor in the event stream — it's rendered straight onto the
+/// agent's terminal. `hcom term <name> --json` dumps that screen as a `lines[]`
+/// array, so we poll it until our `ANSWER::`-tagged line appears, then clean it
+/// up. Best-effort: if the line never shows (agent slow, screen scrolled), we
+/// return `None` and the caller keeps the generic "agent is running" detail.
 fn read_agent_reply(hcom: &std::path::Path, name: &str) -> Option<String> {
+    for _ in 0..REPLY_POLL_ATTEMPTS {
+        if let Some(reply) = read_screen_answer(hcom, name) {
+            return Some(reply);
+        }
+        std::thread::sleep(REPLY_POLL_INTERVAL);
+    }
+    // One last read after the final sleep.
+    read_screen_answer(hcom, name)
+}
+
+/// One snapshot of `hcom term <name> --json`, scanned for the `ANSWER::` line.
+fn read_screen_answer(hcom: &std::path::Path, name: &str) -> Option<String> {
     let out = Command::new(hcom)
-        .args(["transcript", name, "--full", "--json"])
+        .args(["term", name, "--json"])
         .output()
         .ok()?;
     if !out.status.success() {
         return None;
     }
     let json = serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()?;
-    // The transcript is a list of exchanges; we want the assistant's text from
-    // the most recent one. hcom nests the reply under an exchange's assistant
-    // field — accept either a flat string or the common `{role, text}` shapes.
-    let exchanges = json.as_array().or_else(|| json.get("exchanges").and_then(|e| e.as_array()))?;
-    let reply = exchanges.iter().rev().find_map(extract_assistant_text)?;
-    let reply = reply.trim();
-    if reply.is_empty() {
-        return None;
-    }
-    // Keep it to the single answer line, and bound the length defensively.
-    let line = reply.lines().map(str::trim).find(|l| !l.is_empty())?;
-    Some(line.chars().take(200).collect())
+    let lines = json.get("lines").and_then(serde_json::Value::as_array)?;
+    extract_answer(lines.iter().filter_map(serde_json::Value::as_str))
 }
 
-/// Best-effort dig for an assistant reply string inside one transcript exchange,
-/// tolerating the few shapes hcom's `--json` uses (`assistant` as a string, or an
-/// object/array of content blocks with a `text` field).
-fn extract_assistant_text(exchange: &serde_json::Value) -> Option<String> {
-    let assistant = exchange.get("assistant").or_else(|| exchange.get("response"))?;
-    if let Some(s) = assistant.as_str() {
-        return Some(s.to_owned());
-    }
-    if let Some(s) = assistant.get("text").and_then(serde_json::Value::as_str) {
-        return Some(s.to_owned());
-    }
-    if let Some(blocks) = assistant.as_array() {
-        let text: String = blocks
-            .iter()
-            .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !text.is_empty() {
-            return Some(text);
+/// Pull the model+identity answer out of the agent's screen lines.
+///
+/// The screen holds a banner, the echoed prompt, and the reply — all of which
+/// mention `ANSWER::` (the prompt tells the agent to use it, so the echo carries
+/// it too). The agent's actual reply is the one Claude Code renders with a `●`
+/// bullet, whereas the prompt echo is rendered under a `❯` glyph. So we look for
+/// a bulleted line bearing the tag; only if none exists do we fall back to any
+/// tagged line that doesn't still contain the prompt's `<...>` placeholders. We
+/// then strip hcom's `[hcom:<name>]` tag and stitch on a wrapped continuation.
+fn extract_answer<'a>(lines: impl Iterator<Item = &'a str>) -> Option<String> {
+    let lines: Vec<&str> = lines.collect();
+    // The reply is the `●`-bulleted line carrying the tag (the agent's output);
+    // the prompt echo renders under `❯`, so the bullet alone disambiguates. We
+    // deliberately do NOT fall back to a non-bulleted tagged line: the only other
+    // tagged lines are the prompt echo, and the caller polls until the bullet
+    // appears, so accepting an echo would just return the instruction verbatim.
+    let idx = lines
+        .iter()
+        .rposition(|l| l.trim_start().starts_with('●') && l.contains(ANSWER_TAG))?;
+    // Start at the tag, dropping everything before it (bullet, padding).
+    let start = &lines[idx][lines[idx].find(ANSWER_TAG)? + ANSWER_TAG.len()..];
+    let mut answer = start.trim().to_owned();
+    // A wrapped answer continues on the next line until a blank line or a new
+    // UI element (bullet/status glyph). Append one continuation line if present.
+    if let Some(next) = lines.get(idx + 1) {
+        let next = next.trim();
+        if !next.is_empty() && !starts_with_glyph(next) {
+            answer.push(' ');
+            answer.push_str(next);
         }
     }
-    None
+    // Guard against a half-rendered echo sneaking through: a real answer carries
+    // a concrete `model=` value, never the prompt's `<...>` placeholder.
+    if answer.contains('<') && answer.contains('>') {
+        return None;
+    }
+    // Strip the trailing `[hcom:<name>]` routing tag hcom appends.
+    if let Some(tag) = answer.rfind("[hcom:") {
+        answer.truncate(tag);
+    }
+    let answer = answer.trim();
+    if answer.is_empty() {
+        return None;
+    }
+    Some(answer.chars().take(200).collect())
+}
+
+/// Whether a screen line opens with a TUI glyph (bullet/spinner/prompt), marking
+/// it as a new element rather than a wrapped continuation of the reply.
+fn starts_with_glyph(line: &str) -> bool {
+    line.starts_with(['●', '✻', '❯', '─', '│', '╰', '*'])
 }
 
 /// Pull the `Batch id: <id>` hcom prints on launch out of its output.

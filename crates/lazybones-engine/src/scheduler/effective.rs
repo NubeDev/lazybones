@@ -9,7 +9,15 @@
 //! base_branch   = run.workspace.base_branch     ?? global base_branch
 //! branch_prefix = run.workspace.branch_prefix   ?? global branch_prefix
 //! worktree_mode = task.worktree_mode_override   ?? run.workspace.worktree_mode ?? global default
+//! tool          = task.tool                     ?? run.workspace.tool   ?? global agent_tool
+//! model         = task.model                    ?? run.workspace.model  ?? global agent_model
+//! effort        = task.effort                   ?? run.workspace.effort ?? global agent_effort
 //! ```
+//!
+//! The agent triple (`tool`/`model`/`effort`) follows the same most-specific-wins
+//! rule so a workflow or template can set a default that every task inherits, and
+//! any task can still override it. `tool` always resolves to a value (global has a
+//! default); `model`/`effort` may stay `None` (the agent CLI then uses its own).
 //!
 //! A **standalone task** (`run = None`) reads only the global config and its own
 //! `worktree_mode` — byte-identical to the pre-workflow behaviour. The repo lives
@@ -33,6 +41,12 @@ pub struct EffectiveGit {
     pub branch_prefix: String,
     /// The worktree provisioning mode.
     pub worktree_mode: WorktreeMode,
+    /// The agent tool to launch (always set: global has a default).
+    pub tool: String,
+    /// The model forwarded to the agent CLI; `None` = the CLI's own default.
+    pub model: Option<String>,
+    /// The effort forwarded to the agent CLI; `None` = the CLI's own default.
+    pub effort: Option<String>,
 }
 
 /// Resolve `task`'s effective git settings given its (optional) parent `run` and
@@ -49,6 +63,10 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
             branch_prefix: cfg.branch_prefix.clone(),
             // Standalone: the task's own mode is the contract.
             worktree_mode: task.worktree_mode,
+            // No workspace layer: task ?? global.
+            tool: task.tool.clone().unwrap_or_else(|| cfg.agent_tool.clone()),
+            model: task.model.clone().or_else(|| cfg.agent_model.clone()),
+            effort: task.effort.clone().or_else(|| cfg.agent_effort.clone()),
         },
         Some(run) => {
             let ws = &run.workspace;
@@ -61,6 +79,22 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
                     .unwrap_or_else(|| cfg.branch_prefix.clone()),
                 // Task override wins; else the workspace default.
                 worktree_mode: task.worktree_mode_override.unwrap_or(ws.worktree_mode),
+                // task ?? workspace ?? global, per field.
+                tool: task
+                    .tool
+                    .clone()
+                    .or_else(|| ws.tool.clone())
+                    .unwrap_or_else(|| cfg.agent_tool.clone()),
+                model: task
+                    .model
+                    .clone()
+                    .or_else(|| ws.model.clone())
+                    .or_else(|| cfg.agent_model.clone()),
+                effort: task
+                    .effort
+                    .clone()
+                    .or_else(|| ws.effort.clone())
+                    .or_else(|| cfg.agent_effort.clone()),
             }
         }
     }
@@ -84,6 +118,8 @@ mod tests {
             branch_prefix: "lazy/".into(),
             merge: crate::config::MergeMode::FastForward,
             agent_tool: "claude".into(),
+            agent_model: None,
+            agent_effort: None,
             stale_after_secs: 300,
             tick_secs: 2,
         }
@@ -112,6 +148,9 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            tool: None,
+            model: None,
+            effort: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.repo, PathBuf::from("/repo/abc"));
@@ -129,11 +168,61 @@ mod tests {
             base_branch: Some("dev".into()),
             branch_prefix: Some("wf/".into()),
             worktree_mode: WorktreeMode::Reuse,
+            tool: None,
+            model: None,
+            effort: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.base_branch, "dev");
         assert_eq!(eff.branch_prefix, "wf/");
         assert_eq!(eff.worktree_mode, WorktreeMode::Reuse);
+    }
+
+    #[test]
+    fn agent_triple_resolves_task_then_workspace_then_global() {
+        // Global has tool=claude, model=None, effort=None.
+        let mut cfg = cfg();
+        cfg.agent_model = Some("global-model".into());
+
+        // Workspace sets a tool + effort default; leaves model to inherit global.
+        let run = run_with(Workspace {
+            repo: "/repo/abc".into(),
+            base_branch: None,
+            branch_prefix: None,
+            worktree_mode: WorktreeMode::New,
+            tool: Some("codex".into()),
+            model: None,
+            effort: Some("medium".into()),
+        });
+
+        // A task with no agent fields inherits workspace tool/effort + global model.
+        let bare = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+        let eff = resolve(&bare, Some(&run), &cfg);
+        assert_eq!(eff.tool, "codex");
+        assert_eq!(eff.model.as_deref(), Some("global-model"));
+        assert_eq!(eff.effort.as_deref(), Some("medium"));
+
+        // A task that sets its own fields wins over both layers.
+        let mut over = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+        over.tool = Some("gemini".into());
+        over.model = Some("task-model".into());
+        over.effort = Some("high".into());
+        let eff = resolve(&over, Some(&run), &cfg);
+        assert_eq!(eff.tool, "gemini");
+        assert_eq!(eff.model.as_deref(), Some("task-model"));
+        assert_eq!(eff.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn standalone_agent_triple_is_task_then_global() {
+        let mut cfg = cfg();
+        cfg.agent_effort = Some("global-effort".into());
+        let mut task = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+        task.tool = Some("codex".into());
+        let eff = resolve(&task, None, &cfg);
+        assert_eq!(eff.tool, "codex"); // task wins
+        assert_eq!(eff.model, None); // nothing set anywhere
+        assert_eq!(eff.effort.as_deref(), Some("global-effort")); // global fills in
     }
 
     #[test]
@@ -145,6 +234,9 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            tool: None,
+            model: None,
+            effort: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.worktree_mode, WorktreeMode::Branch);

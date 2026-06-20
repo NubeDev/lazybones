@@ -14,6 +14,8 @@
 
 use tokio::sync::broadcast;
 
+use crate::hcom_log::HcomLogEntry;
+
 use super::activity::Activity;
 use super::row::Event;
 
@@ -29,6 +31,11 @@ pub enum LiveEvent {
     Transition(Event),
     /// An ephemeral agent progress message (not persisted).
     Activity(Activity),
+    /// A raw hcom event the tail just ingested — also durable in the `hcom_log`
+    /// table, published here for the live edge (docs/hcom-logs-scope.md). Because
+    /// persistence happens before publish, anything streamed is already
+    /// re-fetchable via `GET /runs/:id/hcom`.
+    HcomLog(HcomLogEntry),
 }
 
 /// A cloneable publish/subscribe handle for the live feed.

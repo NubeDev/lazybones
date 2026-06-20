@@ -181,6 +181,8 @@ mod tests {
             branch_prefix: "lazy/".into(),
             merge: crate::config::MergeMode::FastForward,
             agent_tool: "claude".into(),
+            agent_model: None,
+            agent_effort: None,
             stale_after_secs: 300,
             tick_secs: 2,
         }
@@ -193,6 +195,9 @@ mod tests {
             base_branch: "main".into(),
             branch_prefix: "lazy/".into(),
             worktree_mode: mode,
+            tool: "claude".into(),
+            model: None,
+            effort: None,
         }
     }
 

@@ -14,6 +14,7 @@ import { useGhRepo } from "@/lib/hooks/use-gh";
 import { WORKTREE_MODES, WorktreeModePicker } from "@/features/tasks/worktree-mode";
 import { RepoPicker } from "./repo-picker";
 import { BranchField } from "./branch-field";
+import { AgentPicker } from "@/features/agents/agent-picker";
 import type { WorkspaceDraft } from "@/lib/api/workflows";
 
 const EMPTY: WorkspaceDraft = {
@@ -21,6 +22,9 @@ const EMPTY: WorkspaceDraft = {
   base_branch: null,
   branch_prefix: null,
   worktree_mode: "new",
+  tool: null,
+  model: null,
+  effort: null,
 };
 
 /** Create a workflow: id, title, and a workspace block (repo + git config).
@@ -188,6 +192,16 @@ export function WorkflowDialog({
                 onChange={(m) => setWs({ ...ws, worktree_mode: m })}
               />
             </Field>
+
+            <AgentPicker
+              tool={ws.tool ?? ""}
+              model={ws.model}
+              effort={ws.effort}
+              onToolChange={(t) => setWs((prev) => ({ ...prev, tool: t.trim() || null }))}
+              onModelChange={(m) => setWs((prev) => ({ ...prev, model: m }))}
+              onEffortChange={(e) => setWs((prev) => ({ ...prev, effort: e }))}
+              labels={{ agent: "Default agent", agentHint: "blank = inherit global default" }}
+            />
           </div>
         </div>
 

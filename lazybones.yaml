@@ -24,7 +24,7 @@ agent_tool: claude                        # [LAZYBONES_AGENT_TOOL] claude | code
 
 # --- the brain: lazybonesd REST + embedded SurrealDB ---
 api:
-  bind: 127.0.0.1:7878                    # [LAZYBONES_BIND]
+  bind: 127.0.0.1:46787                   # [LAZYBONES_BIND]
 data_dir: .lazy/db                         # [LAZYBONES_DATA_DIR] embedded SurrealDB (kv-surrealkv) files
 namespace: lazybones                      # [LAZYBONES_NAMESPACE]
 database: run                             # [LAZYBONES_DATABASE]

@@ -24,6 +24,10 @@ pub(crate) struct TaskRow {
     pub(crate) deps: Vec<String>,
     pub(crate) owns: Vec<String>,
     pub(crate) tool: Option<String>,
+    /// Per-task model + effort forwarded to the agent CLI; `Option` so rows
+    /// written before these columns read back as `None`.
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
     /// Worktree provisioning intent, stored as its lowercase string form.
     /// `Option` so rows written before this column read back as the default.
     pub(crate) worktree_mode: Option<String>,
@@ -56,6 +60,8 @@ impl TaskRow {
             deps: task.deps.clone(),
             owns: task.owns.clone(),
             tool: task.tool.clone(),
+            model: task.model.clone(),
+            effort: task.effort.clone(),
             worktree_mode: Some(task.worktree_mode.as_str().to_owned()),
             session: task.session.clone(),
             worktree: task.worktree.clone(),
@@ -81,6 +87,8 @@ impl TaskRow {
             deps: self.deps,
             owns: self.owns,
             tool: self.tool,
+            model: self.model,
+            effort: self.effort,
             worktree_mode: WorktreeMode::parse(self.worktree_mode.as_deref()),
             session: self.session,
             worktree: self.worktree,

@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils/cn";
 import { ApiError } from "@/lib/api/client";
 import { useAddWorkflowTask } from "@/lib/hooks/use-workflows";
 import { useTemplates } from "@/lib/hooks/use-templates";
+import { useAgentCatalog } from "@/lib/hooks/use-agent-catalog";
+import { AgentPicker } from "@/features/agents/agent-picker";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import type { WorkflowTaskDraft } from "@/lib/api/workflows";
 import type { WorktreeMode } from "@/types/task";
@@ -32,6 +34,7 @@ export function AddTaskDialog({
   trigger?: React.ReactNode;
 }) {
   const { data: templates } = useTemplates();
+  const { data: agents } = useAgentCatalog();
   const add = useAddWorkflowTask(workflow.id);
 
   const [open, setOpen] = useState(false);
@@ -42,12 +45,25 @@ export function AddTaskDialog({
   const [deps, setDeps] = useState<string[]>([]);
   const [owns, setOwns] = useState("");
   const [tool, setTool] = useState("");
+  const [model, setModel] = useState<string | null>(null);
+  const [effort, setEffort] = useState<string | null>(null);
   const [override, setOverride] = useState<WorktreeMode | null>(null);
   const [reuseFrom, setReuseFrom] = useState<string | null>(null);
+
+  // The catalog entry for the chosen tool (if it's a known agent) — drives the
+  // model + effort pickers. Blank tool / unknown id → no pickers, just the input.
+  const agent = (agents ?? []).find((a) => a.id === tool.trim()) ?? null;
 
   // Effective mode: a non-null override wins; else the workspace's mode.
   const effectiveMode: WorktreeMode = override ?? workflow.workspace.worktree_mode;
   const showReuse = effectiveMode === "reuse";
+
+  // A reuse source that's a task in THIS workflow is also a dependency: the
+  // backend folds it into `deps` so the source finishes (and has a worktree)
+  // before this task claims it. A source typed in by hand may live in another
+  // workflow — then it's not an in-graph dep, just a claim-time wait.
+  const reuseIsInWorkflow = reuseFrom !== null && existingTasks.includes(reuseFrom);
+  const reuseImpliesDep = showReuse && reuseIsInWorkflow && !deps.includes(reuseFrom!);
 
   const pickedTemplate = templates?.find((t) => t.id === fromTemplate) ?? null;
 
@@ -59,6 +75,8 @@ export function AddTaskDialog({
     setDeps([]);
     setOwns("");
     setTool("");
+    setModel(null);
+    setEffort(null);
     setOverride(null);
     setReuseFrom(null);
   }
@@ -79,6 +97,9 @@ export function AddTaskDialog({
         .map((s) => s.trim())
         .filter(Boolean),
       tool: tool.trim() || null,
+      // Only send model/effort the chosen agent actually offers.
+      model: agent?.models.includes(model ?? "") ? model : null,
+      effort: agent?.efforts.includes(effort ?? "") ? effort : null,
       worktree_mode_override: override,
       reuse_from: showReuse ? reuseFrom : null,
     };
@@ -193,12 +214,30 @@ export function AddTaskDialog({
               </span>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {existingTasks.map((d) => (
-                  <Chip key={d} on={deps.includes(d)} onClick={() => toggleDep(d)}>
-                    {d}
-                  </Chip>
-                ))}
+                {existingTasks.map((d) => {
+                  // The in-workflow reuse source is a dependency too; show it
+                  // selected-and-locked so the implied edge is visible, not a
+                  // surprise the backend adds silently.
+                  const impliedByReuse = showReuse && reuseFrom === d && reuseIsInWorkflow;
+                  return (
+                    <Chip
+                      key={d}
+                      on={deps.includes(d) || impliedByReuse}
+                      locked={impliedByReuse}
+                      onClick={() => !impliedByReuse && toggleDep(d)}
+                    >
+                      {d}
+                      {impliedByReuse && " (reuse)"}
+                    </Chip>
+                  );
+                })}
               </div>
+            )}
+            {reuseImpliesDep && (
+              <span className="block text-[10px] text-muted-foreground">
+                <span className="font-mono text-accent">{reuseFrom}</span> is added
+                as a dependency automatically because this task reuses its worktree.
+              </span>
             )}
           </Field>
 
@@ -211,14 +250,15 @@ export function AddTaskDialog({
             />
           </Field>
 
-          <Field label="Agent tool" hint="blank = inherit template/workflow default">
-            <Input
-              value={tool}
-              onChange={(e) => setTool(e.target.value)}
-              placeholder="claude"
-              className="font-mono"
-            />
-          </Field>
+          <AgentPicker
+            tool={tool}
+            model={model}
+            effort={effort}
+            onToolChange={setTool}
+            onModelChange={setModel}
+            onEffortChange={setEffort}
+            labels={{ agent: "Agent", agentHint: "blank = inherit template/workflow default" }}
+          />
 
           <Field
             label="Worktree mode override"
@@ -248,7 +288,7 @@ export function AddTaskDialog({
           {showReuse && (
             <Field
               label="Reuse from"
-              hint="the task whose worktree to reuse (any workflow's task id)"
+              hint="the task whose worktree to reuse — a task here becomes a dependency; a task in another workflow is waited on at claim time"
             >
               <div className="flex flex-wrap gap-1.5">
                 <Chip on={reuseFrom === null} onClick={() => setReuseFrom(null)}>
@@ -309,21 +349,27 @@ function modeBtn(on: boolean): string {
 function Chip({
   on,
   onClick,
+  locked = false,
   children,
 }: {
   on: boolean;
   onClick: () => void;
+  /** Selected and not toggleable — e.g. a dep implied by `reuse_from`. */
+  locked?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={locked}
+      title={locked ? "Implied by reuse — can't be removed here" : undefined}
       className={cn(
         "rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium transition-colors",
         on
           ? "border-accent/40 bg-accent-soft/50 text-accent"
           : "border-border bg-surface text-muted-foreground hover:text-foreground",
+        locked && "cursor-default opacity-80",
       )}
     >
       {children}

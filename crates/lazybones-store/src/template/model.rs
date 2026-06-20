@@ -29,6 +29,13 @@ pub struct Template {
     /// Agent tool inherited by the task unless overridden; usually `None`.
     #[serde(default)]
     pub default_tool: Option<String>,
+    /// Model inherited by the task unless overridden; `None` lets it inherit the
+    /// workflow / global default.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// Effort inherited by the task unless overridden; `None` inherits.
+    #[serde(default)]
+    pub default_effort: Option<String>,
     /// Rarely-set worktree mode intrinsic to the recipe; usually `None` so the
     /// task inherits the workspace mode.
     #[serde(default)]
@@ -42,12 +49,15 @@ pub struct Template {
 impl Template {
     /// A freshly authored template stamped `created_at == updated_at == now`.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: impl Into<String>,
         title: impl Into<String>,
         description: impl Into<String>,
         spec_template: impl Into<String>,
         default_tool: Option<String>,
+        default_model: Option<String>,
+        default_effort: Option<String>,
         default_worktree_mode: Option<WorktreeMode>,
         now: impl Into<String>,
     ) -> Self {
@@ -58,6 +68,8 @@ impl Template {
             description: description.into(),
             spec_template: spec_template.into(),
             default_tool,
+            default_model,
+            default_effort,
             default_worktree_mode,
             created_at: now.clone(),
             updated_at: now,

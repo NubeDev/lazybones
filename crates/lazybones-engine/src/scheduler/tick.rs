@@ -1,4 +1,4 @@
-//! One scheduler pass: reconcile → promote → claim → spawn.
+//! One scheduler pass: reconcile → promote → claim → spawn → tail.
 //!
 //! The supervisor loop calls this every `tick_secs`. Claimed tasks are handed to
 //! [`finish::drive`] in their own tokio task (step 4–5), so the tick itself never
@@ -12,7 +12,7 @@ use crate::config::EngineConfig;
 use crate::hcom::Hcom;
 
 use super::effective::{self, EffectiveGit};
-use super::{finish, prompt, reclaim, worktree};
+use super::{finish, hcom_tail, prompt, reclaim, worktree};
 
 /// The actor recorded on transitions the tick drives.
 const ACTOR: &str = "scheduler:tick";
@@ -23,6 +23,9 @@ pub async fn tick(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
     reclaim::reconcile(store, hcom, cfg).await;
     promote(store).await;
     claim_and_spawn(store, hcom, cfg).await;
+    // TAIL: drain hcom's raw event stream into the durable hcom log. Best-effort,
+    // self-contained, holds no await on agent work (docs/hcom-logs-scope.md).
+    hcom_tail::tail_hcom(store, hcom).await;
 }
 
 /// PROMOTE: every `pending` task whose deps are all `done` → `ready`.
@@ -94,8 +97,8 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
             }
         };
 
-        // 2. Spawn the agent, capturing the hcom name.
-        let tool = task.tool.clone().unwrap_or_else(|| cfg.agent_tool.clone());
+        // 2. Spawn the agent, capturing the hcom name. The agent triple is
+        //    resolved task ?? workspace ?? global by `effective::resolve` above.
         let agent_prompt = prompt::compose(
             &task,
             &provisioned.worktree,
@@ -104,10 +107,12 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         );
         let session = match hcom
             .spawn(
-                &tool,
+                &eff.tool,
                 &task.id,
                 std::path::Path::new(&provisioned.worktree),
                 &agent_prompt,
+                eff.model.as_deref(),
+                eff.effort.as_deref(),
             )
             .await
         {

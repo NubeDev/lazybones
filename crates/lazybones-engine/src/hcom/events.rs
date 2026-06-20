@@ -19,6 +19,10 @@ pub struct HcomEvent {
     /// Event id (monotonic in hcom's local db).
     #[serde(default)]
     pub id: serde_json::Value,
+    /// RFC3339 timestamp hcom stamped the event with. Kept for the hcom log's
+    /// `at`; `None`/empty when hcom omits it.
+    #[serde(default)]
+    pub ts: String,
     /// Event type (`message`, `status`, `life`, …).
     #[serde(default, rename = "type")]
     pub kind: String,
@@ -28,6 +32,17 @@ pub struct HcomEvent {
     /// The event payload (message text, status, …).
     #[serde(default)]
     pub data: serde_json::Value,
+}
+
+impl HcomEvent {
+    /// hcom's event id as an integer, if it is one. hcom emits `id` as a JSON
+    /// number; this is the monotonic cursor the tail compares with `id >`. A
+    /// non-integer id (shouldn't happen on 0.7.21) yields `None` and the event is
+    /// skipped by the tail rather than mis-cursored.
+    #[must_use]
+    pub fn id_int(&self) -> Option<i64> {
+        self.id.as_i64()
+    }
 }
 
 impl Hcom {
@@ -56,6 +71,22 @@ impl Hcom {
             );
         }
         Ok(parse_events(&String::from_utf8_lossy(&out.stdout)))
+    }
+
+    /// Non-blocking tail: every event with `id > cursor`, returned immediately.
+    ///
+    /// This is `wait()`'s `--sql "id > {cursor}"` clause with a `0`-second
+    /// timeout, so hcom returns whatever's queued and exits rather than blocking
+    /// (docs/hcom-logs-scope.md — the drain-per-tick the hcom log is built on).
+    /// `cursor` is a `u64` we control (the stored `hcom_log_cursor`), never agent
+    /// input, so interpolating it into the WHERE clause is safe — the same way
+    /// `finish::await_signal` interpolates its own trusted values.
+    ///
+    /// # Errors
+    /// Returns an error if hcom cannot be launched or reports a SQL error.
+    pub async fn events_since(&self, cursor: u64) -> anyhow::Result<Vec<HcomEvent>> {
+        self.wait(&format!("id > {cursor}"), Duration::from_secs(0))
+            .await
     }
 }
 

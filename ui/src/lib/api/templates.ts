@@ -18,6 +18,8 @@ export interface TemplateDraft {
   description: string;
   spec_template: string;
   default_tool: string | null;
+  default_model: string | null;
+  default_effort: string | null;
   default_worktree_mode: WorktreeMode | null;
 }
 

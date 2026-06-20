@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils/cn";
 import { ApiError } from "@/lib/api/client";
 import { useCreateTemplate } from "@/lib/hooks/use-templates";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
+import { AgentPicker } from "@/features/agents/agent-picker";
 import type { TemplateDraft } from "@/lib/api/templates";
 import type { WorktreeMode } from "@/types/task";
 
@@ -20,6 +21,8 @@ const EMPTY: TemplateDraft = {
   description: "",
   spec_template: "",
   default_tool: null,
+  default_model: null,
+  default_effort: null,
   default_worktree_mode: null,
 };
 
@@ -121,19 +124,17 @@ export function TemplateDialog({ trigger }: { trigger?: React.ReactNode }) {
             />
           </Field>
 
-          <Field label="Default tool" hint="blank = inherit run default">
-            <Input
-              value={draft.default_tool ?? ""}
-              onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  default_tool: e.target.value.trim() || null,
-                })
-              }
-              placeholder="claude"
-              className="font-mono"
-            />
-          </Field>
+          <AgentPicker
+            tool={draft.default_tool ?? ""}
+            model={draft.default_model}
+            effort={draft.default_effort}
+            onToolChange={(t) =>
+              setDraft((prev) => ({ ...prev, default_tool: t.trim() || null }))
+            }
+            onModelChange={(m) => setDraft((prev) => ({ ...prev, default_model: m }))}
+            onEffortChange={(e) => setDraft((prev) => ({ ...prev, default_effort: e }))}
+            labels={{ agent: "Default agent", agentHint: "blank = inherit run default" }}
+          />
 
           <Field
             label="Default worktree mode"

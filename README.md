@@ -35,10 +35,10 @@ Then, over HTTP (the loop authenticates with the `LAZYBONES_LOOP_TOKEN`, default
 `lazybones-loop`):
 
 ```sh
-curl localhost:7878/health
-curl localhost:7878/tasks                       # list all
-curl localhost:7878/tasks?status=ready          # filter by status
-curl -X POST localhost:7878/tasks/promote \
+curl localhost:46787/health
+curl localhost:46787/tasks                       # list all
+curl localhost:46787/tasks?status=ready          # filter by status
+curl -X POST localhost:46787/tasks/promote \
      -H 'authorization: Bearer lazybones-loop'  # promote pending→ready
 ```
 

@@ -145,7 +145,7 @@ pending ──promote (you)──▶ ready ──claim (scheduler)──▶ runn
 ## Verification notes (for whoever picks this up)
 
 - Reproduce DnD/CORS issues in a **real browser** (Playwright against the Vite dev
-  server on `:1420` + `lazybonesd serve` on `:7878`). `curl` will mislead you on
+  server on `:51840` + `lazybonesd serve` on `:46787`). `curl` will mislead you on
   anything CORS- or preflight-related.
 - The dev loop token is `lazybones-loop` (`LAZYBONES_LOOP_TOKEN`); the UI stores it
   in `localStorage["lazybones-loop-token"]` for guarded mutations

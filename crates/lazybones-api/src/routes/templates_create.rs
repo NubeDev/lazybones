@@ -25,6 +25,8 @@ pub async fn create_template(
         &body.description,
         &body.spec_template,
         body.default_tool.clone(),
+        body.default_model.clone(),
+        body.default_effort.clone(),
         body.default_worktree_mode,
         now,
     );
