@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use lazybones_store::{Run, Task, WorktreeMode};
+use lazybones_store::{MergeMode, Run, Task, WorktreeMode};
 
 /// `POST /tasks/:id/claim` body: where the agent will work.
 #[derive(Debug, Deserialize)]
@@ -159,6 +159,11 @@ pub struct WorkspaceBody {
     /// `[]` disables the gate (tasks land on agent DONE with no command run).
     #[serde(default)]
     pub gate: Option<Vec<String>>,
+    /// Merge strategy for this workflow's green branches (`fast-forward` | `merge`
+    /// | `pr`). Omitted/`null` inherits the global `EngineConfig.merge`, so a repo
+    /// wanting strict linear history can pin `fast-forward` while others use `merge`.
+    #[serde(default)]
+    pub merge: Option<MergeMode>,
 }
 
 /// `POST /workflows` body: a new workflow bound to a workspace.

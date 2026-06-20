@@ -7,7 +7,7 @@ use surrealdb::types::{RecordId, RecordIdKey, SurrealValue, ToSql};
 
 use crate::task::WorktreeMode;
 
-use super::model::{Lifecycle, Run, Workspace};
+use super::model::{Lifecycle, MergeMode, Run, Workspace};
 
 /// The table runs (workflows) live in. The public path is `/workflows`, but the
 /// table stays `run` to match docs/starting-workflows.md.
@@ -28,6 +28,9 @@ pub(crate) struct WorkspaceRow {
     /// Per-workflow gate commands; `None` inherits the global, `Some([])` = no gate.
     /// `Option` so rows written before this column read back as `None`.
     pub(crate) gate: Option<Vec<String>>,
+    /// Per-workflow merge strategy (`fast-forward` | `merge` | `pr`); `None`
+    /// inherits the global. `Option` so pre-column rows read back as `None`.
+    pub(crate) merge: Option<String>,
 }
 
 /// SurrealDB-facing run: the reserved `id` thing plus the workflow fields.
@@ -60,6 +63,7 @@ impl RunRow {
                 model: run.workspace.model.clone(),
                 effort: run.workspace.effort.clone(),
                 gate: run.workspace.gate.clone(),
+                merge: run.workspace.merge.map(|m| m.as_str().to_owned()),
             },
             lifecycle: Some(run.lifecycle.as_str().to_owned()),
             created_at: Some(run.created_at.clone()),
@@ -82,6 +86,10 @@ impl RunRow {
                 model: self.workspace.model,
                 effort: self.workspace.effort,
                 gate: self.workspace.gate,
+                merge: self
+                    .workspace
+                    .merge
+                    .map(|s| MergeMode::parse(Some(s.as_str()))),
             },
             lifecycle: Lifecycle::parse(self.lifecycle.as_deref()),
             created_at: self.created_at.unwrap_or_default(),

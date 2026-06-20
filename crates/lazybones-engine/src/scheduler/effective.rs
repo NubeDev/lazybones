@@ -32,9 +32,9 @@
 
 use std::path::PathBuf;
 
-use lazybones_store::{Run, Task, WorktreeMode};
+use lazybones_store::{MergeMode as StoreMergeMode, Run, Task, WorktreeMode};
 
-use crate::config::EngineConfig;
+use crate::config::{EngineConfig, MergeMode};
 
 /// A task's resolved git settings — what `provision` actually uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +57,20 @@ pub struct EffectiveGit {
     /// empty `Vec` means **no gate** (land on agent DONE); resolved from the
     /// workflow's workspace, else the global `EngineConfig.gate`.
     pub gate: Vec<String>,
+    /// How a green branch lands back on base; resolved from the workflow's
+    /// workspace, else the global `EngineConfig.merge`. Lets one repo pin strict
+    /// `fast-forward` while a concurrent workflow uses `merge`.
+    pub merge: MergeMode,
+}
+
+/// Map the storable workspace merge mode onto the engine's config enum (the two
+/// are deliberately separate: the store may not depend on the engine).
+fn map_merge(m: StoreMergeMode) -> MergeMode {
+    match m {
+        StoreMergeMode::FastForward => MergeMode::FastForward,
+        StoreMergeMode::Merge => MergeMode::Merge,
+        StoreMergeMode::Pr => MergeMode::Pr,
+    }
 }
 
 /// Resolve `task`'s effective git settings given its (optional) parent `run` and
@@ -79,6 +93,8 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
             effort: task.effort.clone().or_else(|| cfg.agent_effort.clone()),
             // Standalone: no workspace gate; the global default is the contract.
             gate: cfg.gate.clone(),
+            // Standalone: no workspace merge; the global default is the contract.
+            merge: cfg.merge,
         },
         Some(run) => {
             let ws = &run.workspace;
@@ -110,6 +126,8 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
                 // workspace ?? global. `Some([])` is an explicit no-gate, so we
                 // honour the present-but-empty list rather than falling back.
                 gate: ws.gate.clone().unwrap_or_else(|| cfg.gate.clone()),
+                // workspace ?? global merge strategy.
+                merge: ws.merge.map_or(cfg.merge, map_merge),
             }
         }
     }
@@ -168,6 +186,7 @@ mod tests {
             model: None,
             effort: None,
             gate: None,
+            merge: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.repo, PathBuf::from("/repo/abc"));
@@ -189,6 +208,7 @@ mod tests {
             model: None,
             effort: None,
             gate: None,
+            merge: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.base_branch, "dev");
@@ -212,6 +232,7 @@ mod tests {
             model: None,
             effort: Some("medium".into()),
             gate: None,
+            merge: None,
         });
 
         // A task with no agent fields inherits workspace tool/effort + global model.
@@ -257,6 +278,7 @@ mod tests {
             model: None,
             effort: None,
             gate: None,
+            merge: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.worktree_mode, WorktreeMode::Branch);
@@ -273,6 +295,7 @@ mod tests {
             model: None,
             effort: None,
             gate,
+            merge: None,
         }
     }
 
@@ -302,5 +325,43 @@ mod tests {
             resolve(&task, None, &cfg).gate,
             vec!["cargo test --workspace".to_owned()]
         );
+    }
+
+    /// A workspace with `merge` set; every other field left to inherit.
+    fn ws_with_merge(merge: Option<StoreMergeMode>) -> Workspace {
+        Workspace {
+            repo: "/repo/abc".into(),
+            base_branch: None,
+            branch_prefix: None,
+            worktree_mode: WorktreeMode::New,
+            tool: None,
+            model: None,
+            effort: None,
+            gate: None,
+            merge,
+        }
+    }
+
+    #[test]
+    fn merge_resolves_workspace_then_global() {
+        // Global default is fast-forward; the workspace can pin a different one.
+        let mut cfg = cfg();
+        cfg.merge = MergeMode::FastForward;
+        let task = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+
+        // Workspace merge wins over the global default.
+        let run = run_with(ws_with_merge(Some(StoreMergeMode::Merge)));
+        assert_eq!(resolve(&task, Some(&run), &cfg).merge, MergeMode::Merge);
+
+        let run = run_with(ws_with_merge(Some(StoreMergeMode::Pr)));
+        assert_eq!(resolve(&task, Some(&run), &cfg).merge, MergeMode::Pr);
+
+        // Absent (None) inherits the global merge — a repo keeps strict linear
+        // history while a sibling workflow opts into merge commits.
+        let run = run_with(ws_with_merge(None));
+        assert_eq!(resolve(&task, Some(&run), &cfg).merge, MergeMode::FastForward);
+
+        // A standalone task always uses the global merge.
+        assert_eq!(resolve(&task, None, &cfg).merge, MergeMode::FastForward);
     }
 }

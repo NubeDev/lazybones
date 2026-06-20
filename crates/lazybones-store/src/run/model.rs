@@ -15,6 +15,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::task::WorktreeMode;
 
+/// How a green task branch lands back on the base branch — the storable, wire
+/// form of the engine's merge strategy.
+///
+/// Mirrors `WorktreeMode`: the store owns the string<->enum mapping so a workspace
+/// can pin a strategy, and the engine maps it onto its own `config::MergeMode` in
+/// the `EffectiveGit` resolver. A workflow that omits it inherits the global
+/// `EngineConfig.merge`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MergeMode {
+    /// Fast-forward `base` to the task branch; refuse if base moved.
+    #[default]
+    FastForward,
+    /// Create a merge commit of the task branch into `base`.
+    Merge,
+    /// Push the branch only; open a PR out of band.
+    Pr,
+}
+
+impl MergeMode {
+    /// The wire/storage form (`fast-forward` | `merge` | `pr`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MergeMode::FastForward => "fast-forward",
+            MergeMode::Merge => "merge",
+            MergeMode::Pr => "pr",
+        }
+    }
+
+    /// Parse a stored mode string; missing or unknown values fall back to the
+    /// default (`FastForward`) — fail safe, matching the engine config parser.
+    #[must_use]
+    pub fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("merge") => MergeMode::Merge,
+            Some("pr") => MergeMode::Pr,
+            _ => MergeMode::FastForward,
+        }
+    }
+}
+
 /// The repo + git config a workflow's tasks inherit (per-field, most-specific
 /// wins; see the engine's `EffectiveGit` resolver).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,6 +87,11 @@ pub struct Workspace {
     /// — a task lands as soon as its agent reports DONE, running no command.
     #[serde(default)]
     pub gate: Option<Vec<String>>,
+    /// How this workflow's green branches land back on base. `None`/absent inherits
+    /// the global `EngineConfig.merge`, so a repo wanting strict linear history can
+    /// pin `fast-forward` while others use `merge`.
+    #[serde(default)]
+    pub merge: Option<MergeMode>,
 }
 
 /// The human-set lifecycle of a Run. Distinct from the derived *state*.

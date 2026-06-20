@@ -18,7 +18,7 @@ pub use cursor::advance_hcom_cursor;
 pub use derived::{RunState, derived_state};
 pub use get::get_run;
 pub use list::{list_run_tasks, list_runs};
-pub use model::{Lifecycle, Run, Workspace};
+pub use model::{Lifecycle, MergeMode, Run, Workspace};
 pub use start::mark_started;
 
 #[cfg(test)]
@@ -51,6 +51,7 @@ mod tests {
                 model: None,
                 effort: None,
                 gate: None,
+                merge: None,
             },
             "2026-01-01T00:00:00Z",
         )
@@ -84,11 +85,16 @@ mod tests {
         run.workspace.base_branch = Some("dev".into());
         run.workspace.branch_prefix = Some("wf/".into());
         run.workspace.worktree_mode = WorktreeMode::Reuse;
+        run.workspace.merge = Some(MergeMode::Merge);
         create_run(&db, &run).await.unwrap();
         let got = get_run(&db, "workflow-1").await.unwrap().unwrap();
         assert_eq!(got.workspace.base_branch.as_deref(), Some("dev"));
         assert_eq!(got.workspace.branch_prefix.as_deref(), Some("wf/"));
         assert_eq!(got.workspace.worktree_mode, WorktreeMode::Reuse);
+        // The per-workflow merge strategy survives a store roundtrip.
+        assert_eq!(got.workspace.merge, Some(MergeMode::Merge));
+        // An absent merge reads back as None (inherit the global).
+        assert_eq!(sample().workspace.merge, None);
     }
 
     #[tokio::test]

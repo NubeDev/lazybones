@@ -53,8 +53,12 @@ async fn push(repo, remote, refname) -> Result<()> {
 
 ## Follow-ups to consider
 
-- Make merge mode resolvable per-workflow (mirror `workspace.gate` from issue 02), so
-  a repo wanting strict linear history can keep `fast-forward` while others use `merge`.
+- ~~Make merge mode resolvable per-workflow (mirror `workspace.gate` from issue 02), so
+  a repo wanting strict linear history can keep `fast-forward` while others use `merge`.~~
+  **Done.** `Workspace.merge: Option<MergeMode>` (store) → `WorkspaceBody.merge` (API) →
+  `EffectiveGit.merge` (engine), resolved workspace ?? global like `gate`. A workflow can
+  now `POST /workflows` with `workspace.merge: "fast-forward" | "merge" | "pr"`; omitted
+  inherits the global `EngineConfig.merge`. `merge::land` reads `eff.merge`, not `cfg.merge`.
 - For `ff-only`, consider an automatic fall-back to a merge commit on divergence rather
   than hard-blocking (configurable).
 - Serialize the `git worktree add` / land critical section if concurrent git ops on the

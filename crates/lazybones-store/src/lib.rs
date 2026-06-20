@@ -25,7 +25,7 @@ pub use error::{Result, StoreError};
 pub use event::{Activity, Event, EventBus, LiveEvent};
 pub use handle::StoreHandle;
 pub use hcom_log::{HcomLogEntry, HcomLogFilter, NewHcomLogEntry};
-pub use run::{Lifecycle, Run, RunState, Workspace, derived_state};
+pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};
 pub use task::{Status, Task, TaskEdit, Transition, WorktreeMode};
 pub use template::{Template, instantiate};

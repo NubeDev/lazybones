@@ -253,6 +253,7 @@ mod tests {
             model: None,
             effort: None,
             gate: vec![],
+            merge: crate::config::MergeMode::FastForward,
         }
     }
 

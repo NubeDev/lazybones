@@ -14,9 +14,9 @@ use super::git::git;
 /// Merge `task`'s branch into base per `cfg.merge`, push, and return the merged
 /// commit sha.
 ///
-/// The repo and base branch come from `eff` (the per-workflow resolved settings)
-/// so a workflow targeting a different repo merges in the right place; the remote
-/// and merge strategy stay global (`cfg`).
+/// The repo, base branch, and merge strategy come from `eff` (the per-workflow
+/// resolved settings) so a workflow targeting a different repo merges in the right
+/// place with its own strategy; only the remote stays global (`cfg`).
 ///
 /// # Errors
 /// Returns an error if any git step fails; the caller turns it into a `Block`.
@@ -27,7 +27,7 @@ pub async fn land(task: &Task, eff: &EffectiveGit, cfg: &EngineConfig) -> anyhow
         .clone()
         .ok_or_else(|| anyhow::anyhow!("task {} has no branch to merge", task.id))?;
 
-    match cfg.merge {
+    match eff.merge {
         MergeMode::Pr => {
             // Push the branch; a PR is opened out of band. Record the branch head.
             push(repo, &cfg.remote, &branch).await?;
@@ -37,7 +37,7 @@ pub async fn land(task: &Task, eff: &EffectiveGit, cfg: &EngineConfig) -> anyhow
             // Move onto base, integrate the branch, push base, then push the
             // branch too so the remote keeps the task ref.
             checkout(repo, &eff.base_branch).await?;
-            let args: Vec<&str> = match cfg.merge {
+            let args: Vec<&str> = match eff.merge {
                 MergeMode::FastForward => vec!["merge", "--ff-only", &branch],
                 // A merge commit keeps history when base has moved under us.
                 _ => vec!["merge", "--no-edit", &branch],
@@ -164,11 +164,52 @@ mod tests {
             model: None,
             effort: None,
             gate: vec![],
+            merge: MergeMode::FastForward,
         };
         // No remote configured, so the push step fails — assert the merge itself
         // landed by checking base before the push error.
         let _ = land(&task, &eff, &cfg).await;
         let base = rev_parse(dir.path(), "main").await.unwrap();
         assert_eq!(base, want, "main should fast-forward to the branch head");
+    }
+
+    /// The merge strategy is resolved per-workflow on `eff`, not from the global
+    /// `cfg`: a global `fast-forward` config must not stop a workflow whose
+    /// effective mode is `merge` from integrating a *diverged* branch.
+    #[tokio::test]
+    async fn effective_merge_mode_overrides_global_for_diverged_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        // Branch off, then move main forward too so the branch can't fast-forward.
+        git(dir.path(), &["checkout", "-b", "lazy/auth"]).await.unwrap();
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        git(dir.path(), &["add", "."]).await.unwrap();
+        git(dir.path(), &["commit", "-m", "branch work"]).await.unwrap();
+        git(dir.path(), &["checkout", "main"]).await.unwrap();
+        std::fs::write(dir.path().join("b.txt"), "b").unwrap();
+        git(dir.path(), &["add", "."]).await.unwrap();
+        git(dir.path(), &["commit", "-m", "base moved"]).await.unwrap();
+
+        // Global config says fast-forward (which would fail on divergence)...
+        let cfg = cfg_for(dir.path(), MergeMode::FastForward);
+        let mut task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
+        task.branch = Some("lazy/auth".into());
+        // ...but the workflow's effective mode is `merge`, which must win.
+        let eff = EffectiveGit {
+            repo: dir.path().to_path_buf(),
+            base_branch: "main".into(),
+            branch_prefix: "lazy/".into(),
+            worktree_mode: lazybones_store::WorktreeMode::New,
+            tool: "claude".into(),
+            model: None,
+            effort: None,
+            gate: vec![],
+            merge: MergeMode::Merge,
+        };
+        // No remote, so push is skipped; the merge itself must succeed.
+        land(&task, &eff, &cfg).await.unwrap();
+        // Both files are present on main → a merge commit integrated the branch.
+        assert!(dir.path().join("a.txt").exists());
+        assert!(dir.path().join("b.txt").exists());
     }
 }

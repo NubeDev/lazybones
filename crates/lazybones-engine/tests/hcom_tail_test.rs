@@ -84,6 +84,7 @@ async fn tail_ingests_event_and_advances_cursor() {
             model: None,
             effort: None,
             gate: None,
+            merge: None,
         },
         "2026-01-01T00:00:00Z",
     );
