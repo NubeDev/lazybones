@@ -10,7 +10,7 @@
 //!
 //! `worktrees == false` forces `Branch` semantics (the serial fallback).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use lazybones_store::{Task, WorktreeMode};
 
@@ -18,6 +18,20 @@ use crate::config::EngineConfig;
 
 use super::effective::EffectiveGit;
 use super::git::git;
+
+/// The scoped Claude Code allow-list written into a fresh worktree so a headless
+/// agent runs without stalling on per-tool approval prompts (docs/issues/01).
+///
+/// This is **repo-scoped** — it lives in the worktree's `.claude/settings.json`,
+/// not in `~/.claude.json`, and never enables the global bypass-mode flag. It is
+/// only written when the target repo has no `.claude/settings.json` of its own, so
+/// a repo that commits its own posture keeps full control.
+const CLAUDE_SETTINGS_BOOTSTRAP: &str = r#"{
+  "permissions": {
+    "allow": ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch"]
+  }
+}
+"#;
 
 /// Where a claimed task will run and on which branch.
 #[derive(Debug, Clone)]
@@ -79,6 +93,7 @@ pub async fn provision(
                     anyhow::bail!("git worktree add for {} failed: {}", task.id, out.stderr);
                 }
             }
+            bootstrap_permissions(repo, &path, &eff.tool);
             Ok(Provisioned {
                 worktree: path_str,
                 branch,
@@ -105,6 +120,7 @@ pub async fn provision(
             if !out.ok {
                 anyhow::bail!("git checkout -B {branch} in reused tree for {} failed: {}", task.id, out.stderr);
             }
+            bootstrap_permissions(repo, &reused, &eff.tool);
             Ok(Provisioned {
                 worktree: path,
                 branch,
@@ -119,11 +135,48 @@ pub async fn provision(
             if !out.ok {
                 anyhow::bail!("git checkout -B {branch} for {} failed: {}", task.id, out.stderr);
             }
+            // Branch mode runs in the main checkout, so the worktree *is* the repo:
+            // the "repo already has settings" guard makes this a no-op when the repo
+            // commits its own posture, and a one-time create otherwise.
+            bootstrap_permissions(repo, repo, &eff.tool);
             Ok(Provisioned {
                 worktree: repo.to_string_lossy().into_owned(),
                 branch,
             })
         }
+    }
+}
+
+/// Write a scoped Claude Code allow-list into a fresh worktree so a headless
+/// agent runs without stalling on per-tool approval prompts (docs/issues/01).
+///
+/// Only for the `claude` tool — other CLIs (codex, gemini, opencode) have their
+/// own gate model and are bootstrapped through `permission_flags`, not this file.
+/// Skipped entirely when the **target repo** already commits a
+/// `.claude/settings.json`, so a repo that owns its posture is never overwritten.
+/// Best-effort: a write failure is logged, not fatal — the agent can still run if
+/// `permission_flags` or a pre-trusted environment covers the gate.
+///
+/// Repo-scoped by construction: it touches only `<worktree>/.claude/settings.json`
+/// and never the global `~/.claude.json` bypass-mode flag.
+fn bootstrap_permissions(repo: &Path, worktree: &Path, tool: &str) {
+    if tool != "claude" {
+        return;
+    }
+    // Respect a repo that commits its own posture — don't clobber it.
+    if repo.join(".claude/settings.json").exists() {
+        return;
+    }
+    let dir = worktree.join(".claude");
+    let settings = dir.join("settings.json");
+    // Idempotent across reclaims: if we already wrote one, leave it.
+    if settings.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&settings, CLAUDE_SETTINGS_BOOTSTRAP))
+    {
+        tracing::warn!(worktree = %worktree.display(), "failed to bootstrap .claude/settings.json: {e}");
     }
 }
 
@@ -238,6 +291,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(p.worktree, dir.path().to_string_lossy());
+    }
+
+    #[tokio::test]
+    async fn new_mode_bootstraps_claude_allow_list() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
+        let eff = eff_for(dir.path(), WorktreeMode::New);
+        let p = provision(&task, &eff, &cfg, None).await.unwrap();
+        let settings = Path::new(&p.worktree).join(".claude/settings.json");
+        assert!(settings.is_file(), "worktree should get a scoped allow-list");
+        let body = std::fs::read_to_string(&settings).unwrap();
+        assert!(body.contains("\"allow\""));
+        assert!(body.contains("Bash"));
+        // Repo-scoped only: nothing global is touched.
+        assert!(!dir.path().join(".claude/settings.json").exists());
+    }
+
+    #[tokio::test]
+    async fn repo_with_settings_is_not_clobbered() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        // The target repo commits its own posture.
+        std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        let repo_settings = dir.path().join(".claude/settings.json");
+        std::fs::write(&repo_settings, "{\"mine\":true}").unwrap();
+
+        let cfg = cfg_for(dir.path());
+        let task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
+        let eff = eff_for(dir.path(), WorktreeMode::New);
+        let p = provision(&task, &eff, &cfg, None).await.unwrap();
+
+        // The repo's own file is untouched, and no bootstrap is written into the wt.
+        assert_eq!(std::fs::read_to_string(&repo_settings).unwrap(), "{\"mine\":true}");
+        assert!(!Path::new(&p.worktree).join(".claude/settings.json").exists());
+    }
+
+    #[tokio::test]
+    async fn non_claude_tool_is_not_bootstrapped() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
+        let mut eff = eff_for(dir.path(), WorktreeMode::New);
+        eff.tool = "codex".into();
+        let p = provision(&task, &eff, &cfg, None).await.unwrap();
+        assert!(!Path::new(&p.worktree).join(".claude/settings.json").exists());
     }
 
     #[tokio::test]
