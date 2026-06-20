@@ -212,4 +212,92 @@ mod tests {
         assert!(dir.path().join("a.txt").exists());
         assert!(dir.path().join("b.txt").exists());
     }
+
+    /// Build an `EffectiveGit` for `repo`/`merge` with the rest defaulted.
+    fn eff_for(repo: &Path, merge: MergeMode) -> EffectiveGit {
+        EffectiveGit {
+            repo: repo.to_path_buf(),
+            base_branch: "main".into(),
+            branch_prefix: "lazy/".into(),
+            worktree_mode: lazybones_store::WorktreeMode::New,
+            tool: "claude".into(),
+            model: None,
+            effort: None,
+            gate: vec![],
+            merge,
+        }
+    }
+
+    /// Init a bare repo to act as a pushable `origin` (no network needed).
+    async fn init_bare(dir: &Path) {
+        git(dir, &["init", "--bare", "-b", "main"]).await.unwrap();
+    }
+
+    /// The push path was previously only exercised on a remote-less local repo.
+    /// With a real (local-bare) `origin`, landing must push base to the remote and
+    /// the merged commit must actually arrive there.
+    #[tokio::test]
+    async fn land_pushes_to_a_configured_remote() {
+        let remote = tempfile::tempdir().unwrap();
+        init_bare(remote.path()).await;
+        let work = tempfile::tempdir().unwrap();
+        init_repo(work.path()).await;
+        // Wire origin → the bare repo and seed it with the initial main.
+        git(work.path(), &["remote", "add", "origin", &remote.path().to_string_lossy()])
+            .await
+            .unwrap();
+        git(work.path(), &["push", "origin", "main"]).await.unwrap();
+
+        // A task branch one commit ahead.
+        git(work.path(), &["checkout", "-b", "lazy/auth"]).await.unwrap();
+        std::fs::write(work.path().join("a.txt"), "a").unwrap();
+        git(work.path(), &["add", "."]).await.unwrap();
+        git(work.path(), &["commit", "-m", "work"]).await.unwrap();
+        let want = rev_parse(work.path(), "HEAD").await.unwrap();
+
+        let cfg = cfg_for(work.path(), MergeMode::FastForward);
+        let mut task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
+        task.branch = Some("lazy/auth".into());
+        let eff = eff_for(work.path(), MergeMode::FastForward);
+
+        // Land must succeed *including* the push (no skip).
+        let sha = land(&task, &eff, &cfg).await.unwrap();
+        assert_eq!(sha, want);
+        // The remote's main now points at the landed commit — the push really ran.
+        // `ls-remote` from the work repo reads origin's ref without entering the
+        // bare repo (which git's `safe.bareRepository` guard would block).
+        let out = git(work.path(), &["ls-remote", "origin", "refs/heads/main"])
+            .await
+            .unwrap();
+        assert!(out.ok, "ls-remote origin failed: {}", out.stderr);
+        let remote_sha = out.stdout.split_whitespace().next().unwrap_or_default();
+        assert_eq!(remote_sha, want, "origin/main should have the landed commit");
+    }
+
+    /// A *configured* remote whose push genuinely fails must error — never be
+    /// silently skipped (that is the missing-remote case, which is a valid skip).
+    #[tokio::test]
+    async fn land_errors_when_a_configured_push_fails() {
+        let work = tempfile::tempdir().unwrap();
+        init_repo(work.path()).await;
+        // origin is configured but points at a path that is not a repo → push fails.
+        git(work.path(), &["remote", "add", "origin", "/no/such/remote/repo"])
+            .await
+            .unwrap();
+        git(work.path(), &["checkout", "-b", "lazy/auth"]).await.unwrap();
+        std::fs::write(work.path().join("a.txt"), "a").unwrap();
+        git(work.path(), &["add", "."]).await.unwrap();
+        git(work.path(), &["commit", "-m", "work"]).await.unwrap();
+
+        let cfg = cfg_for(work.path(), MergeMode::FastForward);
+        let mut task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
+        task.branch = Some("lazy/auth".into());
+        let eff = eff_for(work.path(), MergeMode::FastForward);
+
+        let err = land(&task, &eff, &cfg).await.unwrap_err();
+        assert!(
+            err.to_string().contains("git push"),
+            "a configured-but-failing push must surface as an error, got: {err}"
+        );
+    }
 }

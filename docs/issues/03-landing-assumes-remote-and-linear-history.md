@@ -51,6 +51,14 @@ async fn push(repo, remote, refname) -> Result<()> {
 
 `web-demo-2` then landed **4/4 green** with merge commits, all locally (no remote).
 
+The push path is now covered by integration tests in `merge.rs` against a
+local **bare** repo standing in for `origin` (no network):
+- `land_pushes_to_a_configured_remote` — landing pushes base and the merged commit
+  actually arrives on `origin` (asserted via `ls-remote`).
+- `land_errors_when_a_configured_push_fails` — a *configured* origin whose push
+  genuinely fails surfaces as an error (it is **not** silently skipped; only a
+  *missing* remote is a valid skip).
+
 ## Follow-ups to consider
 
 - ~~Make merge mode resolvable per-workflow (mirror `workspace.gate` from issue 02), so
