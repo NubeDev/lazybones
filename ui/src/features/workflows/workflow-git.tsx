@@ -3,6 +3,7 @@ import {
   Check,
   FolderGit2,
   GitBranch,
+  GitCompare,
   GitMerge,
   Lock,
   Plus,
@@ -29,8 +30,10 @@ import {
   usePruneGhWorktrees,
   useRemoveGhWorktree,
 } from "@/lib/hooks/use-gh";
+import { useFileDiff } from "@/lib/hooks/use-files";
 import type { Task } from "@/types/task";
 import { repoBasename } from "./repo-path";
+import { DiffView } from "./diff-view";
 
 /** A task whose worktree is checked out is "in use" and must not be torn down. */
 const IN_USE: ReadonlySet<Task["status"]> = new Set(["running", "gating"]);
@@ -43,7 +46,15 @@ function errMsg(e: unknown, fallback: string): string {
  *  worktrees lazybones created. Operates on the workflow's fixed repo (`dir`)
  *  using *local* git (no GitHub remote or `gh` auth required). `tasks` are this
  *  workflow's tasks, used to mark worktrees in use. */
-export function WorkflowGit({ dir, tasks }: { dir: string; tasks: Task[] }) {
+export function WorkflowGit({
+  dir,
+  base,
+  tasks,
+}: {
+  dir: string;
+  base: string | null;
+  tasks: Task[];
+}) {
   // The repo is fixed by the workspace. If it's unset we can't do anything —
   // say so plainly instead of firing failing git calls.
   if (!dir.trim()) {
@@ -71,8 +82,82 @@ export function WorkflowGit({ dir, tasks }: { dir: string; tasks: Task[] }) {
         </p>
       </Tooltip>
       <BranchesCard dir={dir} current={current} />
+      <DiffCard dir={dir} base={base} />
       <WorktreesCard dir={dir} tasks={tasks} />
     </div>
+  );
+}
+
+// ---- Card: repo-wide diff (uncommitted ↔ branch-vs-base) ----------------
+
+function DiffCard({ dir, base }: { dir: string; base: string | null }) {
+  // null ⇒ uncommitted working changes; base name ⇒ branch-vs-base.
+  const [scope, setScope] = useState<string | null>(null);
+  const { data, isLoading, error } = useFileDiff(dir, scope, null);
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4">
+      <header className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="inline-flex items-center gap-1.5 text-sm font-medium">
+          <GitCompare className="size-4 text-muted-foreground" /> Diff
+        </h3>
+        <div className="flex items-center gap-1">
+          <ScopeChip
+            active={scope === null}
+            onClick={() => setScope(null)}
+            label="Uncommitted"
+          />
+          {base && (
+            <ScopeChip
+              active={scope === base}
+              onClick={() => setScope(base)}
+              label={`vs ${base}`}
+            />
+          )}
+        </div>
+      </header>
+
+      {isLoading && <Skeleton className="h-40 w-full" />}
+      {error && (
+        <p className="rounded-md bg-status-blocked/10 px-3 py-2 text-xs text-status-blocked">
+          {errMsg(error, "Can't compute diff.")}
+        </p>
+      )}
+      {data && data.diff.trim() === "" && !isLoading && (
+        <p className="py-6 text-center text-xs text-muted-foreground">
+          No changes{scope ? ` against ${scope}` : ""}.
+        </p>
+      )}
+      {data && data.diff.trim() !== "" && (
+        <div className="max-h-[60vh]">
+          <DiffView diff={data.diff} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A pill toggle for which diff scope to show. */
+function ScopeChip({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full border px-2 py-0.5 text-[11px] ${
+        active
+          ? "border-accent bg-accent/10 text-accent"
+          : "border-border text-muted-foreground hover:bg-surface-2/60"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

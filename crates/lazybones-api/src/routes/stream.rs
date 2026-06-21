@@ -10,6 +10,9 @@
 //! - `hcom_log` — a raw hcom event the tail just ingested (also durable; the same
 //!   rows `GET /runs/:id/hcom` replays). The live edge of the agent's own
 //!   messages/status/lifecycle (docs/hcom-logs-scope.md).
+//! - `chat` — a message just appended to a task's conversation (also durable; the
+//!   same rows `GET /tasks/:id/chat` replays). Carries operator messages and
+//!   mirrored agent replies so a "chat with the agent" view updates live.
 //!
 //! The browser uses `EventSource`, which reconnects on its own; this stream only
 //! carries items that occur while connected, so a client reconciles by refetching
@@ -50,6 +53,7 @@ fn to_sse(
         LiveEvent::Transition(event) => SseEvent::default().event("transition").json_data(event),
         LiveEvent::Activity(activity) => SseEvent::default().event("activity").json_data(activity),
         LiveEvent::HcomLog(entry) => SseEvent::default().event("hcom_log").json_data(entry),
+        LiveEvent::Chat(message) => SseEvent::default().event("chat").json_data(message),
     };
     Some(Ok(sse.ok()?))
 }

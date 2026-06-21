@@ -10,11 +10,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils/cn";
 import { ApiError } from "@/lib/api/client";
-import { useCreateTemplate } from "@/lib/hooks/use-templates";
+import {
+  useCreateTemplate,
+  useUpdateTemplate,
+} from "@/lib/hooks/use-templates";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { AgentPicker } from "@/features/agents/agent-picker";
 import type { TemplateDraft } from "@/lib/api/templates";
 import type { WorktreeMode } from "@/types/task";
+import type { Template } from "@/types/workflow";
 
 const EMPTY: TemplateDraft = {
   title: "",
@@ -26,39 +30,67 @@ const EMPTY: TemplateDraft = {
   default_worktree_mode: null,
 };
 
-/** Author a reusable task template. Surfaces a `409` inline as "id already
- *  exists" rather than crashing. */
-export function TemplateDialog({ trigger }: { trigger?: React.ReactNode }) {
+/** Project an existing template onto the editable draft shape. */
+function draftFrom(t: Template): TemplateDraft {
+  return {
+    title: t.title,
+    description: t.description ?? "",
+    spec_template: t.spec_template,
+    default_tool: t.default_tool ?? null,
+    default_model: t.default_model ?? null,
+    default_effort: t.default_effort ?? null,
+    default_worktree_mode: t.default_worktree_mode ?? null,
+  };
+}
+
+/** Author or edit a reusable task template. Pass `template` to edit it in place
+ *  (the id is then fixed); omit it to author a new one. Surfaces a `409`
+ *  (duplicate id) or `404` (vanished) inline rather than crashing. */
+export function TemplateDialog({
+  trigger,
+  template,
+}: {
+  trigger?: React.ReactNode;
+  template?: Template;
+}) {
+  const editing = template != null;
   const [open, setOpen] = useState(false);
-  const [id, setId] = useState("");
-  const [draft, setDraft] = useState<TemplateDraft>(EMPTY);
+  const [id, setId] = useState(template?.id ?? "");
+  const [draft, setDraft] = useState<TemplateDraft>(
+    template ? draftFrom(template) : EMPTY,
+  );
   const create = useCreateTemplate();
+  const update = useUpdateTemplate();
+  const mut = editing ? update : create;
 
   function reset() {
-    setId("");
-    setDraft(EMPTY);
+    // When editing, snap back to the template's current state; else go empty.
+    setId(template?.id ?? "");
+    setDraft(template ? draftFrom(template) : EMPTY);
   }
 
   function submit() {
     const trimmed = id.trim();
     if (!trimmed || !draft.title.trim() || !draft.spec_template.trim()) return;
-    create.mutate(
+    mut.mutate(
       { id: trimmed, draft },
       {
         onSuccess: () => {
           setOpen(false);
-          reset();
+          if (!editing) reset();
         },
       },
     );
   }
 
-  const err = create.error;
+  const err = mut.error;
   const message =
     err instanceof ApiError
       ? err.status === 409
         ? `A template "${id.trim()}" already exists.`
-        : err.message
+        : err.status === 404
+          ? `Template "${id.trim()}" no longer exists.`
+          : err.message
       : err
         ? "Something went wrong."
         : null;
@@ -69,7 +101,7 @@ export function TemplateDialog({ trigger }: { trigger?: React.ReactNode }) {
       onOpenChange={(o) => {
         setOpen(o);
         if (!o) {
-          create.reset();
+          mut.reset();
           reset();
         }
       }}
@@ -82,14 +114,22 @@ export function TemplateDialog({ trigger }: { trigger?: React.ReactNode }) {
         )}
       </DialogTrigger>
       <DialogContent
-        title="New template"
+        title={editing ? `Edit ${template.id}` : "New template"}
         description="A reusable task recipe. Pick it when adding a task to a workflow."
       >
         <div className="space-y-3">
-          <Field label="Template id" hint="lowercase, unique, e.g. open-pr">
+          <Field
+            label="Template id"
+            hint={
+              editing
+                ? "the id is fixed once authored"
+                : "lowercase, unique, e.g. open-pr"
+            }
+          >
             <Input
               value={id}
-              autoFocus
+              autoFocus={!editing}
+              disabled={editing}
               onChange={(e) => setId(e.target.value)}
               placeholder="open-pr"
               className="font-mono"
@@ -107,12 +147,17 @@ export function TemplateDialog({ trigger }: { trigger?: React.ReactNode }) {
           <Field label="Description" hint="shown in the task picker (optional)">
             <Input
               value={draft.description}
-              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              onChange={(e) =>
+                setDraft({ ...draft, description: e.target.value })
+              }
               placeholder="Push the branch and open a PR against base"
             />
           </Field>
 
-          <Field label="Spec template" hint="starting spec text for tasks made from it">
+          <Field
+            label="Spec template"
+            hint="starting spec text for tasks made from it"
+          >
             <textarea
               value={draft.spec_template}
               onChange={(e) =>
@@ -131,9 +176,16 @@ export function TemplateDialog({ trigger }: { trigger?: React.ReactNode }) {
             onToolChange={(t) =>
               setDraft((prev) => ({ ...prev, default_tool: t.trim() || null }))
             }
-            onModelChange={(m) => setDraft((prev) => ({ ...prev, default_model: m }))}
-            onEffortChange={(e) => setDraft((prev) => ({ ...prev, default_effort: e }))}
-            labels={{ agent: "Default agent", agentHint: "blank = inherit run default" }}
+            onModelChange={(m) =>
+              setDraft((prev) => ({ ...prev, default_model: m }))
+            }
+            onEffortChange={(e) =>
+              setDraft((prev) => ({ ...prev, default_effort: e }))
+            }
+            labels={{
+              agent: "Default agent",
+              agentHint: "blank = inherit run default",
+            }}
           />
 
           <Field
@@ -166,10 +218,10 @@ export function TemplateDialog({ trigger }: { trigger?: React.ReactNode }) {
               !id.trim() ||
               !draft.title.trim() ||
               !draft.spec_template.trim() ||
-              create.isPending
+              mut.isPending
             }
           >
-            Create template
+            {editing ? "Save changes" : "Create template"}
           </Button>
         </div>
       </DialogContent>
@@ -185,12 +237,13 @@ function ModeSelect({
   value: WorktreeMode | null;
   onChange: (m: WorktreeMode | null) => void;
 }) {
-  const options: { key: string; value: WorktreeMode | null; label: string }[] = [
-    { key: "inherit", value: null, label: "Inherit" },
-    { key: "new", value: "new", label: WORKTREE_MODES.new.label },
-    { key: "reuse", value: "reuse", label: WORKTREE_MODES.reuse.label },
-    { key: "branch", value: "branch", label: WORKTREE_MODES.branch.label },
-  ];
+  const options: { key: string; value: WorktreeMode | null; label: string }[] =
+    [
+      { key: "inherit", value: null, label: "Inherit" },
+      { key: "new", value: "new", label: WORKTREE_MODES.new.label },
+      { key: "reuse", value: "reuse", label: WORKTREE_MODES.reuse.label },
+      { key: "branch", value: "branch", label: WORKTREE_MODES.branch.label },
+    ];
   return (
     <div className="flex gap-1 rounded-md border border-border bg-surface p-0.5">
       {options.map((o) => {
@@ -228,7 +281,9 @@ function Field({
     <label className="block space-y-1">
       <span className="text-xs font-medium">{label}</span>
       {children}
-      {hint && <span className="block text-[10px] text-muted-foreground">{hint}</span>}
+      {hint && (
+        <span className="block text-[10px] text-muted-foreground">{hint}</span>
+      )}
     </label>
   );
 }

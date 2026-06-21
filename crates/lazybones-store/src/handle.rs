@@ -15,6 +15,7 @@ use crate::agent::{
     AgentCatalog, AgentCatalogEdit, create_agent, delete_agent, get_agent, list_agents,
     seed_default_agents, update_agent,
 };
+use crate::chat::{ChatMessage, ChatRole, append_chat, chat_history};
 use crate::connect::{StoreEngine, open_engine};
 use crate::error::Result;
 use crate::event::{Activity, Event, EventBus, LiveEvent, run_history};
@@ -23,19 +24,19 @@ use crate::hcom_log::{
 };
 use crate::init_schema::init_schema;
 use crate::run::{
-    Run, advance_hcom_cursor, cancel_run, create_run, get_run, list_run_tasks, list_runs,
-    mark_started,
+    Run, advance_hcom_cursor, cancel_run, create_run, delete_run, get_run, list_run_tasks,
+    list_runs, mark_started,
 };
 use crate::secret::{
     Cipher, SecretEnv, SecretMeta, delete_secret, list_secrets, put_secret, secret_env,
 };
 use crate::template::{
-    Template, create_template, delete_template, get_template, list_templates,
+    Template, create_template, delete_template, get_template, list_templates, update_template,
 };
 use crate::task::{
-    Status, Task, TaskEdit, Transition, create_task, delete_task, get_task, list_tasks,
-    newly_ready, record_heartbeat, relate_dep, transition_task, unrelate_dep, update_task,
-    upsert_task,
+    RetryStrategy, Status, Task, TaskEdit, Transition, bump_retry_count, create_task, delete_task,
+    get_task, list_tasks, newly_ready, record_heartbeat, relate_dep, reset_task, set_retry_policy,
+    transition_task, unrelate_dep, update_task, upsert_task,
 };
 
 /// A cloneable handle to the durable store.
@@ -203,12 +204,113 @@ impl StoreHandle {
         Ok(task)
     }
 
+    /// Force a task back to `pending`, clearing its per-run fields (the restart
+    /// override — bypasses the lifecycle state machine). Records and publishes a
+    /// `<from> -> pending` event. Killing the agent / removing the worktree is the
+    /// caller's job.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) on a missing task or a write
+    /// failure.
+    pub async fn reset(&self, id: &str, actor: &str) -> Result<Task> {
+        let (task, event) = reset_task(&self.db, id, actor).await?;
+        self.bus.publish(LiveEvent::Transition(event));
+        Ok(task)
+    }
+
+    /// Set (or clear with `strategy = None`) a task's hands-off auto-retry policy.
+    /// `max_retries = None` leaves the existing cap unchanged. Returns the updated
+    /// task. This is operator config — it never touches lifecycle state.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) on a missing task or a write
+    /// failure.
+    pub async fn set_retry_policy(
+        &self,
+        id: &str,
+        strategy: Option<RetryStrategy>,
+        max_retries: Option<u32>,
+    ) -> Result<Task> {
+        set_retry_policy(&self.db, id, strategy, max_retries).await
+    }
+
+    /// Revive a *blocked* task with operator/strategy guidance: append `guidance`
+    /// to the task's conversation (as a `User` message, so
+    /// [`prompt::compose`](../../lazybones_engine/scheduler/prompt/fn.compose.html)
+    /// folds it into the re-spawn prompt), then apply the `blocked -> ready`
+    /// [`Revive`](Transition::Revive) edge. The worktree is kept, so the
+    /// re-spawned agent resumes in place with the guidance in view.
+    ///
+    /// When `bump_count` is set, the task's spent-auto-retry counter is
+    /// incremented first — the scheduler passes `true` for a hands-off retry so
+    /// the cap is enforced; a human-driven retry passes `false` (unbounded, a
+    /// person is in the loop). Returns the revived task.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) on a missing task, an illegal
+    /// transition (the task wasn't `blocked`), or a write failure.
+    pub async fn revive_with_guidance(
+        &self,
+        id: &str,
+        guidance: &str,
+        actor: &str,
+        bump_count: bool,
+    ) -> Result<Task> {
+        // Group the chat row under the workflow id (its FK) when present, falling
+        // back to the event-grouping `run` label — mirroring the chat route.
+        let task = get_task(&self.db, id)
+            .await?
+            .ok_or_else(|| crate::StoreError::TaskNotFound(id.to_owned()))?;
+        let run = task.run_id.clone().unwrap_or_else(|| task.run.clone());
+
+        let message = append_chat(&self.db, &run, id, ChatRole::User, guidance, None).await?;
+        self.bus.publish(LiveEvent::Chat(message));
+
+        if bump_count {
+            bump_retry_count(&self.db, id).await?;
+        }
+
+        // The status edge stays validated: only a `blocked` task can be revived.
+        let (task, event) = transition_task(&self.db, id, Transition::Revive, actor).await?;
+        self.bus.publish(LiveEvent::Transition(event));
+        Ok(task)
+    }
+
     /// Read the full event history for a run.
     ///
     /// # Errors
     /// Returns a [`StoreError`](crate::StoreError) if the query fails.
     pub async fn run_history(&self, run: &str) -> Result<Vec<Event>> {
         run_history(&self.db, run).await
+    }
+
+    /// Append one message to a task's conversation and publish it on the live bus
+    /// for SSE subscribers. `hcom_id` is `None` for an operator message and the
+    /// source hcom event id for a mirrored agent reply (deduped on `(task,
+    /// hcom_id)`). Persistence happens before publish, so anything streamed is
+    /// already re-fetchable via [`chat_history`](Self::chat_history).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn append_chat(
+        &self,
+        run: &str,
+        task: &str,
+        role: ChatRole,
+        text: &str,
+        hcom_id: Option<i64>,
+    ) -> Result<ChatMessage> {
+        let message = append_chat(&self.db, run, task, role, text, hcom_id).await?;
+        self.bus.publish(LiveEvent::Chat(message.clone()));
+        Ok(message)
+    }
+
+    /// Read a task's full conversation, oldest first.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn chat_history(&self, task: &str) -> Result<Vec<ChatMessage>> {
+        chat_history(&self.db, task).await
     }
 
     /// Append one raw hcom event to the durable hcom log (idempotent on
@@ -262,6 +364,16 @@ impl StoreHandle {
     /// fails.
     pub async fn create_template(&self, template: &Template) -> Result<Template> {
         create_template(&self.db, template).await
+    }
+
+    /// Edit an existing template, failing if its id is unknown. Preserves the
+    /// original `created_at`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no template with that id
+    /// exists or the write fails.
+    pub async fn update_template(&self, template: &Template) -> Result<Template> {
+        update_template(&self.db, template).await
     }
 
     /// Read a single template by id.
@@ -394,6 +506,16 @@ impl StoreHandle {
     /// write fails.
     pub async fn cancel_run(&self, id: &str) -> Result<Run> {
         cancel_run(&self.db, id).await
+    }
+
+    /// Hard-delete a workflow and the tasks linked to it. Returns whether the
+    /// workflow existed. Unlike [`cancel_run`](Self::cancel_run), this removes
+    /// the record; cascades to its tasks (each with its `depends_on` edges).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if any delete fails.
+    pub async fn delete_run(&self, id: &str) -> Result<bool> {
+        delete_run(&self.db, id).await
     }
 
     /// Seal and store an agent CLI credential for `tool` under `env_var`.

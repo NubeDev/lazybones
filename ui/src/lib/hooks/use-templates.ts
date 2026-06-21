@@ -3,6 +3,7 @@ import {
   createTemplate,
   deleteTemplate,
   listTemplates,
+  updateTemplate,
   type TemplateDraft,
 } from "@/lib/api/templates";
 
@@ -21,6 +22,16 @@ export function useCreateTemplate() {
   return useMutation({
     mutationFn: ({ id, draft }: { id: string; draft: TemplateDraft }) =>
       createTemplate(id, draft),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["templates"] }),
+  });
+}
+
+/** Edit an existing template (`PUT /templates/:id`). */
+export function useUpdateTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, draft }: { id: string; draft: TemplateDraft }) =>
+      updateTemplate(id, draft),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["templates"] }),
   });
 }

@@ -77,18 +77,18 @@ pub async fn provision(
             let path_str = path.to_string_lossy().into_owned();
             // Idempotent across reclaims: if the worktree already exists, reuse it.
             if !path.is_dir() {
-                let out = git(
-                    repo,
-                    &[
-                        "worktree",
-                        "add",
-                        &path_str,
-                        "-b",
-                        &branch,
-                        &eff.base_branch,
-                    ],
-                )
-                .await?;
+                // The branch may already exist (a prior run, or a restart that
+                // removed the tree but not the branch). `worktree add -b` fails
+                // hard on a pre-existing branch, so check first and add *onto*
+                // the existing branch (no `-b`) when it's there — otherwise
+                // create it fresh from base. Keeps re-Start from breaking.
+                let exists = branch_exists(repo, &branch).await?;
+                let add: Vec<&str> = if exists {
+                    vec!["worktree", "add", &path_str, &branch]
+                } else {
+                    vec!["worktree", "add", &path_str, "-b", &branch, &eff.base_branch]
+                };
+                let out = git(repo, &add).await?;
                 if !out.ok {
                     anyhow::bail!("git worktree add for {} failed: {}", task.id, out.stderr);
                 }
@@ -180,6 +180,20 @@ fn bootstrap_permissions(repo: &Path, worktree: &Path, tool: &str) {
     }
 }
 
+/// Whether a local branch `name` exists in `repo`.
+///
+/// Used by `New`-mode provisioning to decide between `worktree add -b` (create)
+/// and `worktree add` onto an existing branch, so a leftover branch from a prior
+/// run or a restart doesn't make the add fail.
+///
+/// # Errors
+/// Returns an error only if git cannot be launched.
+async fn branch_exists(repo: &Path, name: &str) -> anyhow::Result<bool> {
+    let refname = format!("refs/heads/{name}");
+    let out = git(repo, &["show-ref", "--verify", "--quiet", &refname]).await?;
+    Ok(out.ok)
+}
+
 /// Tear down a task's worktree after a green merge (no-op for `Branch`, which
 /// runs in the main checkout).
 ///
@@ -267,6 +281,34 @@ mod tests {
         let p = provision(&task, &eff, &cfg, None).await.unwrap();
         assert_eq!(p.branch, "lazy/auth");
         assert!(Path::new(&p.worktree).is_dir());
+    }
+
+    #[tokio::test]
+    async fn new_mode_reprovisions_when_branch_already_exists() {
+        // Regression: a restart (or a torn-down tree) can leave the branch
+        // behind. The old `worktree add -b` failed with "branch already exists";
+        // New mode now adds onto the existing branch instead.
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let task = Task::seed("backend", "r", "t", "s", vec![], vec![], None);
+        let eff = eff_for(dir.path(), WorktreeMode::New);
+
+        // First provision creates worktree + branch `lazy/backend`.
+        let p1 = provision(&task, &eff, &cfg, None).await.unwrap();
+        assert_eq!(p1.branch, "lazy/backend");
+
+        // Remove the tree but leave the branch (what a restart-with-teardown
+        // used to do before we also deleted the branch).
+        git(dir.path(), &["worktree", "remove", "--force", &p1.worktree])
+            .await
+            .unwrap();
+        assert!(branch_exists(dir.path(), "lazy/backend").await.unwrap());
+
+        // Re-provision must succeed onto the existing branch, not bail.
+        let p2 = provision(&task, &eff, &cfg, None).await.unwrap();
+        assert_eq!(p2.branch, "lazy/backend");
+        assert!(Path::new(&p2.worktree).is_dir());
     }
 
     #[tokio::test]

@@ -16,6 +16,25 @@ export function shortTime(iso: string | null | undefined): string {
   });
 }
 
+/** A compact elapsed label ("1h 12m", "45s") between two RFC3339 instants.
+ *  Returns "—" if either end is missing or unparseable. When `end` is omitted
+ *  the duration runs to now, so an in-flight task shows live elapsed time. */
+export function duration(
+  start: string | null | undefined,
+  end?: string | null | undefined,
+): string {
+  if (!start) return "—";
+  const from = new Date(start).getTime();
+  const to = end ? new Date(end).getTime() : Date.now();
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return "—";
+  const s = Math.round((to - from) / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+}
+
 /** A relative "3m ago" label, falling back to the absolute time. */
 export function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "—";

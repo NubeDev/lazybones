@@ -123,13 +123,49 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
     }
 }
 
-/// Transition a task to `blocked` with `reason`, logging any failure.
+/// Transition a task to `blocked` with `reason`, then — if the task has a
+/// hands-off auto-retry policy and budget left — immediately revive it with the
+/// strategy's guidance so the next tick re-spawns it. The block is always
+/// recorded first (it carries the reason, and `Revive` is only legal from
+/// `blocked`), so a task that exhausts its budget simply stays blocked for a
+/// human. Best-effort: any auto-retry failure leaves the task safely blocked.
 async fn block(store: &StoreHandle, id: &str, reason: String) {
-    if let Err(e) = store
-        .transition(id, Transition::Block { reason }, ACTOR)
+    let blocked = match store
+        .transition(id, Transition::Block { reason: reason.clone() }, ACTOR)
         .await
     {
-        tracing::warn!(task = %id, "block transition failed: {e}");
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(task = %id, "block transition failed: {e}");
+            return;
+        }
+    };
+
+    let Some(strategy) = blocked.auto_retry else {
+        return; // No auto-retry policy: stays blocked for an operator.
+    };
+    if blocked.retry_count >= blocked.max_retries {
+        tracing::info!(
+            task = %id,
+            spent = blocked.retry_count,
+            cap = blocked.max_retries,
+            "auto-retry budget exhausted; staying blocked for a human"
+        );
+        return;
+    }
+
+    // Revive with the strategy's guidance (and bump the spent counter so the cap
+    // is enforced). The worktree is kept, so the re-spawn resumes in place.
+    let guidance = strategy.guidance(&reason);
+    match store.revive_with_guidance(id, &guidance, ACTOR, true).await {
+        Ok(_) => tracing::info!(
+            task = %id,
+            strategy = strategy.as_str(),
+            attempt = blocked.retry_count + 1,
+            cap = blocked.max_retries,
+            "auto-retry: revived blocked task"
+        ),
+        Err(e) => tracing::warn!(task = %id, "auto-retry revive failed (staying blocked): {e}"),
     }
 }
 

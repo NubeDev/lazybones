@@ -75,9 +75,15 @@ impl Hcom {
 
     /// Non-blocking tail: every event with `id > cursor`, returned immediately.
     ///
-    /// This is `wait()`'s `--sql "id > {cursor}"` clause with a `0`-second
-    /// timeout, so hcom returns whatever's queued and exits rather than blocking
-    /// (docs/hcom-logs-scope.md — the drain-per-tick the hcom log is built on).
+    /// NOTE: this does **not** use `--wait`. On hcom 0.7.21 `--wait N` blocks for
+    /// `N` seconds waiting for a *new* matching event — it does **not** replay the
+    /// existing backlog — so `--wait 0` always returns the `{"timed_out":true}`
+    /// sentinel (exit 1) and drains nothing, which is what kept the hcom log empty.
+    /// The backlog form is `events --sql "id > {cursor}" --last N` (no `--wait`),
+    /// which returns the queued events and exits 0. We cap with a large `--last`
+    /// (`DRAIN_CAP`) and warn if a single tick's backlog hits the cap, since that
+    /// means events older than the newest `DRAIN_CAP` were skipped this pass.
+    ///
     /// `cursor` is a `u64` we control (the stored `hcom_log_cursor`), never agent
     /// input, so interpolating it into the WHERE clause is safe — the same way
     /// `finish::await_signal` interpolates its own trusted values.
@@ -85,10 +91,46 @@ impl Hcom {
     /// # Errors
     /// Returns an error if hcom cannot be launched or reports a SQL error.
     pub async fn events_since(&self, cursor: u64) -> anyhow::Result<Vec<HcomEvent>> {
-        self.wait(&format!("id > {cursor}"), Duration::from_secs(0))
-            .await
+        let mut cmd = self.command();
+        cmd.args(Self::events_since_argv(cursor));
+
+        let out = cmd.output().await?;
+        // Exit 2 is a SQL error; without --wait there is no timeout exit.
+        if out.status.code() == Some(2) {
+            anyhow::bail!(
+                "hcom events --sql failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        let events = parse_events(&String::from_utf8_lossy(&out.stdout));
+        if events.len() >= DRAIN_CAP {
+            tracing::warn!(
+                cursor,
+                cap = DRAIN_CAP,
+                "tail: drain hit --last cap; events older than this batch may be skipped"
+            );
+        }
+        Ok(events)
+    }
+
+    /// The argv for the backlog drain — `events --sql "id > {cursor}" --last
+    /// {DRAIN_CAP}`, no `--wait`. Factored out so the no-`--wait` contract is
+    /// unit-testable without spawning hcom.
+    fn events_since_argv(cursor: u64) -> [String; 5] {
+        [
+            "events".to_owned(),
+            "--sql".to_owned(),
+            format!("id > {cursor}"),
+            "--last".to_owned(),
+            DRAIN_CAP.to_string(),
+        ]
     }
 }
+
+/// Max events pulled in a single tick's drain (`--last`). Ticks are frequent and
+/// the per-tick backlog is small, so this is a generous ceiling; hitting it warns
+/// (see `events_since`) rather than silently truncating.
+const DRAIN_CAP: usize = 5000;
 
 /// Parse hcom's line-delimited event JSON, dropping the timeout sentinel.
 fn parse_events(stdout: &str) -> Vec<HcomEvent> {
@@ -120,5 +162,22 @@ mod tests {
     #[test]
     fn drops_timeout_sentinel() {
         assert!(parse_events("{\"timed_out\": true}\n").is_empty());
+    }
+
+    // Regression guard for the empty-hcom-log bug: the drain must NOT carry
+    // `--wait`. On hcom 0.7.21 `--wait N` blocks for new events and returns the
+    // `{"timed_out":true}` sentinel on a 0s timeout instead of replaying the
+    // backlog, so `events_since` drained nothing and the hcom log stayed empty.
+    // The backlog form is `events --sql "id > N" --last M` (no `--wait`).
+    #[test]
+    fn events_since_does_not_wait_and_caps_with_last() {
+        let argv = super::Hcom::events_since_argv(42);
+        assert!(
+            !argv.iter().any(|a| a == "--wait"),
+            "drain must not use --wait (it returns the timeout sentinel, not the backlog): {argv:?}"
+        );
+        assert!(argv.iter().any(|a| a == "id > 42"), "must filter id > cursor: {argv:?}");
+        let last = argv.iter().position(|a| a == "--last").expect("must bound with --last");
+        assert_eq!(argv[last + 1], super::DRAIN_CAP.to_string());
     }
 }

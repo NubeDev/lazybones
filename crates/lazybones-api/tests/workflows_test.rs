@@ -348,3 +348,300 @@ async fn reuse_from_missing_target_blocks_with_reason() {
     let (_, detail) = send(&app, get("/workflows/wf-r")).await;
     assert_eq!(detail["state"], "needs-attention", "blocked task → needs-attention");
 }
+
+/// `GET /workflows/:id/tasks` is scoped to the workflow's `run_id`: it returns
+/// only that workflow's tasks, never a sibling workflow's or a standalone task —
+/// so a workflow view can't render a foreign task. Unknown workflow → 404.
+#[tokio::test]
+async fn workflow_tasks_endpoint_is_scoped_to_its_run_id() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    let mk_workflow = |id: &str| {
+        loop_post(
+            "/workflows",
+            json!({ "id": id, "title": id, "workspace": { "repo": "/tmp/repo" } }),
+        )
+    };
+    assert_eq!(send(&app, mk_workflow("wf-a")).await.0, StatusCode::OK);
+    assert_eq!(send(&app, mk_workflow("wf-b")).await.0, StatusCode::OK);
+
+    // Two tasks in wf-a, one in wf-b, and a standalone task (no workflow).
+    for (wf, tid) in [("wf-a", "a1"), ("wf-a", "a2"), ("wf-b", "b1")] {
+        let (s, _) = send(
+            &app,
+            loop_post(
+                &format!("/workflows/{wf}/tasks"),
+                json!({ "id": tid, "title": tid, "spec": "x" }),
+            ),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "add {tid} to {wf}");
+    }
+    let (s, _) = send(
+        &app,
+        loop_post("/tasks", json!({ "id": "loose", "title": "loose", "spec": "x" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "create standalone task");
+
+    // wf-a's endpoint returns exactly its two tasks — not b1, not the standalone.
+    let (s, body) = send(&app, get("/workflows/wf-a/tasks")).await;
+    assert_eq!(s, StatusCode::OK);
+    let mut ids: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec!["a1", "a2"], "wf-a sees only its own tasks");
+    for t in body.as_array().unwrap() {
+        assert_eq!(t["run_id"], "wf-a", "every returned task is linked to wf-a");
+    }
+
+    // wf-b sees only b1.
+    let (_, body) = send(&app, get("/workflows/wf-b/tasks")).await;
+    let ids: Vec<&str> =
+        body.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec!["b1"], "wf-b sees only its own task");
+
+    // Unknown workflow → 404, not an empty list masquerading as "no tasks".
+    let (s, _) = send(&app, get("/workflows/nope/tasks")).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "unknown workflow 404s");
+}
+
+/// `POST /tasks/:id/retry` revives ONE blocked task back to `pending` (so the
+/// next tick re-promotes it) and refuses a task that isn't actually stuck — a
+/// `done` task is finished work, `409`. Unknown id → `404`.
+#[tokio::test]
+async fn retry_revives_a_blocked_task_and_rejects_a_done_one() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    let (s, _) = send(
+        &app,
+        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // A blocked task and a done task in the same workflow.
+    for tid in ["stuck", "finished"] {
+        let (s, _) = send(
+            &app,
+            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+    }
+    // Block `stuck`, and drive `finished` to done directly in the store.
+    let (s, _) = send(&app, loop_post("/tasks/stuck/block", json!({ "reason": "boom" }))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(status_of(&store, "stuck").await, Status::Blocked);
+    drive_to_done(&store, "finished").await;
+
+    // Retry the blocked task → back to pending, reason cleared.
+    let (s, body) = send(&app, loop_post("/tasks/stuck/retry", json!(null))).await;
+    assert_eq!(s, StatusCode::OK, "retry blocked → 200: {body}");
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["reason"], Value::Null, "block reason cleared on reset");
+    assert_eq!(status_of(&store, "stuck").await, Status::Pending);
+
+    // Retry a done task → rejected; it stays done.
+    let (s, _) = send(&app, loop_post("/tasks/finished/retry", json!(null))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "retry of a done task is rejected");
+    assert_eq!(status_of(&store, "finished").await, Status::Done);
+
+    // Unknown task → 404.
+    let (s, _) = send(&app, loop_post("/tasks/ghost/retry", json!(null))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "unknown task 404s");
+}
+
+/// A *guided* retry (`strategy` set) revives the task in place — `blocked ->
+/// ready`, worktree KEPT — and folds the strategy's guidance into the task's
+/// conversation so the re-spawn prompt sees it. Unlike a clean retry it does not
+/// reset to pending or clear the worktree.
+#[tokio::test]
+async fn guided_retry_revives_in_place_with_guidance() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    let (s, _) = send(
+        &app,
+        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = send(
+        &app,
+        loop_post("/workflows/wf/tasks", json!({ "id": "stuck", "title": "stuck", "spec": "x" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Drive it into `blocked` carrying a worktree + a reason (the gate-red shape).
+    drive_to_blocked(&store, "stuck", "gate failed: 3 tests red").await;
+    let before = store.get_task("stuck").await.unwrap().unwrap();
+    assert_eq!(before.worktree.as_deref(), Some("/wt"), "has a worktree to keep");
+
+    // Guided retry with the long-term strategy.
+    let (s, body) = send(
+        &app,
+        loop_post("/tasks/stuck/retry", json!({ "strategy": "long_term" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "guided retry → 200: {body}");
+    // Revived in place: ready (not pending), worktree kept.
+    assert_eq!(body["status"], "ready", "guided retry revives, not resets");
+    assert_eq!(body["worktree"], "/wt", "worktree kept for the re-spawn");
+
+    // The guidance was written to the conversation (oldest first), naming the
+    // prior reason so the re-spawned agent knows what to fix.
+    let (_, chat) = send(&app, get("/tasks/stuck/chat")).await;
+    let msgs = chat.as_array().unwrap();
+    assert_eq!(msgs.len(), 1, "one guidance message: {chat}");
+    assert_eq!(msgs[0]["role"], "user");
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("gate failed: 3 tests red"), "names the reason: {text}");
+    assert!(text.contains("root cause"), "long-term guidance: {text}");
+}
+
+/// `PUT /tasks/:id/auto-retry` sets and clears a task's hands-off retry policy.
+#[tokio::test]
+async fn auto_retry_policy_is_settable_and_clearable() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    let (s, _) = send(
+        &app,
+        loop_post("/tasks", json!({ "id": "t", "title": "t", "spec": "x" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Default: auto-retry off, cap at the default 2.
+    let t = store.get_task("t").await.unwrap().unwrap();
+    assert_eq!(t.auto_retry, None);
+    assert_eq!(t.max_retries, 2);
+
+    // Turn it on (quick, cap 3).
+    let (s, body) = loop_put(&app, "/tasks/t/auto-retry", json!({ "strategy": "quick", "max_retries": 3 })).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["auto_retry"], "quick");
+    assert_eq!(body["max_retries"], 3);
+
+    // Clear it (strategy null) — cap unchanged.
+    let (s, body) = loop_put(&app, "/tasks/t/auto-retry", json!({ "strategy": null })).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["auto_retry"], Value::Null);
+    assert_eq!(body["max_retries"], 3, "cap left unchanged when omitted");
+
+    // Unknown task → 404.
+    let (s, _) = loop_put(&app, "/tasks/ghost/auto-retry", json!({ "strategy": "quick" })).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+/// `POST /workflows/:id/resume` resets ONLY the workflow's blocked tasks →
+/// `pending`, leaving done/running/pending alone (continue from where it broke).
+/// Unknown workflow → `404`.
+#[tokio::test]
+async fn resume_resets_only_blocked_tasks() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    let (s, _) = send(
+        &app,
+        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Four tasks landing in four different states.
+    for tid in ["blocked-1", "blocked-2", "done-1", "pending-1"] {
+        let (s, _) = send(
+            &app,
+            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+    }
+    for tid in ["blocked-1", "blocked-2"] {
+        let (s, _) = send(&app, loop_post(&format!("/tasks/{tid}/block"), json!({ "reason": "boom" }))).await;
+        assert_eq!(s, StatusCode::OK);
+    }
+    drive_to_done(&store, "done-1").await;
+    // `pending-1` is left untouched at pending.
+
+    // Resume: only the two blocked tasks move to pending.
+    let (s, body) = send(&app, loop_post("/workflows/wf/resume", json!(null))).await;
+    assert_eq!(s, StatusCode::OK, "resume → 200: {body}");
+
+    assert_eq!(status_of(&store, "blocked-1").await, Status::Pending);
+    assert_eq!(status_of(&store, "blocked-2").await, Status::Pending);
+    // Done and pending tasks are left exactly as they were.
+    assert_eq!(status_of(&store, "done-1").await, Status::Done, "done untouched");
+    assert_eq!(status_of(&store, "pending-1").await, Status::Pending);
+    // With the blocked tasks reset, the workflow is no longer needs-attention.
+    assert_ne!(body["state"], "needs-attention", "no blocked tasks remain: {body}");
+
+    // Unknown workflow → 404.
+    let (s, _) = send(&app, loop_post("/workflows/ghost/resume", json!(null))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "unknown workflow 404s");
+}
+
+/// Drive `id` straight to `done` in the store, bypassing the engine: a test-only
+/// shortcut to manufacture a terminal task (pending→ready→running→gating→done).
+async fn drive_to_done(store: &StoreHandle, id: &str) {
+    use lazybones_store::Transition;
+    for t in [
+        Transition::Ready,
+        Transition::Claim { session: "s".into(), worktree: "/wt".into(), branch: "b".into() },
+        Transition::Gate,
+        Transition::Done { commit: "abc123".into() },
+    ] {
+        store.transition(id, t, "test").await.unwrap();
+    }
+}
+
+/// Drive `id` into `blocked` carrying a claimed worktree + `reason` — the shape a
+/// gate-red failure leaves (pending→ready→running→blocked), so a guided retry has
+/// a real tree to keep.
+async fn drive_to_blocked(store: &StoreHandle, id: &str, reason: &str) {
+    use lazybones_store::Transition;
+    store.transition(id, Transition::Ready, "test").await.unwrap();
+    store
+        .transition(
+            id,
+            Transition::Claim { session: "s".into(), worktree: "/wt".into(), branch: "b".into() },
+            "test",
+        )
+        .await
+        .unwrap();
+    store
+        .transition(id, Transition::Block { reason: reason.into() }, "test")
+        .await
+        .unwrap();
+}
+
+/// A loop-authed `PUT` with a JSON body, returning `(status, body)`.
+async fn loop_put(app: &Router, path: &str, body: Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("PUT")
+        .uri(path)
+        .header("authorization", format!("Bearer {LOOP_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    send(app, req).await
+}

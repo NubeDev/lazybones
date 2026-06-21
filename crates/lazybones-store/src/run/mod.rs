@@ -5,6 +5,7 @@
 mod cancel;
 mod create;
 mod cursor;
+mod delete;
 mod derived;
 mod get;
 mod list;
@@ -15,6 +16,7 @@ mod start;
 pub use cancel::cancel_run;
 pub use create::create_run;
 pub use cursor::advance_hcom_cursor;
+pub use delete::delete_run;
 pub use derived::{RunState, derived_state};
 pub use get::get_run;
 pub use list::{list_run_tasks, list_runs};
@@ -131,6 +133,32 @@ mod tests {
         // A higher value advances it.
         let r = advance_hcom_cursor(&db, "workflow-1", 9).await.unwrap();
         assert_eq!(r.hcom_log_cursor, Some(9));
+    }
+
+    #[tokio::test]
+    async fn delete_cascades_tasks_and_spares_standalone() {
+        use crate::task::get_task;
+
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+        let mut a = Task::seed("a", "r", "A", "s", vec![], vec![], None);
+        a.run_id = Some("workflow-1".into());
+        let standalone = Task::seed("c", "r", "C", "s", vec![], vec![], None);
+        create_task(&db, &a).await.unwrap();
+        create_task(&db, &standalone).await.unwrap();
+
+        let existed = delete_run(&db, "workflow-1").await.unwrap();
+        assert!(existed);
+        // The run is gone, its task cascaded, the standalone task untouched.
+        assert!(get_run(&db, "workflow-1").await.unwrap().is_none());
+        assert!(get_task(&db, "a").await.unwrap().is_none());
+        assert!(get_task(&db, "c").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn delete_missing_run_is_false() {
+        let db = db().await;
+        assert!(!delete_run(&db, "nope").await.unwrap());
     }
 
     #[tokio::test]

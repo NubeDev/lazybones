@@ -49,6 +49,66 @@ impl WorktreeMode {
     }
 }
 
+/// How a *revived* (re-attempted) task should approach its fix.
+///
+/// A blocked task failed for a reason, so re-running the same prompt unchanged
+/// would likely fail the same way. A strategy is the operator's *intent* for the
+/// retry, folded into the re-spawn prompt as guidance (see
+/// `scheduler::prompt::compose`): aim for the correct long-term fix, or the
+/// smallest change that unblocks. The same two strategies drive both a manual
+/// strategy-retry and the hands-off auto-retry loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryStrategy {
+    /// Fix the root cause properly, even if it touches more code / takes longer.
+    LongTerm,
+    /// Apply the smallest, fastest change that gets the task green.
+    Quick,
+}
+
+impl RetryStrategy {
+    /// The wire/storage form (`long_term` / `quick`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RetryStrategy::LongTerm => "long_term",
+            RetryStrategy::Quick => "quick",
+        }
+    }
+
+    /// Parse a stored strategy string; unknown/missing → `None` (auto-retry off).
+    #[must_use]
+    pub fn parse(s: Option<&str>) -> Option<Self> {
+        match s {
+            Some("long_term") => Some(RetryStrategy::LongTerm),
+            Some("quick") => Some(RetryStrategy::Quick),
+            _ => None,
+        }
+    }
+
+    /// The guidance blurb folded into the re-attempt prompt. `reason` is the prior
+    /// block reason so the agent knows *what* it is being asked to fix.
+    #[must_use]
+    pub fn guidance(self, reason: &str) -> String {
+        match self {
+            RetryStrategy::LongTerm => format!(
+                "Your previous attempt was blocked: {reason}. Fix the root cause \
+                 properly — choose the correct, maintainable solution even if it \
+                 touches more code or takes longer. Do not paper over the failure."
+            ),
+            RetryStrategy::Quick => format!(
+                "Your previous attempt was blocked: {reason}. Apply the smallest, \
+                 fastest change that gets this task green. Do not refactor or expand \
+                 scope — just unblock it."
+            ),
+        }
+    }
+}
+
+/// The default cap on hands-off auto-retries before a blocked task waits for a
+/// human. Configurable per task via `Task::max_retries`.
+pub const DEFAULT_MAX_RETRIES: u32 = 2;
+
 /// One unit of work in a run. Keyed by a friendly concept `id` (e.g. `auth`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
@@ -94,6 +154,19 @@ pub struct Task {
     pub reason: Option<String>,
     /// RFC3339 timestamp of the agent's last heartbeat, if running.
     pub heartbeat: Option<String>,
+    /// RFC3339 timestamp of when the task first moved to `running` (claimed).
+    /// Set once on the first claim and kept across reclaims/revives so it always
+    /// reflects when work actually began. `None` until the task starts.
+    #[serde(default)]
+    pub started_at: Option<String>,
+    /// RFC3339 timestamp of when the task reached `done`. `None` until done.
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    /// RFC3339 timestamp of the most recent `blocked` transition (a failure).
+    /// Cleared on revive/clean-retry so it reflects the *latest* failure, not a
+    /// stale one. `None` while the task has never failed (or was revived).
+    #[serde(default)]
+    pub failed_at: Option<String>,
     /// FK to the parent workflow [`Run`](crate::Run); `None` for a standalone
     /// task. Distinct from `run` (an event-grouping label): `run_id` is the real
     /// relationship the workflow views key off (SCOPE.md principle 6 — the link
@@ -118,6 +191,26 @@ pub struct Task {
     // could collapse them once nothing reads the non-optional one directly.
     #[serde(default)]
     pub worktree_mode_override: Option<WorktreeMode>,
+    /// Hands-off retry policy: when set, the scheduler re-attempts this task on a
+    /// block (with the strategy's guidance) instead of leaving it for a human,
+    /// up to `max_retries` times. `None` (the default) keeps the manual-only
+    /// behaviour — a block waits for an operator.
+    #[serde(default)]
+    pub auto_retry: Option<RetryStrategy>,
+    /// Cap on hands-off auto-retries before the task stays blocked for a human.
+    /// Defaults to [`DEFAULT_MAX_RETRIES`].
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    /// How many auto-retries have been spent. Reset to 0 by a clean (human)
+    /// retry/restart and on `done`; the cap is `retry_count >= max_retries`.
+    #[serde(default)]
+    pub retry_count: u32,
+}
+
+/// `serde` default for [`Task::max_retries`] (a fn because `serde(default = …)`
+/// needs a path, not a literal).
+fn default_max_retries() -> u32 {
+    DEFAULT_MAX_RETRIES
 }
 
 impl Task {
@@ -150,10 +243,16 @@ impl Task {
             commit: None,
             reason: None,
             heartbeat: None,
+            started_at: None,
+            finished_at: None,
+            failed_at: None,
             run_id: None,
             template_id: None,
             reuse_from: None,
             worktree_mode_override: None,
+            auto_retry: None,
+            max_retries: DEFAULT_MAX_RETRIES,
+            retry_count: 0,
         }
     }
 }

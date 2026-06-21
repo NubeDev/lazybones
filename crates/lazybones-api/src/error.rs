@@ -41,6 +41,11 @@ pub enum ApiError {
     #[error("{0}")]
     BadRequest(String),
 
+    /// The request conflicts with the current state of the resource (e.g.
+    /// deleting a workflow that still has running tasks). `409`.
+    #[error("{0}")]
+    Conflict(String),
+
     /// An unexpected server-side failure.
     #[error("{0}")]
     Internal(String),
@@ -50,6 +55,11 @@ impl ApiError {
     /// A `400 Bad Request` with a human-readable reason.
     pub fn bad_request(msg: impl Into<String>) -> Self {
         ApiError::BadRequest(msg.into())
+    }
+
+    /// A `409 Conflict` with a human-readable reason.
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        ApiError::Conflict(msg.into())
     }
 }
 
@@ -77,6 +87,7 @@ impl IntoResponse for ApiError {
             ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            ApiError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         (status, Json(json!({ "error": message }))).into_response()

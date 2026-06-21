@@ -1,5 +1,5 @@
 import { request } from "./client";
-import type { Task, WorktreeMode } from "@/types/task";
+import type { RetryStrategy, Task, WorktreeMode } from "@/types/task";
 import type {
   Run,
   Workspace,
@@ -15,6 +15,14 @@ export function listWorkflows(signal?: AbortSignal): Promise<WorkflowSummary[]> 
 /** `GET /workflows/:id` — detail (summary + linked task ids); `404` if absent. */
 export function getWorkflow(id: string, signal?: AbortSignal): Promise<WorkflowDetail> {
   return request<WorkflowDetail>(`/workflows/${encodeURIComponent(id)}`, { signal });
+}
+
+/** `GET /workflows/:id/tasks` — only the tasks linked to this workflow
+ *  (filtered by `run_id` server-side); `404` if the workflow is absent. This is
+ *  the hardened replacement for fetching every task and filtering in the browser
+ *  — a foreign task can no longer reach a workflow view. */
+export function listWorkflowTasks(id: string, signal?: AbortSignal): Promise<Task[]> {
+  return request<Task[]>(`/workflows/${encodeURIComponent(id)}/tasks`, { signal });
 }
 
 /** The authored workspace block for creating a workflow. */
@@ -82,6 +90,76 @@ export function cancelWorkflow(id: string): Promise<WorkflowSummary> {
   return request<WorkflowSummary>(
     `/workflows/${encodeURIComponent(id)}/cancel`,
     { method: "POST", auth: true },
+  );
+}
+
+/** Options for restarting a workflow. Both default to `false` server-side (the
+ *  safe, resume-style restart). */
+export interface RestartOptions {
+  /** Also reset tasks that are already done (a true from-scratch restart). */
+  include_done?: boolean;
+  /** Also tear down each reset task's git worktree. */
+  remove_worktrees?: boolean;
+}
+
+/** `POST /workflows/:id/restart` — reset the workflow's tasks to pending so it
+ *  can run from the beginning. Kills live agents; does not auto-start. */
+export function restartWorkflow(
+  id: string,
+  opts: RestartOptions = {},
+): Promise<WorkflowSummary> {
+  return request<WorkflowSummary>(
+    `/workflows/${encodeURIComponent(id)}/restart`,
+    { method: "POST", auth: true, body: opts },
+  );
+}
+
+/** `POST /workflows/:id/resume` — reset only this workflow's blocked tasks to
+ *  pending (continue from where it broke), leaving done/running/pending alone.
+ *  The scheduler re-promotes them on the next tick. */
+export function resumeWorkflow(id: string): Promise<WorkflowSummary> {
+  return request<WorkflowSummary>(
+    `/workflows/${encodeURIComponent(id)}/resume`,
+    { method: "POST", auth: true },
+  );
+}
+
+/** `POST /tasks/:id/retry` — revive ONE blocked task. With a `strategy`, the task
+ *  is revived in its kept worktree with that fix-intent guidance folded into the
+ *  re-spawn prompt (it builds on its partial work). Without, it is reset clean to
+ *  pending (the transient case; `remove_worktrees` also tears down its tree).
+ *  `409` if the task isn't blocked, `404` if unknown. Returns the updated task. */
+export function retryTask(
+  id: string,
+  opts: { strategy?: RetryStrategy; remove_worktrees?: boolean } = {},
+): Promise<Task> {
+  return request<Task>(`/tasks/${encodeURIComponent(id)}/retry`, {
+    method: "POST",
+    auth: true,
+    body: opts,
+  });
+}
+
+/** `PUT /tasks/:id/auto-retry` — set or clear a task's hands-off retry policy.
+ *  `strategy: null` turns auto-retry off; omitting `max_retries` leaves the cap
+ *  unchanged. `404` if unknown. Returns the updated task. */
+export function setAutoRetry(
+  id: string,
+  opts: { strategy: RetryStrategy | null; max_retries?: number },
+): Promise<Task> {
+  return request<Task>(`/tasks/${encodeURIComponent(id)}/auto-retry`, {
+    method: "PUT",
+    auth: true,
+    body: opts,
+  });
+}
+
+/** `DELETE /workflows/:id` — hard-delete the workflow + its tasks. `409` if it
+ *  still has live tasks (cancel first). Returns whether it existed. */
+export function deleteWorkflow(id: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/workflows/${encodeURIComponent(id)}`,
+    { method: "DELETE", auth: true },
   );
 }
 

@@ -7,7 +7,7 @@
 
 use surrealdb::types::{RecordId, RecordIdKey, SurrealValue, ToSql};
 
-use super::model::{Task, WorktreeMode};
+use super::model::{DEFAULT_MAX_RETRIES, RetryStrategy, Task, WorktreeMode};
 use super::status::Status;
 
 /// The table tasks live in.
@@ -37,6 +37,12 @@ pub(crate) struct TaskRow {
     pub(crate) commit: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) heartbeat: Option<String>,
+    /// Lifecycle timing stamps (RFC3339); `Option` so legacy rows read back as
+    /// `None`. `started_at` = first claim, `finished_at` = done, `failed_at` =
+    /// most recent block (cleared on revive). Durations are derived, not stored.
+    pub(crate) started_at: Option<String>,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) failed_at: Option<String>,
     /// FK to the parent workflow run; `Option` so legacy rows read back as `None`.
     pub(crate) run_id: Option<String>,
     /// Provenance template id; `Option` for forward/backward compatibility.
@@ -46,6 +52,13 @@ pub(crate) struct TaskRow {
     /// Workflow-only worktree-mode override, stored as its lowercase string form.
     /// `Option` so legacy rows (and standalone tasks) read back as `None`.
     pub(crate) worktree_mode_override: Option<String>,
+    /// Auto-retry strategy (`long_term`/`quick`), stored as its string form.
+    /// `Option` (and `None` = off) so legacy rows read back with auto-retry off.
+    pub(crate) auto_retry: Option<String>,
+    /// Auto-retry cap; `Option` so legacy rows read back as the default.
+    pub(crate) max_retries: Option<u32>,
+    /// Auto-retries spent; `Option` so legacy rows read back as 0.
+    pub(crate) retry_count: Option<u32>,
 }
 
 impl TaskRow {
@@ -69,10 +82,16 @@ impl TaskRow {
             commit: task.commit.clone(),
             reason: task.reason.clone(),
             heartbeat: task.heartbeat.clone(),
+            started_at: task.started_at.clone(),
+            finished_at: task.finished_at.clone(),
+            failed_at: task.failed_at.clone(),
             run_id: task.run_id.clone(),
             template_id: task.template_id.clone(),
             reuse_from: task.reuse_from.clone(),
             worktree_mode_override: task.worktree_mode_override.map(|m| m.as_str().to_owned()),
+            auto_retry: task.auto_retry.map(|s| s.as_str().to_owned()),
+            max_retries: Some(task.max_retries),
+            retry_count: Some(task.retry_count),
         }
     }
 
@@ -96,6 +115,9 @@ impl TaskRow {
             commit: self.commit,
             reason: self.reason,
             heartbeat: self.heartbeat,
+            started_at: self.started_at,
+            finished_at: self.finished_at,
+            failed_at: self.failed_at,
             run_id: self.run_id,
             template_id: self.template_id,
             reuse_from: self.reuse_from,
@@ -104,6 +126,9 @@ impl TaskRow {
                 .worktree_mode_override
                 .as_deref()
                 .map(|s| WorktreeMode::parse(Some(s))),
+            auto_retry: RetryStrategy::parse(self.auto_retry.as_deref()),
+            max_retries: self.max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
+            retry_count: self.retry_count.unwrap_or(0),
         }
     }
 }

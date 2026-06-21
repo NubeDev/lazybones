@@ -666,3 +666,87 @@ async fn agent_cannot_author_tasks() {
     let (status, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn chat_reads_empty_and_404s_unknown_task() {
+    let app = app().await;
+
+    // A task with no conversation yet: 200 with an empty array.
+    let (status, body) = send(&app, get("/tasks/store/chat")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+
+    // An unknown task is a 404, not an empty conversation.
+    let (status, _) = send(&app, get("/tasks/nope/chat")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn chat_post_rejects_empty_text() {
+    let app = app().await;
+    let (status, _) = send(&app, loop_post("/tasks/store/chat", json!({ "text": "   " }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn chat_post_on_unclaimed_task_stores_guidance() {
+    let app = app().await;
+
+    // `store` is pending (unclaimed): the message is stored as guidance the first
+    // spawn will fold in, not delivered live.
+    let (status, posted) = send(
+        &app,
+        loop_post("/tasks/store/chat", json!({ "text": "prefer an env var for the port" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(posted["delivery"], "stored");
+    assert_eq!(posted["message"]["role"], "user");
+    assert_eq!(posted["message"]["text"], "prefer an env var for the port");
+
+    // And it is durable: GET returns the one message.
+    let (status, convo) = send(&app, get("/tasks/store/chat")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(convo.as_array().unwrap().len(), 1);
+    assert_eq!(convo[0]["text"], "prefer an env var for the port");
+}
+
+#[tokio::test]
+async fn chat_post_revives_a_blocked_task() {
+    let app = app().await;
+
+    // Drive `store` to blocked: promote -> claim -> cancel.
+    send(&app, loop_post("/tasks/promote", json!(null))).await;
+    send(
+        &app,
+        loop_post(
+            "/tasks/store/claim",
+            json!({ "session": "s", "worktree": "/wt/store", "branch": "lazy/store", "token": "agent-tok" }),
+        ),
+    )
+    .await;
+    let (status, task) = send(&app, loop_post("/tasks/store/cancel", json!({ "reason": "gate red" }))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "blocked");
+
+    // Chatting a blocked task revives it (blocked -> ready) so the loop re-spawns
+    // it, keeping the worktree it left behind.
+    let (status, posted) = send(
+        &app,
+        loop_post("/tasks/store/chat", json!({ "text": "the gate failed on lint; fix it and retry" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(posted["delivery"], "revived");
+
+    let (status, task) = send(&app, get("/tasks/store")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "ready", "revive reopens the task");
+    assert_eq!(task["reason"], Value::Null, "the block reason is cleared");
+    assert_eq!(task["worktree"], "/wt/store", "the worktree is kept for resume");
+
+    // The conversation now holds the operator's guidance.
+    let (_, convo) = send(&app, get("/tasks/store/chat")).await;
+    assert_eq!(convo.as_array().unwrap().len(), 1);
+    assert_eq!(convo[0]["text"], "the gate failed on lint; fix it and retry");
+}

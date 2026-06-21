@@ -36,6 +36,10 @@ pub async fn update_task(
                 owns: body.owns,
                 tool: body.tool,
                 worktree_mode: body.worktree_mode,
+                // The auto-retry policy is operator config (Block-guarded), set via
+                // the retry route — not touched by this Author-guarded re-authoring.
+                auto_retry: None,
+                max_retries: None,
             },
         )
         .await?;

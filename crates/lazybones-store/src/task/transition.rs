@@ -44,13 +44,17 @@ pub enum Transition {
     },
     /// `running|gating -> ready`: reclaim a stale agent's task.
     Reclaim,
+    /// `blocked -> ready`: an operator revived a failed task to workshop it. The
+    /// worktree/branch are kept so the next claim resumes in place with the
+    /// operator's chat guidance folded into the prompt.
+    Revive,
 }
 
 impl Transition {
     /// The status this transition targets.
     fn target(&self) -> Status {
         match self {
-            Transition::Ready | Transition::Reclaim => Status::Ready,
+            Transition::Ready | Transition::Reclaim | Transition::Revive => Status::Ready,
             Transition::Claim { .. } => Status::Running,
             Transition::Gate => Status::Gating,
             Transition::Done { .. } => Status::Done,
@@ -89,7 +93,8 @@ pub async fn transition_task(
     }
 
     task.status = to;
-    apply_side_data(&mut task, &transition);
+    let now = surrealdb::types::Datetime::now().to_string();
+    apply_side_data(&mut task, &transition, &now);
 
     let written: Option<TaskRow> = db
         .update((TASK_TABLE, id.to_owned()))
@@ -105,7 +110,12 @@ pub async fn transition_task(
 }
 
 /// Fold the transition's side-data into the task before it is written.
-fn apply_side_data(task: &mut Task, transition: &Transition) {
+///
+/// `now` is the RFC3339 instant of this transition (shared with the event row so
+/// the task's stamps and its log line never disagree). Lifecycle timing stamps
+/// (`started_at`/`finished_at`/`failed_at`) are folded here; durations are
+/// derived from them downstream, never stored.
+fn apply_side_data(task: &mut Task, transition: &Transition, now: &str) {
     match transition {
         Transition::Claim {
             session,
@@ -115,13 +125,179 @@ fn apply_side_data(task: &mut Task, transition: &Transition) {
             task.session = Some(session.clone());
             task.worktree = Some(worktree.clone());
             task.branch = Some(branch.clone());
+            // Stamp the first start only; reclaims/revives re-claim the same task
+            // and must not reset when work actually began.
+            task.started_at.get_or_insert_with(|| now.to_owned());
         }
-        Transition::Done { commit } => task.commit = Some(commit.clone()),
-        Transition::Block { reason } => task.reason = Some(reason.clone()),
+        Transition::Done { commit } => {
+            task.commit = Some(commit.clone());
+            task.finished_at = Some(now.to_owned());
+            // A task that finishes green is no longer in a failed state.
+            task.failed_at = None;
+        }
+        Transition::Block { reason } => {
+            task.reason = Some(reason.clone());
+            task.failed_at = Some(now.to_owned());
+        }
         Transition::Reclaim => {
             // Drop the dead agent's claim; the worktree is reused on the next pass.
             task.session = None;
         }
+        Transition::Revive => {
+            // Drop the dead agent's claim and clear the block reason — the task is
+            // no longer blocked. The worktree/branch are kept so the next claim
+            // resumes in place rather than re-provisioning from scratch. Clearing
+            // `failed_at` keeps it reflecting only the latest, still-open failure.
+            task.session = None;
+            task.reason = None;
+            task.failed_at = None;
+        }
         Transition::Ready | Transition::Gate => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bootstrap::use_namespace;
+    use crate::connect::{StoreEngine, open_engine};
+    use crate::init_schema::init_schema;
+    use crate::task::create::create_task;
+
+    async fn db() -> Surreal<Db> {
+        let db = open_engine(&StoreEngine::Memory).await.unwrap();
+        use_namespace(&db, "lazybones", "test").await.unwrap();
+        init_schema(&db).await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn revive_reopens_a_blocked_task_keeping_its_worktree() {
+        let db = db().await;
+        // A task that failed and was blocked, with a kept worktree for triage.
+        let mut t = Task::seed("auth", "wf", "Auth", "spec", vec![], vec![], None);
+        t.status = Status::Blocked;
+        t.reason = Some("gate failed".into());
+        t.session = Some("auth-kula".into());
+        t.worktree = Some("/wt/auth".into());
+        t.branch = Some("lazy/auth".into());
+        create_task(&db, &t).await.unwrap();
+
+        let (out, ev) = transition_task(&db, "auth", Transition::Revive, "operator")
+            .await
+            .unwrap();
+        assert_eq!(out.status, Status::Ready);
+        // The dead agent's claim and the block reason are cleared...
+        assert_eq!(out.session, None);
+        assert_eq!(out.reason, None);
+        // ...but the worktree/branch survive so the next claim resumes in place.
+        assert_eq!(out.worktree.as_deref(), Some("/wt/auth"));
+        assert_eq!(out.branch.as_deref(), Some("lazy/auth"));
+        assert_eq!(ev.from, "blocked");
+        assert_eq!(ev.to, "ready");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_stamps_track_start_finish_and_fail() {
+        let db = db().await;
+        let mut t = Task::seed("a", "wf", "A", "spec", vec![], vec![], None);
+        t.status = Status::Ready;
+        create_task(&db, &t).await.unwrap();
+
+        // Claim stamps started_at; it stays unset for finish/fail.
+        let (claimed, _) = transition_task(
+            &db,
+            "a",
+            Transition::Claim {
+                session: "s".into(),
+                worktree: "/wt/a".into(),
+                branch: "lazy/a".into(),
+            },
+            "loop",
+        )
+        .await
+        .unwrap();
+        let first_start = claimed.started_at.clone();
+        assert!(first_start.is_some());
+        assert_eq!(claimed.finished_at, None);
+        assert_eq!(claimed.failed_at, None);
+
+        // A reclaim back to ready, then re-claim, keeps the original start instant.
+        let (_, _) = transition_task(&db, "a", Transition::Reclaim, "loop")
+            .await
+            .unwrap();
+        let (reclaimed, _) = transition_task(
+            &db,
+            "a",
+            Transition::Claim {
+                session: "s2".into(),
+                worktree: "/wt/a".into(),
+                branch: "lazy/a".into(),
+            },
+            "loop",
+        )
+        .await
+        .unwrap();
+        assert_eq!(reclaimed.started_at, first_start, "start is not reset");
+
+        // Gate then Done stamps finished_at and clears any fail.
+        transition_task(&db, "a", Transition::Gate, "loop")
+            .await
+            .unwrap();
+        let (done, _) = transition_task(
+            &db,
+            "a",
+            Transition::Done {
+                commit: "abc".into(),
+            },
+            "loop",
+        )
+        .await
+        .unwrap();
+        assert!(done.finished_at.is_some());
+        assert_eq!(done.failed_at, None);
+        assert_eq!(done.started_at, first_start);
+    }
+
+    #[tokio::test]
+    async fn block_stamps_failed_at_and_revive_clears_it() {
+        let db = db().await;
+        let mut t = Task::seed("a", "wf", "A", "spec", vec![], vec![], None);
+        t.status = Status::Running;
+        create_task(&db, &t).await.unwrap();
+
+        let (blocked, _) = transition_task(
+            &db,
+            "a",
+            Transition::Block {
+                reason: "gate failed".into(),
+            },
+            "loop",
+        )
+        .await
+        .unwrap();
+        assert!(blocked.failed_at.is_some());
+
+        let (revived, _) = transition_task(&db, "a", Transition::Revive, "operator")
+            .await
+            .unwrap();
+        // Revive clears the failure stamp so it only ever reflects an open failure.
+        assert_eq!(revived.failed_at, None);
+    }
+
+    #[tokio::test]
+    async fn revive_is_illegal_from_a_done_task() {
+        // `done` is terminal and merged — there is no edge back to `ready`, so a
+        // revive is rejected (the chat route turns this into a 409 and points the
+        // operator at restart instead). Revive targets `ready`, so it is legal
+        // from the other live states (it shares the `* -> ready` edges).
+        let db = db().await;
+        let mut t = Task::seed("auth", "wf", "Auth", "spec", vec![], vec![], None);
+        t.status = Status::Done;
+        create_task(&db, &t).await.unwrap();
+        let err = transition_task(&db, "auth", Transition::Revive, "operator")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::IllegalTransition { .. }));
     }
 }

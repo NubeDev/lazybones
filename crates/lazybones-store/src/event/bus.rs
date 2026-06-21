@@ -14,6 +14,7 @@
 
 use tokio::sync::broadcast;
 
+use crate::chat::ChatMessage;
 use crate::hcom_log::HcomLogEntry;
 
 use super::activity::Activity;
@@ -36,6 +37,11 @@ pub enum LiveEvent {
     /// persistence happens before publish, anything streamed is already
     /// re-fetchable via `GET /runs/:id/hcom`.
     HcomLog(HcomLogEntry),
+    /// A chat message just appended to a task's conversation — also durable in
+    /// the `chat` table, published here for the live edge so a "chat with the
+    /// agent" view updates without polling. Carries both operator messages and
+    /// mirrored agent replies.
+    Chat(ChatMessage),
 }
 
 /// A cloneable publish/subscribe handle for the live feed.

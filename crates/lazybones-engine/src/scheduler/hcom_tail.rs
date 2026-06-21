@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use lazybones_store::{Lifecycle, NewHcomLogEntry, Run, StoreHandle};
+use lazybones_store::{ChatRole, Lifecycle, NewHcomLogEntry, Run, StoreHandle};
 
 use crate::hcom::{Hcom, HcomEvent};
 
@@ -130,9 +130,18 @@ pub async fn tail_hcom(store: &StoreHandle, hcom: &Hcom) {
     }
 }
 
-/// Where an event lands: its `run` label (mirrors `event.run`), the `task` it
+/// Where an event lands: the `run` key the row is stored under, the `task` it
 /// belongs to (None for run-scoped supervisors), and the workflow `run_id` whose
 /// cursor advances (None for a standalone task).
+///
+/// The stored `run` is the **workflow id** (`task.run_id`), NOT the task's `run`
+/// label: the workflow detail page and `GET /runs/:id/hcom` are both keyed on the
+/// workflow id (see `list_run_tasks`, which queries `WHERE run_id = :id`), and a
+/// task's `run` field is only an event-grouping label that can diverge from its
+/// workflow id (task/model.rs). Keying the hcom log on the label was what left the
+/// UI empty — the rows existed but under a key nothing queried. We fall back to the
+/// label only when a task has no `run_id` (a standalone task), which the tail then
+/// drops anyway since it has no cursor to advance.
 #[derive(Debug, Clone)]
 struct Resolved {
     run: String,
@@ -141,8 +150,9 @@ struct Resolved {
 }
 
 /// Resolve a launching tag to its home, per docs/hcom-logs-scope.md:
-/// - a known task id → `task = id`, `run = task.run`, `run_id = task.run_id`;
-/// - `sup:<run_id>` → run-scoped, `task = None`, `run`/`run_id` from the run;
+/// - a known task id → `task = id`, `run` = the workflow id (`task.run_id`,
+///   falling back to the `run` label), `run_id = task.run_id`;
+/// - `sup:<run_id>` → run-scoped, `task = None`, `run`/`run_id` = the run id;
 /// - anything else → `None` (unknown → dropped).
 async fn resolve_tag(store: &StoreHandle, tag: &str) -> Option<Resolved> {
     if let Some(run_id) = tag.strip_prefix(SUP_TAG_PREFIX) {
@@ -158,7 +168,9 @@ async fn resolve_tag(store: &StoreHandle, tag: &str) -> Option<Resolved> {
     }
     match store.get_task(tag).await {
         Ok(Some(task)) => Some(Resolved {
-            run: task.run.clone(),
+            // Store under the workflow id so `GET /runs/:id/hcom` (keyed on the
+            // workflow id) finds the rows; the `run` label is only a fallback.
+            run: task.run_id.clone().unwrap_or_else(|| task.run.clone()),
             task: Some(task.id.clone()),
             run_id: task.run_id.clone(),
         }),
@@ -186,7 +198,10 @@ async fn append_one(
         at: ev.ts.clone(),
     };
     match store.append_hcom_log(entry).await {
-        Ok(_) => true,
+        Ok(_) => {
+            mirror_chat(store, ev, hcom_id, home).await;
+            true
+        }
         Err(e) => {
             tracing::warn!(agent = %ev.instance, hcom_id, "tail: append_hcom_log failed: {e}");
             false
@@ -194,12 +209,77 @@ async fn append_one(
     }
 }
 
-/// Build the `agent name → launching tag` map from `hcom list`. Agents with no
-/// tag (not lazybones-launched) are omitted.
+/// Mirror an agent's thread message into the task's `chat` conversation so a
+/// "chat with the agent" view has both sides in one durable feed.
+///
+/// Only `message`-kind events on a task thread are mirrored, and the agent's own
+/// DONE/BLOCKED control signals are skipped (they are lifecycle, not chat). The
+/// chat append is deduped on `(task, hcom_id)`, so the rare re-drain of an already
+/// hcom-logged event re-mirrors as a no-op rather than a duplicate bubble.
+async fn mirror_chat(store: &StoreHandle, ev: &HcomEvent, hcom_id: i64, home: &Resolved) {
+    if ev.kind != "message" {
+        return;
+    }
+    let Some(task) = home.task.as_deref() else {
+        return; // run-scoped (supervisor) agents have no task conversation
+    };
+    let Some(text) = ev.data.get("text").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let text = text.trim();
+    if text.is_empty() || is_control_signal(text) {
+        return;
+    }
+    if let Err(e) = store
+        .append_chat(&home.run, task, ChatRole::Agent, text, Some(hcom_id))
+        .await
+    {
+        tracing::warn!(task = %task, hcom_id, "tail: mirror_chat append failed: {e}");
+    }
+}
+
+/// Whether a thread message is the agent's lifecycle control signal (DONE /
+/// BLOCKED), which belongs in the run log, not the chat conversation.
+fn is_control_signal(text: &str) -> bool {
+    text == "DONE" || text.starts_with("BLOCKED")
+}
+
+/// Build the `agent instance → launching tag` map from `hcom list`. Agents with
+/// no tag (not lazybones-launched) are omitted.
+///
+/// The event stream's `instance` field is the agent's **base name** (`lulu`), not
+/// its full `name` (`test-be-lulu`), so we key the map on `base_name`. We also
+/// insert the full `name` as a fallback key in case hcom ever emits the full name
+/// as `instance` — both point at the same tag, so the extra entry is harmless.
 async fn agent_tags(hcom: &Hcom) -> anyhow::Result<HashMap<String, String>> {
     let live = hcom.list().await?;
-    Ok(live
-        .into_iter()
-        .filter_map(|a| a.tag.map(|tag| (a.name, tag)))
-        .collect())
+    let mut map = HashMap::new();
+    for a in live {
+        let Some(tag) = a.tag else { continue };
+        if !a.base_name.is_empty() {
+            map.insert(a.base_name, tag.clone());
+        }
+        if !a.name.is_empty() {
+            map.insert(a.name, tag);
+        }
+    }
+    Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_control_signal;
+
+    #[test]
+    fn control_signals_are_not_chat() {
+        assert!(is_control_signal("DONE"));
+        assert!(is_control_signal("BLOCKED: gate failed"));
+        assert!(is_control_signal("BLOCKED"));
+    }
+
+    #[test]
+    fn ordinary_replies_are_chat() {
+        assert!(!is_control_signal("on it, switching to an env var"));
+        assert!(!is_control_signal("I think the test is DONE being flaky"));
+    }
 }

@@ -39,6 +39,13 @@ pub struct ActivityBody {
     pub message: String,
 }
 
+/// `POST /tasks/:id/chat` body: a message from the operator to the task's agent.
+#[derive(Debug, Deserialize)]
+pub struct ChatBody {
+    /// The message text to post on the task's hcom thread.
+    pub text: String,
+}
+
 /// `POST /tasks/:id/done` body: the commit the agent pushed.
 #[derive(Debug, Deserialize)]
 pub struct DoneBody {
@@ -110,6 +117,31 @@ pub struct UpdateTaskBody {
 pub struct CreateTemplateBody {
     /// Unique template id; `409` if it is already taken.
     pub id: String,
+    /// Human title.
+    pub title: String,
+    /// Optional longer description shown in the picker.
+    #[serde(default)]
+    pub description: String,
+    /// Starting spec text for tasks instantiated from this template.
+    pub spec_template: String,
+    /// Agent tool inherited by the task unless overridden.
+    #[serde(default)]
+    pub default_tool: Option<String>,
+    /// Model inherited by the task unless overridden; omitted inherits.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// Effort inherited by the task unless overridden; omitted inherits.
+    #[serde(default)]
+    pub default_effort: Option<String>,
+    /// Rarely-set worktree mode intrinsic to the recipe; usually omitted.
+    #[serde(default)]
+    pub default_worktree_mode: Option<WorktreeMode>,
+}
+
+/// `PUT /templates/:id` body: the new state of an existing template. The id
+/// comes from the path; every other field is overwritten wholesale.
+#[derive(Debug, Deserialize)]
+pub struct UpdateTemplateBody {
     /// Human title.
     pub title: String,
     /// Optional longer description shown in the picker.
@@ -230,10 +262,22 @@ pub struct WorkflowSummary {
     pub task_count: usize,
     /// How many of those tasks are `done`.
     pub done_count: usize,
+    /// RFC3339 timestamp the workflow reached a terminal state, **derived** from
+    /// its tasks (the latest task `finished_at`/`failed_at`) and never stored —
+    /// only set once every task is terminal (all `done`, or some `blocked` with
+    /// none still live). `None` while the workflow is still in flight. The UI
+    /// derives "time taken" from `run.started_at` → this. (SCOPE.md principle 6:
+    /// the DB is truth; a stored rollup would drift.)
+    pub finished_at: Option<String>,
+    /// RFC3339 timestamp of the workflow's most recent task failure (the latest
+    /// `failed_at` across its tasks), or `None` if no task has failed. Distinct
+    /// from `finished_at`: a workflow with a blocked task that an operator has
+    /// not yet revived has a `failed_at` but no `finished_at` until it settles.
+    pub failed_at: Option<String>,
 }
 
 impl WorkflowSummary {
-    /// Build a summary from a run and its tasks (derives state + counts).
+    /// Build a summary from a run and its tasks (derives state + counts + timing).
     #[must_use]
     pub fn new(run: Run, tasks: &[Task]) -> Self {
         let state = lazybones_store::derived_state(run.lifecycle, tasks).as_str();
@@ -241,11 +285,34 @@ impl WorkflowSummary {
             .iter()
             .filter(|t| t.status == lazybones_store::Status::Done)
             .count();
+        let failed_at = tasks.iter().filter_map(|t| t.failed_at.clone()).max();
+        // The workflow has "finished" only once no task is still in flight
+        // (pending/ready/running/gating). Its finish instant is then the latest
+        // terminal task stamp — the moment the last unit settled.
+        let in_flight = tasks.iter().any(|t| {
+            matches!(
+                t.status,
+                lazybones_store::Status::Pending
+                    | lazybones_store::Status::Ready
+                    | lazybones_store::Status::Running
+                    | lazybones_store::Status::Gating
+            )
+        });
+        let finished_at = if tasks.is_empty() || in_flight {
+            None
+        } else {
+            tasks
+                .iter()
+                .filter_map(|t| t.finished_at.clone().or_else(|| t.failed_at.clone()))
+                .max()
+        };
         Self {
             run,
             state,
             task_count: tasks.len(),
             done_count,
+            finished_at,
+            failed_at,
         }
     }
 }
@@ -318,4 +385,81 @@ pub struct UpdateAgentBody {
     /// New default effort.
     #[serde(default)]
     pub default_effort: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lazybones_store::{Status, WorktreeMode};
+
+    fn run() -> Run {
+        Run::new(
+            "wf",
+            "WF",
+            lazybones_store::Workspace {
+                repo: "/repo".into(),
+                base_branch: None,
+                branch_prefix: None,
+                worktree_mode: WorktreeMode::New,
+                tool: None,
+                model: None,
+                effort: None,
+                gate: None,
+                merge: None,
+            },
+            "2026-01-01T00:00:00Z",
+        )
+    }
+
+    fn task(id: &str, status: Status) -> Task {
+        let mut t = Task::seed(id, "wf", id, "s", vec![], vec![], None);
+        t.status = status;
+        t
+    }
+
+    #[test]
+    fn in_flight_workflow_has_no_finish_stamp() {
+        let mut a = task("a", Status::Done);
+        a.finished_at = Some("2026-01-01T01:00:00Z".into());
+        let b = task("b", Status::Running); // still live
+        let s = WorkflowSummary::new(run(), &[a, b]);
+        assert_eq!(s.finished_at, None);
+        assert_eq!(s.failed_at, None);
+    }
+
+    #[test]
+    fn all_done_finishes_at_latest_task_stamp() {
+        let mut a = task("a", Status::Done);
+        a.finished_at = Some("2026-01-01T01:00:00Z".into());
+        let mut b = task("b", Status::Done);
+        b.finished_at = Some("2026-01-01T02:00:00Z".into());
+        let s = WorkflowSummary::new(run(), &[a, b]);
+        assert_eq!(s.finished_at.as_deref(), Some("2026-01-01T02:00:00Z"));
+        assert_eq!(s.failed_at, None);
+    }
+
+    #[test]
+    fn settled_with_block_reports_finish_and_fail() {
+        // Every task terminal (one done, one blocked) → the run has settled. Its
+        // finish is the latest terminal stamp; failed_at surfaces the failure.
+        let mut a = task("a", Status::Done);
+        a.finished_at = Some("2026-01-01T01:00:00Z".into());
+        let mut b = task("b", Status::Blocked);
+        b.failed_at = Some("2026-01-01T03:00:00Z".into());
+        let s = WorkflowSummary::new(run(), &[a, b]);
+        assert_eq!(s.finished_at.as_deref(), Some("2026-01-01T03:00:00Z"));
+        assert_eq!(s.failed_at.as_deref(), Some("2026-01-01T03:00:00Z"));
+    }
+
+    #[test]
+    fn blocked_but_revivable_run_still_in_flight_keeps_fail_only() {
+        // A blocked task alongside a running one: the run has not settled, so no
+        // finish stamp — but the failure is still surfaced.
+        let mut a = task("a", Status::Blocked);
+        a.failed_at = Some("2026-01-01T03:00:00Z".into());
+        let b = task("b", Status::Running);
+        let s = WorkflowSummary::new(run(), &[a, b]);
+        assert_eq!(s.finished_at, None);
+        assert_eq!(s.failed_at.as_deref(), Some("2026-01-01T03:00:00Z"));
+    }
 }

@@ -76,6 +76,7 @@ mod tests {
     fn agent(tag: &str, status: &str) -> HcomAgent {
         HcomAgent {
             name: "a".into(),
+            base_name: "a".into(),
             status: status.into(),
             tag: Some(tag.into()),
         }

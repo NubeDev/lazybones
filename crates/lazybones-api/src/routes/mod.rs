@@ -10,11 +10,13 @@ mod agent_test;
 mod agents;
 mod block;
 mod cancel;
+mod chat;
 mod claim;
 mod create;
 mod delete;
 mod done;
 mod engine;
+mod files;
 mod fs_list;
 mod gate;
 mod get;
@@ -32,18 +34,25 @@ mod secrets_list;
 mod secrets_put;
 mod stream;
 mod sync;
+mod tasks_retry;
+mod tasks_retry_policy;
 mod templates_create;
 mod templates_delete;
 mod templates_get;
 mod templates_list;
+mod templates_update;
 mod transcript;
 mod update;
 mod workflows_add_task;
 mod workflows_cancel;
 mod workflows_create;
+mod workflows_delete;
 mod workflows_get;
 mod workflows_list;
+mod workflows_restart;
+mod workflows_resume;
 mod workflows_start;
+mod workflows_tasks;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -73,6 +82,17 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks/:id/block", post(block::block_task))
         // Operator cancel: kill the live agent (hcom) then block the task.
         .route("/tasks/:id/cancel", post(cancel::cancel_task))
+        // Revive ONE blocked task: guided (strategy → revive in place) or clean
+        // (no strategy → reset to pending). The next tick picks it back up.
+        .route("/tasks/:id/retry", post(tasks_retry::retry_task))
+        // Set/clear a task's hands-off auto-retry policy (strategy + cap).
+        .route("/tasks/:id/auto-retry", put(tasks_retry_policy::set_auto_retry))
+        // Chat with the task's agent: read the conversation + post a message
+        // (live-steer a running task, or revive a blocked one to workshop it).
+        .route(
+            "/tasks/:id/chat",
+            get(chat::get_chat).post(chat::post_chat),
+        )
         // The fabric's record: one agent's raw hcom log + its deep transcript.
         .route("/tasks/:id/hcom", get(hcom_log::task_hcom_log))
         .route("/tasks/:id/transcript", get(transcript::task_transcript))
@@ -83,17 +103,30 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/templates/:id",
-            get(templates_get::get_template).delete(templates_delete::delete_template),
+            get(templates_get::get_template)
+                .put(templates_update::update_template)
+                .delete(templates_delete::delete_template),
         )
         // Workflows (one-off runs, stored in the `run` table; path stays user-facing).
         .route(
             "/workflows",
             get(workflows_list::list_workflows).post(workflows_create::create_workflow),
         )
-        .route("/workflows/:id", get(workflows_get::get_workflow))
-        .route("/workflows/:id/tasks", post(workflows_add_task::add_workflow_task))
+        .route(
+            "/workflows/:id",
+            get(workflows_get::get_workflow).delete(workflows_delete::delete_workflow),
+        )
+        .route(
+            "/workflows/:id/tasks",
+            get(workflows_tasks::list_workflow_tasks)
+                .post(workflows_add_task::add_workflow_task),
+        )
         .route("/workflows/:id/start", post(workflows_start::start_workflow))
         .route("/workflows/:id/cancel", post(workflows_cancel::cancel_workflow))
+        .route("/workflows/:id/restart", post(workflows_restart::restart_workflow))
+        // Resume: reset only the workflow's blocked tasks → pending (continue
+        // from where it broke), leaving done/running/ready/pending untouched.
+        .route("/workflows/:id/resume", post(workflows_resume::resume_workflow))
         .route("/runs/:id", get(runs::run_history))
         // The fabric's record for a whole run: the raw hcom log of every agent.
         .route("/runs/:id/hcom", get(hcom_log::run_hcom_log))
@@ -101,6 +134,10 @@ pub fn router(state: AppState) -> Router {
         .route("/stream", get(stream::stream))
         // Native filesystem browse for the UI's repo/dir picker (New workflow).
         .route("/fs/list", get(fs_list::fs_list))
+        // Read-only repo file browser + diff for a workflow's "Files" tab.
+        .route("/files/tree", get(files::list_tree))
+        .route("/files/read", get(files::read_file))
+        .route("/files/diff", get(files::diff))
         // GitHub via the user's existing `gh`/`git` login (no token here).
         .route("/gh/auth", get(gh::gh_auth))
         .route("/gh/repo", get(gh::gh_repo))

@@ -99,11 +99,16 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
 
         // 2. Spawn the agent, capturing the hcom name. The agent triple is
         //    resolved task ?? workspace ?? global by `effective::resolve` above.
+        //    Any prior operator conversation is folded into the prompt so a
+        //    revived task resumes with the operator's guidance (empty on a first
+        //    claim); a read failure is non-fatal — we just spawn without it.
+        let history = store.chat_history(&task.id).await.unwrap_or_default();
         let agent_prompt = prompt::compose(
             &task,
             &provisioned.worktree,
             &provisioned.branch,
             &cfg.remote,
+            &history,
         );
         // Gate-bypass flags for this tool (empty if none configured); without
         // them a headless claude in a fresh worktree stalls on its trust prompt.

@@ -33,6 +33,13 @@ export function useLiveStream() {
       qc.invalidateQueries({ queryKey: ["hcom"] });
     }
 
+    // A `chat` frame (operator message or mirrored agent reply) reconciles the
+    // durable `["chat", …]` conversations the task chat panel renders. Refetch
+    // (the rows are the source of truth) rather than appending the frame.
+    function refreshChat() {
+      qc.invalidateQueries({ queryKey: ["chat"] });
+    }
+
     try {
       es = new EventSource(url);
     } catch {
@@ -43,6 +50,7 @@ export function useLiveStream() {
     es.addEventListener("transition", refresh);
     es.addEventListener("activity", refresh);
     es.addEventListener("hcom_log", refreshHcom);
+    es.addEventListener("chat", refreshChat);
 
     return () => {
       closed = true;
@@ -50,6 +58,7 @@ export function useLiveStream() {
       es?.removeEventListener("transition", refresh);
       es?.removeEventListener("activity", refresh);
       es?.removeEventListener("hcom_log", refreshHcom);
+      es?.removeEventListener("chat", refreshChat);
       es?.close();
       void closed;
     };

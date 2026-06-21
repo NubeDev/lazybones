@@ -32,6 +32,16 @@ export function createTemplate(id: string, draft: TemplateDraft): Promise<Templa
   });
 }
 
+/** `PUT /templates/:id` — edit an existing recipe. `404` if id is unknown.
+ *  The id is fixed by the path; every other field is overwritten wholesale. */
+export function updateTemplate(id: string, draft: TemplateDraft): Promise<Template> {
+  return request<Template>(`/templates/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    auth: true,
+    body: draft,
+  });
+}
+
 /** `DELETE /templates/:id` — remove a template; returns whether it existed. */
 export function deleteTemplate(id: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(`/templates/${encodeURIComponent(id)}`, {

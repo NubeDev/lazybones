@@ -1,5 +1,6 @@
 //! Task templates: the reusable recipe model, its persisted row, the verbs that
-//! create/read/list/delete them, and the `instantiate` helper (template → task).
+//! create/read/list/update/delete them, and the `instantiate` helper (template →
+//! task).
 
 mod create;
 mod delete;
@@ -8,6 +9,7 @@ mod instantiate;
 mod list;
 mod model;
 mod row;
+mod update;
 
 pub use create::create_template;
 pub use delete::delete_template;
@@ -15,6 +17,7 @@ pub use get::get_template;
 pub use instantiate::instantiate;
 pub use list::list_templates;
 pub use model::Template;
+pub use update::update_template;
 
 #[cfg(test)]
 mod tests {
@@ -71,6 +74,41 @@ mod tests {
         create_template(&db, &sample()).await.unwrap();
         let err = create_template(&db, &sample()).await.unwrap_err();
         assert!(matches!(err, crate::StoreError::TemplateExists(_)));
+    }
+
+    #[tokio::test]
+    async fn update_edits_fields_and_preserves_created_at() {
+        let db = db().await;
+        create_template(&db, &sample()).await.unwrap();
+
+        let edited = Template::new(
+            "open-pr",
+            "Open a PR (revised)",
+            "A clearer description",
+            "Implement, test, then open a PR.",
+            Some("codex".into()),
+            Some("gpt-5".into()),
+            None,
+            Some(WorktreeMode::Branch),
+            "2026-02-02T00:00:00Z",
+        );
+        let updated = update_template(&db, &edited).await.unwrap();
+        assert_eq!(updated.title, "Open a PR (revised)");
+        assert_eq!(updated.default_tool.as_deref(), Some("codex"));
+        assert_eq!(updated.default_worktree_mode, Some(WorktreeMode::Branch));
+        // The creation stamp is immutable; only `updated_at` moves.
+        assert_eq!(updated.created_at, "2026-01-01T00:00:00Z");
+        assert_eq!(updated.updated_at, "2026-02-02T00:00:00Z");
+
+        let got = get_template(&db, "open-pr").await.unwrap().unwrap();
+        assert_eq!(got, updated);
+    }
+
+    #[tokio::test]
+    async fn update_unknown_is_not_found() {
+        let db = db().await;
+        let err = update_template(&db, &sample()).await.unwrap_err();
+        assert!(matches!(err, crate::StoreError::TemplateNotFound(_)));
     }
 
     #[tokio::test]

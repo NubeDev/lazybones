@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Trash2, Wrench } from "lucide-react";
+import { Pencil, Trash2, Wrench } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,9 +11,11 @@ import {
 } from "@/components/ui/dialog";
 import { useDeleteTemplate } from "@/lib/hooks/use-templates";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
+import { TemplateDialog } from "./template-dialog";
 import type { Template } from "@/types/workflow";
 
-/** One template: title, id, description, default tool/mode, and delete-with-confirm. */
+/** One template: title, id, description, default tool/mode, edit, and
+ *  delete-with-confirm. */
 export function TemplateCard({ template }: { template: Template }) {
   const del = useDeleteTemplate();
   const [open, setOpen] = useState(false);
@@ -29,35 +31,45 @@ export function TemplateCard({ template }: { template: Template }) {
             {template.id}
           </span>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button variant="ghost" size="icon-sm" title="Delete template">
-              <Trash2 />
-            </Button>
-          </DialogTrigger>
-          <DialogContent
-            title={`Delete ${template.id}?`}
-            description="This removes the recipe. Tasks already created from it are unaffected."
-          >
-            <div className="mt-2 flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="ghost" size="sm">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={del.isPending}
-                onClick={() =>
-                  del.mutate(template.id, { onSuccess: () => setOpen(false) })
-                }
-              >
-                <Trash2 /> Delete
+        <div className="flex shrink-0 items-center">
+          <TemplateDialog
+            template={template}
+            trigger={
+              <Button variant="ghost" size="icon-sm" title="Edit template">
+                <Pencil />
               </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+            }
+          />
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button variant="ghost" size="icon-sm" title="Delete template">
+                <Trash2 />
+              </Button>
+            </DialogTrigger>
+            <DialogContent
+              title={`Delete ${template.id}?`}
+              description="This removes the recipe. Tasks already created from it are unaffected."
+            >
+              <div className="mt-2 flex justify-end gap-2">
+                <DialogClose asChild>
+                  <Button variant="ghost" size="sm">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={del.isPending}
+                  onClick={() =>
+                    del.mutate(template.id, { onSuccess: () => setOpen(false) })
+                  }
+                >
+                  <Trash2 /> Delete
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       {template.description && (

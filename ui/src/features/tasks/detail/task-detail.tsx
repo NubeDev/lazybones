@@ -10,6 +10,9 @@ import { DepsList } from "./deps-list";
 import { BlockDialog } from "./block-dialog";
 import { DeleteDialog } from "./delete-dialog";
 import { SpecView } from "./spec-view";
+import { TaskRetryControls } from "./task-retry-controls";
+import { TaskTimingRows } from "@/features/workflows/workflow-tasks";
+import { TaskChat } from "./task-chat";
 import { TaskDialog } from "../authoring/task-dialog";
 import { StartDialog } from "../start-dialog";
 import { useTask } from "@/lib/hooks/use-tasks";
@@ -107,6 +110,7 @@ export function TaskDetail({
               {task.heartbeat && (
                 <FieldRow label="Heartbeat">{relativeTime(task.heartbeat)}</FieldRow>
               )}
+              <TaskTimingRows task={task} />
               {task.owns.length > 0 && (
                 <FieldRow label="Owns">
                   <div className="flex flex-col items-end gap-0.5">
@@ -127,6 +131,20 @@ export function TaskDetail({
               <p className="mt-1 text-xs text-foreground">{task.reason}</p>
             </div>
           )}
+
+          <Separator />
+
+          <section>
+            <SectionLabel>Retry on fail</SectionLabel>
+            <TaskRetryControls task={task} />
+          </section>
+
+          <Separator />
+
+          <section>
+            <SectionLabel>Chat</SectionLabel>
+            <TaskChat task={task} />
+          </section>
         </div>
       </ScrollArea>
 

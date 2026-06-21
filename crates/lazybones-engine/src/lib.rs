@@ -24,6 +24,86 @@ pub async fn cancel_agent(tag: &str) -> anyhow::Result<()> {
     Hcom::discover().kill_tag(tag).await
 }
 
+/// Post `text` to a task's hcom thread — the control-surface primitive behind
+/// `POST /tasks/:id/chat` when the task is *running*. The agent listens on the
+/// thread named after its task id, so this reaches it live; the durable record of
+/// the message is written by the route into the `chat` store separately.
+///
+/// # Errors
+/// Returns an error if hcom cannot be launched or the send exits non-zero.
+pub async fn send_to_agent(thread: &str, text: &str) -> anyhow::Result<()> {
+    Hcom::discover().send(thread, text).await
+}
+
+/// Tear down a task's git worktree at `worktree` (and, when `branch` is set, the
+/// branch it was on) from `repo` — the control-surface primitive behind a
+/// workflow *restart* with worktree teardown. Takes the repo/path/branch directly
+/// (the route has them from the workspace + the task) rather than resolving an
+/// `EffectiveGit`.
+///
+/// Removing the worktree alone is **not enough** for a clean restart: `git
+/// worktree remove` leaves the branch behind, so the next `New`-mode claim's
+/// `git worktree add -b <branch>` fails with "a branch named '<branch>' already
+/// exists". We therefore also delete the branch (`branch -D`) and prune stale
+/// worktree admin entries, so a re-Start provisions from scratch.
+///
+/// All steps are `--force`/best-effort (a restart is a deliberate discard of
+/// in-flight work) and non-fatal: a missing tree or absent branch must not fail
+/// the restart. Failures are logged.
+///
+/// # Errors
+/// Returns an error only if git cannot be launched at all.
+pub async fn remove_worktree(
+    repo: &std::path::Path,
+    worktree: &str,
+    branch: Option<&str>,
+) -> anyhow::Result<()> {
+    let run = |args: Vec<String>| {
+        let repo = repo.to_path_buf();
+        async move {
+            tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(&args)
+                .output()
+                .await
+        }
+    };
+
+    let out = run(vec![
+        "worktree".into(),
+        "remove".into(),
+        "--force".into(),
+        worktree.into(),
+    ])
+    .await?;
+    if !out.status.success() {
+        tracing::warn!(
+            worktree = %worktree,
+            "remove_worktree: git worktree remove failed (continuing): {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    // Drop the admin record for any tree that's already gone from disk, so a
+    // re-add at the same path doesn't trip "already registered".
+    let _ = run(vec!["worktree".into(), "prune".into()]).await;
+
+    // Delete the branch the tree was on — without this the next `worktree add
+    // -b <branch>` collides. `-D` (force) since a restart discards its commits.
+    if let Some(branch) = branch {
+        let out = run(vec!["branch".into(), "-D".into(), branch.into()]).await?;
+        if !out.status.success() {
+            tracing::warn!(
+                branch = %branch,
+                "remove_worktree: git branch -D failed (continuing): {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    }
+    Ok(())
+}
+
 #[doc(hidden)]
 pub use harness::{Engine, run_once};
 

@@ -62,6 +62,11 @@ export interface WorkflowSummary extends Run {
   state: WorkflowState;
   task_count: number;
   done_count: number;
+  /** RFC3339 — when the workflow reached a terminal state (latest terminal task
+   *  stamp); `null` while still in flight. Derived server-side, never stored. */
+  finished_at: string | null;
+  /** RFC3339 — the latest task failure across the workflow, or `null`. */
+  failed_at: string | null;
 }
 
 /** `GET /workflows/:id` detail — the summary plus the linked task ids. */

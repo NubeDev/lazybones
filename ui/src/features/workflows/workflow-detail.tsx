@@ -1,5 +1,13 @@
 import { useMemo } from "react";
-import { ArrowLeft, FolderGit2, GitBranch, ServerCrash } from "lucide-react";
+import {
+  ArrowLeft,
+  FolderGit2,
+  GitBranch,
+  ServerCrash,
+  AlertTriangle,
+  PlayCircle,
+  Clock,
+} from "lucide-react";
 import { Topbar } from "@/components/layout/topbar";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -8,18 +16,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { WorkflowStateBadge } from "@/components/ui/workflow-state-badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ApiError } from "@/lib/api/client";
-import { useWorkflow } from "@/lib/hooks/use-workflows";
-import { useTasks } from "@/lib/hooks/use-tasks";
+import {
+  useWorkflow,
+  useWorkflowTasks,
+  useResumeWorkflow,
+} from "@/lib/hooks/use-workflows";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { TaskBoard } from "@/features/tasks/task-board";
+import { duration, shortTime } from "@/lib/utils/platform";
 import { repoBasename } from "./repo-path";
 import { PlanGraphView } from "./plan-graph-view";
+import { WorkflowTasks } from "./workflow-tasks";
 import { WorkflowEvents } from "./workflow-events";
 import { WorkflowHcomLog } from "./workflow-hcom-log";
 import { WorkflowControls } from "./workflow-controls";
 import { AddTaskDialog } from "./add-task-dialog";
 import { WorkflowIssues } from "./workflow-issues";
 import { WorkflowGit } from "./workflow-git";
+import { WorkflowFiles } from "./workflow-files";
 
 /** Workflow detail: workspace summary + derived state + progress, with Plan /
  *  Board / Events tabs. The board reuses the existing component, filtered to this
@@ -32,13 +46,19 @@ export function WorkflowDetail({
   onBack: () => void;
 }) {
   const { data: wf, isLoading, error } = useWorkflow(id);
-  const { data: allTasks } = useTasks();
+  const { data: workflowTasks } = useWorkflowTasks(id);
+  const resume = useResumeWorkflow();
 
-  // Tasks belonging to this workflow, keyed off run_id (the real FK), never the
-  // dotted board label.
+  // The server already scopes these to this workflow's `run_id`; the filter is a
+  // defensive second layer so a foreign task can never render here even if the
+  // endpoint regresses.
   const runTasks = useMemo(
-    () => (allTasks ?? []).filter((t) => t.run_id === id),
-    [allTasks, id],
+    () => (workflowTasks ?? []).filter((t) => t.run_id === id),
+    [workflowTasks, id],
+  );
+  const blockedCount = useMemo(
+    () => runTasks.filter((t) => t.status === "blocked").length,
+    [runTasks],
   );
 
   if (error) {
@@ -94,7 +114,7 @@ export function WorkflowDetail({
         subtitle={`workflow ${wf.id}`}
         actions={
           <div className="flex items-center gap-2">
-            <WorkflowControls workflow={wf} />
+            <WorkflowControls workflow={wf} onDeleted={onBack} />
             <Button variant="ghost" size="sm" onClick={onBack}>
               <ArrowLeft /> Workflows
             </Button>
@@ -128,6 +148,33 @@ export function WorkflowDetail({
             {WORKTREE_MODES[wf.workspace.worktree_mode].label}
           </span>
 
+          {/* Lifecycle timing: when the run started, when it settled (or its
+              latest failure), and the elapsed time. Only shows once started; the
+              duration runs to the finish stamp, or live to now while in flight. */}
+          {wf.started_at && (
+            <Tooltip
+              label={
+                wf.finished_at
+                  ? `Started ${shortTime(wf.started_at)} · finished ${shortTime(wf.finished_at)}`
+                  : `Started ${shortTime(wf.started_at)}`
+              }
+              side="bottom"
+            >
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="size-3.5" />
+                <span>{duration(wf.started_at, wf.finished_at)}</span>
+                {!wf.finished_at && (
+                  <span className="text-muted-foreground/70">· running</span>
+                )}
+                {wf.failed_at && !wf.finished_at && (
+                  <span className="text-status-blocked">
+                    · failed {shortTime(wf.failed_at)}
+                  </span>
+                )}
+              </span>
+            </Tooltip>
+          )}
+
           <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
             <span>
               {wf.done_count} / {wf.task_count} done
@@ -141,11 +188,45 @@ export function WorkflowDetail({
           </div>
         </div>
 
+        {/* Needs-attention banner: the workflow stalled on one or more blocked
+            tasks. Surface Resume right here (it resets only the blocked tasks to
+            pending so the run continues from where it broke) so the operator
+            doesn't have to hunt for it in the header controls. */}
+        {blockedCount > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-status-blocked/30 bg-status-blocked/10 p-4">
+            <AlertTriangle className="size-4 shrink-0 text-status-blocked" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">
+                {blockedCount} task{blockedCount > 1 ? "s" : ""} blocked
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Resume retries just the blocked tasks — done and in-flight work is
+                kept. Or retry tasks individually from the board or Tasks tab.
+              </p>
+            </div>
+            {resume.error instanceof ApiError && (
+              <span className="text-[11px] text-status-blocked">
+                {resume.error.message}
+              </span>
+            )}
+            <Button
+              size="sm"
+              className="shrink-0"
+              disabled={resume.isPending}
+              onClick={() => resume.mutate(wf.id)}
+            >
+              <PlayCircle /> Resume
+            </Button>
+          </div>
+        )}
+
         <Tabs defaultValue="plan">
           <div className="mb-4 flex items-center justify-between gap-2">
             <TabsList>
               <TabsTrigger value="plan">Plan</TabsTrigger>
+              <TabsTrigger value="tasks">Tasks</TabsTrigger>
               <TabsTrigger value="board">Board</TabsTrigger>
+              <TabsTrigger value="files">Files</TabsTrigger>
               <TabsTrigger value="git">Git</TabsTrigger>
               <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="logs">Logs</TabsTrigger>
@@ -161,6 +242,10 @@ export function WorkflowDetail({
             <PlanGraphView tasks={runTasks} />
           </TabsContent>
 
+          <TabsContent value="tasks">
+            <WorkflowTasks tasks={runTasks} />
+          </TabsContent>
+
           <TabsContent value="board">
             <div className="h-[60vh]">
               <TaskBoard
@@ -173,8 +258,19 @@ export function WorkflowDetail({
             </div>
           </TabsContent>
 
+          <TabsContent value="files">
+            <WorkflowFiles
+              dir={wf.workspace.repo}
+              base={wf.workspace.base_branch ?? null}
+            />
+          </TabsContent>
+
           <TabsContent value="git">
-            <WorkflowGit dir={wf.workspace.repo} tasks={runTasks} />
+            <WorkflowGit
+              dir={wf.workspace.repo}
+              base={wf.workspace.base_branch ?? null}
+              tasks={runTasks}
+            />
           </TabsContent>
 
           <TabsContent value="events">

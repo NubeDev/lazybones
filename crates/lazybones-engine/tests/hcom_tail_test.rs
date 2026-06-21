@@ -11,14 +11,20 @@ use std::path::Path;
 use lazybones_engine::{EngineConfig, MergeMode, harness::Engine};
 use lazybones_store::{HcomLogFilter, Run, StoreEngine, StoreHandle, Task, Workspace, WorktreeMode};
 
-/// A fake hcom: `list` reports agent `kula` tagged with task `auth`; `events`
-/// returns one message event from `kula` (id 7). Anything else exits 0.
+/// A fake hcom mirroring the real 0.7.21 shapes that bit us:
+/// - `list --json` reports the agent with a *prefixed* `name` (`auth-kula`) and a
+///   short `base_name` (`kula`), tagged with task `auth`;
+/// - `events` returns one message whose `instance` is the *base name* (`kula`),
+///   not the full name — the real stream keys events by base name.
+///
+/// The tail must bridge the two (key its name→tag map on `base_name`) or the event
+/// is dropped, which is exactly what left the UI empty. Anything else exits 0.
 fn write_fake_hcom(dir: &Path) -> String {
     let path = dir.join("hcom");
     let script = r#"#!/bin/sh
 case "$1" in
   list)
-    echo '[{"name":"kula","status":"active","tag":"auth"}]'
+    echo '[{"name":"auth-kula","base_name":"kula","status":"active","tag":"auth"}]'
     ;;
   events)
     echo '{"id":7,"ts":"2026-01-01T00:00:00Z","type":"message","instance":"kula","data":{"text":"working on auth"}}'
@@ -97,9 +103,12 @@ async fn tail_ingests_event_and_advances_cursor() {
     let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(tmp.path()), &hcom_bin);
     engine.tick().await;
 
-    // The event landed in the hcom log keyed to (run = task.run, task = auth).
+    // The event landed in the hcom log keyed to the *workflow id* (run_id =
+    // workflow-1), NOT the task's `run` label (`wf-run`): the workflow detail page
+    // and `GET /runs/:id/hcom` are keyed on the workflow id, so the tail stores the
+    // row there. (Keying on the label was the bug that left the UI empty.)
     let log = store
-        .run_hcom_log("wf-run", &HcomLogFilter::default())
+        .run_hcom_log("workflow-1", &HcomLogFilter::default())
         .await
         .unwrap();
     assert_eq!(log.len(), 1, "one event ingested");
@@ -119,7 +128,7 @@ async fn tail_ingests_event_and_advances_cursor() {
     // keeps it idempotent — still exactly one row.
     engine.tick().await;
     let log = store
-        .run_hcom_log("wf-run", &HcomLogFilter::default())
+        .run_hcom_log("workflow-1", &HcomLogFilter::default())
         .await
         .unwrap();
     assert_eq!(log.len(), 1, "re-ingest is idempotent");
