@@ -209,6 +209,9 @@ async fn stream_replies(
     // The agent's hcom base name, resolved lazily (a freshly spawned agent isn't
     // in `hcom list` immediately). Until known, status-event attribution is skipped.
     let mut agent_base: Option<String> = None;
+    // Whether we've ever seen the agent alive — so a later "no longer alive" means
+    // it was stopped (by the operator's Stop) or crashed, not just slow to appear.
+    let mut was_alive = false;
 
     loop {
         if tokio::time::Instant::now() >= deadline {
@@ -218,6 +221,17 @@ async fn stream_replies(
 
         if agent_base.is_none() {
             agent_base = agent_base_name(hcom, conversation_id).await;
+        }
+
+        // If the agent was alive and is now gone, the turn is over — most likely
+        // the operator pressed Stop (`POST /agent/chat/:id/stop` → kill the tag).
+        // End the wait promptly instead of holding the session for the full
+        // timeout. The stop route itself records the "stopped" note.
+        let alive = session_exists(hcom, conversation_id).await;
+        if alive {
+            was_alive = true;
+        } else if was_alive {
+            return;
         }
 
         let events = match hcom.events_since(*cursor).await {

@@ -65,6 +65,7 @@ mod workflows_start;
 mod workflows_stop;
 mod workflows_stop_reset;
 mod workflows_tasks;
+mod workflows_update;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -171,6 +172,11 @@ pub fn router(state: AppState) -> Router {
             "/agent/chat/:conversation/stream",
             get(agent_chat::agent_chat_stream),
         )
+        // Stop the agent running this conversation's turn (kill its hcom agent).
+        .route(
+            "/agent/chat/:conversation/stop",
+            post(agent_chat::stop_agent_chat),
+        )
         .route(
             "/agent/conversations",
             get(agent_chat::list_agent_conversations),
@@ -182,7 +188,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/workflows/:id",
-            get(workflows_get::get_workflow).delete(workflows_delete::delete_workflow),
+            get(workflows_get::get_workflow)
+                .patch(workflows_update::update_workflow)
+                .delete(workflows_delete::delete_workflow),
         )
         .route(
             "/workflows/:id/tasks",

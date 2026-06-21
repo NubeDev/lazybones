@@ -5,6 +5,7 @@ import {
   getAgentChat,
   listAgentConversations,
   postAgentChat,
+  stopAgentChat,
 } from "@/lib/api/agent-chat";
 import type { AgentMessage } from "@/types/agent-chat";
 import type { PageContext } from "@/types/page-context";
@@ -27,6 +28,8 @@ export interface AgentChatState {
   error: string | null;
   /** Post a turn; opens a conversation on first send. */
   send: (text: string, pageContext?: PageContext) => Promise<void>;
+  /** Stop the agent currently running this turn (kills its hcom agent). */
+  stop: () => Promise<void>;
   /** Switch to an existing conversation, replaying its history. */
   openConversation: (id: string) => void;
   /** Start a fresh conversation (clears the thread; the next send opens one). */
@@ -186,6 +189,19 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
     [conversation, sending, append],
   );
 
+  const stop = useCallback(async () => {
+    if (!conversation) return;
+    // Clear the working indicator immediately; the "(stopped by operator)" note
+    // will also arrive over SSE and the runner ends its wait when the agent dies.
+    setWorking(false);
+    setActivity(null);
+    try {
+      await stopAgentChat(conversation);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "stop failed");
+    }
+  }, [conversation]);
+
   return {
     conversation,
     messages,
@@ -195,6 +211,7 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
     activity,
     error,
     send,
+    stop,
     openConversation,
     newConversation,
   };

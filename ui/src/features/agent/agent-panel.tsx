@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, History, Loader2, Plus, Send, MessagesSquare, RotateCcw, X } from "lucide-react";
+import {
+  Bot,
+  History,
+  Loader2,
+  Plus,
+  Send,
+  Square,
+  MessagesSquare,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/ui/markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,6 +41,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
     activity,
     error,
     send,
+    stop,
     openConversation,
     newConversation,
   } = useAgentChat();
@@ -175,9 +186,25 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
             "disabled:cursor-not-allowed disabled:opacity-60",
           )}
         />
-        <Button size="sm" disabled={busy || !text.trim()} onClick={submit} title="Send (Enter)">
-          <Send /> Send
-        </Button>
+        {working ? (
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => void stop()}
+            title="Stop the agent"
+          >
+            <Square className="size-3.5" /> Stop
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            disabled={busy || !text.trim()}
+            onClick={submit}
+            title="Send (Enter)"
+          >
+            <Send /> Send
+          </Button>
+        )}
       </div>
     </aside>
   );

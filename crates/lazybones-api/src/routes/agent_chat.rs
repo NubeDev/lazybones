@@ -144,6 +144,42 @@ pub async fn list_agent_conversations(
     Ok(Json(state.store.list_agent_conversations().await?))
 }
 
+/// `POST /agent/chat/:conversation/stop` — stop the agent currently running this
+/// conversation's turn. Kills the hcom agent tagged with the conversation id
+/// (best-effort) and records a note so the panel reflects it. Open like the rest
+/// of the chat surface (a local single-user daemon); it only affects the
+/// operator's own agent, started by the operator's own message.
+pub async fn stop_agent_chat(
+    State(state): State<AppState>,
+    Path(conversation): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    state
+        .store
+        .get_agent_conversation(&conversation)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // Best-effort kill: an already-finished agent is fine (nothing to stop).
+    let stopped = lazybones_engine::cancel_agent(&conversation).await.is_ok();
+    if !stopped {
+        tracing::warn!(conversation = %conversation, "agent stop: hcom kill failed (agent may be gone)");
+    }
+
+    // Record a note so the conversation shows it was stopped (and the panel's
+    // working indicator clears via this message arriving on the SSE).
+    state
+        .store
+        .append_agent_message(
+            &conversation,
+            AgentRole::Tool,
+            "(stopped by operator)",
+            None,
+        )
+        .await?;
+
+    Ok(Json(serde_json::json!({ "stopped": stopped })))
+}
+
 /// `GET /agent/chat/:conversation/stream` — a per-conversation SSE feed of agent
 /// messages (`message` events). Only messages for `conversation` are emitted, so
 /// agent token streams don't fan out to every connected client like the global

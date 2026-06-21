@@ -43,6 +43,15 @@ export function listAgentConversations(
   return request<AgentConversation[]>("/agent/conversations", { signal });
 }
 
+/** `POST /agent/chat/:conversation/stop` — stop the agent running this turn
+ *  (kills its hcom agent, records a "stopped" note). Best-effort. */
+export function stopAgentChat(conversation: string): Promise<{ stopped: boolean }> {
+  return request<{ stopped: boolean }>(
+    `/agent/chat/${encodeURIComponent(conversation)}/stop`,
+    { method: "POST", auth: true },
+  );
+}
+
 /** Issue a confirmed gated lifecycle action — the exact REST call the agent
  *  proposed — under the operator's loop token (scope §10.2). The agent never
  *  makes this call; the UI does, only after the human clicks Confirm. */
