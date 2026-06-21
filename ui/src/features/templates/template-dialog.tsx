@@ -16,6 +16,7 @@ import {
 } from "@/lib/hooks/use-templates";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { AgentPicker } from "@/features/agents/agent-picker";
+import { TemplateSkills } from "./template-skills";
 import type { TemplateDraft } from "@/lib/api/templates";
 import type { WorktreeMode } from "@/types/task";
 import type { Template } from "@/types/workflow";
@@ -197,6 +198,9 @@ export function TemplateDialog({
               onChange={(m) => setDraft({ ...draft, default_worktree_mode: m })}
             />
           </Field>
+
+          {/* Attachments need a persisted template id, so only when editing. */}
+          {editing && <TemplateSkills templateId={template.id} />}
         </div>
 
         {message && (

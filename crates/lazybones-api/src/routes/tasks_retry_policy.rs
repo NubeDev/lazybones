@@ -5,8 +5,10 @@
 //! `max_retries` times, instead of leaving it for a human (see
 //! `scheduler::finish`). This route is how an operator turns that on/off and tunes
 //! the cap; `strategy: null` turns it back off. It is durable config and never
-//! touches lifecycle state. Requires `Block` (the operator task-control cap, like
-//! cancel/retry). `404` if the task is unknown.
+//! touches lifecycle state — so, unlike the `retry`/chat-revive verbs, it is
+//! allowed even while the parent workflow is `stopped` (it only takes effect on
+//! resume). Requires `Block` (the operator task-control cap, like cancel/retry).
+//! `404` if the task is unknown.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -42,16 +44,17 @@ pub async fn set_auto_retry(
     let Json(opts) = body.unwrap_or_default();
 
     // Surface a clear 404 for an unknown task before writing anything.
-    let task = state
+    state
         .store
         .get_task(&id)
         .await?
         .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-    // A stopped (paused) workflow's tasks are not revivable: arming auto-retry
-    // would let the scheduler revive this task the instant the run resumes, so it
-    // is the same lie as a manual retry. Refuse until the workflow is resumed.
-    super::guard::ensure_run_revivable(&state, &task).await?;
+    // Note: unlike `retry`/chat-revive, setting a policy does not revive the task
+    // now — it is durable config the scheduler only consults when the task next
+    // runs, which can't happen until the workflow is `active` again. So this is
+    // intentionally allowed on a stopped workflow: it lets an operator
+    // pre-configure auto-retry while paused, to take effect on resume.
 
     let task = state
         .store

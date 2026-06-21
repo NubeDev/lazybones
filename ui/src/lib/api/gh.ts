@@ -2,11 +2,15 @@ import { request } from "./client";
 import type {
   GhAuth,
   GhBranch,
+  GhComment,
   GhIssue,
   GhLocalBranch,
+  GhPullRequest,
   GhRepo,
   GhWorktree,
   IssueStateFilter,
+  MergeMethod,
+  PrStateFilter,
 } from "@/types/gh";
 
 /** Every read takes the target repo as `?dir=` (defaults to `.` server-side). */
@@ -144,6 +148,82 @@ export function createGhIssue(
 /** `POST /gh/issues/:number/close?dir=` — close an issue. */
 export function closeGhIssue(dir: string, number: number): Promise<GhIssue> {
   return request<GhIssue>(`/gh/issues/${number}/close${dirq(dir)}`, {
+    method: "POST",
+    auth: true,
+  });
+}
+
+/** `GET /gh/mentionable?dir=` — logins that can be `@`-mentioned in the repo. */
+export function listGhMentionable(
+  dir: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return request<string[]>(`/gh/mentionable${dirq(dir)}`, { auth: true, signal });
+}
+
+/** `GET /gh/issues/:number/comments?dir=` — list an issue's comments. */
+export function listGhIssueComments(
+  dir: string,
+  number: number,
+  signal?: AbortSignal,
+): Promise<GhComment[]> {
+  return request<GhComment[]>(`/gh/issues/${number}/comments${dirq(dir)}`, {
+    auth: true,
+    signal,
+  });
+}
+
+/** `POST /gh/issues/:number/comments` — add a comment; returns its url. */
+export function commentGhIssue(
+  dir: string,
+  number: number,
+  body: string,
+): Promise<{ url: string }> {
+  return request<{ url: string }>(`/gh/issues/${number}/comments`, {
+    method: "POST",
+    auth: true,
+    body: { dir, body },
+  });
+}
+
+/** `GET /gh/prs?dir=&state=` — list pull requests. */
+export function listGhPrs(
+  dir: string,
+  state: PrStateFilter = "open",
+  signal?: AbortSignal,
+): Promise<GhPullRequest[]> {
+  return request<GhPullRequest[]>(`/gh/prs${dirq(dir)}&state=${state}`, {
+    auth: true,
+    signal,
+  });
+}
+
+/** `GET /gh/prs/:number?dir=` — view one pull request. */
+export function getGhPr(
+  dir: string,
+  number: number,
+  signal?: AbortSignal,
+): Promise<GhPullRequest> {
+  return request<GhPullRequest>(`/gh/prs/${number}${dirq(dir)}`, { auth: true, signal });
+}
+
+/** `POST /gh/prs/:number/merge` — merge a pull request. */
+export function mergeGhPr(
+  dir: string,
+  number: number,
+  method: MergeMethod = "merge",
+  deleteBranch = false,
+): Promise<GhPullRequest> {
+  return request<GhPullRequest>(`/gh/prs/${number}/merge`, {
+    method: "POST",
+    auth: true,
+    body: { dir, method, delete_branch: deleteBranch },
+  });
+}
+
+/** `POST /gh/prs/:number/close?dir=` — close a PR without merging. */
+export function closeGhPr(dir: string, number: number): Promise<GhPullRequest> {
+  return request<GhPullRequest>(`/gh/prs/${number}/close${dirq(dir)}`, {
     method: "POST",
     auth: true,
   });

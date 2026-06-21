@@ -188,7 +188,7 @@ export function WorkflowControls({
             <Button
               variant="outline"
               size="sm"
-              className="h-auto flex-col items-start gap-0.5 py-2 text-left"
+              className="h-auto w-full min-w-0 flex-col items-start gap-0.5 py-2 text-left"
               disabled={stop.isPending}
               onClick={() => {
                 stop.mutate(workflow.id);
@@ -198,14 +198,14 @@ export function WorkflowControls({
               <span className="flex items-center gap-1.5 font-medium">
                 <PauseCircle className="size-3.5" /> Stop (keep work)
               </span>
-              <span className="text-[11px] font-normal text-muted-foreground">
+              <span className="whitespace-normal text-[11px] font-normal text-muted-foreground">
                 Pause and reclaim running tasks back to ready — no work is lost.
               </span>
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className="h-auto flex-col items-start gap-0.5 py-2 text-left"
+              className="h-auto w-full min-w-0 flex-col items-start gap-0.5 py-2 text-left"
               disabled={stopReset.isPending}
               onClick={() => {
                 stopReset.mutate(workflow.id);
@@ -215,7 +215,7 @@ export function WorkflowControls({
               <span className="flex items-center gap-1.5 font-medium">
                 <Eraser className="size-3.5" /> Stop &amp; reset
               </span>
-              <span className="text-[11px] font-normal text-muted-foreground">
+              <span className="whitespace-normal text-[11px] font-normal text-muted-foreground">
                 Pause and reset unfinished tasks to pending — throw in-flight progress
                 away. Done tasks are kept; still resumable.
               </span>

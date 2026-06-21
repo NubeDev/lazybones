@@ -602,9 +602,11 @@ async fn resume_resets_only_blocked_tasks() {
 
 /// Stop (pause) flips the run to `stopped` and quiesces in-flight work without
 /// losing it: a `running` task is reclaimed back to `ready` (not blocked, not
-/// reset). While stopped, the task-level revive verbs (retry/auto-retry/chat) all
-/// refuse with `409` — you must resume the workflow first — and resume lifts the
-/// guard. This is the regression test for "a cancelled run still lets you retry".
+/// reset). While stopped, the task-level revive verbs (retry/chat) refuse with
+/// `409` — you must resume the workflow first — and resume lifts the guard.
+/// Setting the auto-retry *policy* is durable config (not a revive), so it is
+/// still allowed while stopped. This is the regression test for "a cancelled run
+/// still lets you retry".
 #[tokio::test]
 async fn stop_pauses_and_blocks_revive_until_resume() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
@@ -641,13 +643,15 @@ async fn stop_pauses_and_blocks_revive_until_resume() {
     // The blocked task is left blocked.
     assert_eq!(status_of(&store, "blocked-1").await, Status::Blocked);
 
-    // While stopped, every task-level revive verb refuses with 409.
+    // While stopped, the revive verbs (retry/chat) refuse with 409.
     let (s, _) = send(&app, loop_post("/tasks/blocked-1/retry", json!(null))).await;
     assert_eq!(s, StatusCode::CONFLICT, "retry refused while stopped");
     let (s, _) = send(&app, loop_post("/tasks/blocked-1/retry", json!({ "strategy": "quick" }))).await;
     assert_eq!(s, StatusCode::CONFLICT, "guided retry refused while stopped");
+    // Setting the auto-retry policy is durable config, not a revive — it is
+    // allowed while stopped and takes effect on resume.
     let (s, _) = loop_put(&app, "/tasks/blocked-1/auto-retry", json!({ "strategy": "quick" })).await;
-    assert_eq!(s, StatusCode::CONFLICT, "auto-retry refused while stopped");
+    assert_eq!(s, StatusCode::OK, "auto-retry policy can be set while stopped");
     let (s, _) = send(&app, loop_post("/tasks/blocked-1/chat", json!({ "text": "fix it" }))).await;
     assert_eq!(s, StatusCode::CONFLICT, "chat-revive refused while stopped");
     // The blocked task did not move — the guard truly blocked the revive.

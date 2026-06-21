@@ -20,7 +20,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use lazybones_auth::Capability;
-use lazybones_gh::{self as gh, Gh, IssueState};
+use lazybones_gh::{self as gh, Gh, IssueState, MergeMethod, PrState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -436,4 +436,214 @@ pub async fn gh_close_issue(
     let gh = Gh::new();
     gh.issue_close(&q.dir, number).await?;
     Ok(Json(gh.issue_view(&q.dir, number).await?.into()))
+}
+
+// ---- issue comments -----------------------------------------------------
+
+/// One comment on an issue.
+#[derive(Debug, Serialize)]
+pub struct CommentDto {
+    pub author: Option<String>,
+    pub body: String,
+    pub url: String,
+    pub created_at: Option<String>,
+}
+
+impl From<gh::Comment> for CommentDto {
+    fn from(c: gh::Comment) -> Self {
+        Self {
+            author: c.author.map(|a| a.login),
+            body: c.body,
+            url: c.url,
+            created_at: c.created_at,
+        }
+    }
+}
+
+/// `GET /gh/mentionable?dir=` — logins that can be `@`-mentioned in the repo
+/// (its assignable collaborators), for comment-box autocomplete. Requires
+/// `Read`.
+pub async fn gh_mentionable(
+    State(_): State<AppState>,
+    session: Session,
+    Query(q): Query<DirQuery>,
+) -> ApiResult<Json<Vec<String>>> {
+    session.require(Capability::Read, "gh:mentionable", &q.dir)?;
+    Ok(Json(Gh::new().mentionable_users(&q.dir).await?))
+}
+
+/// `GET /gh/issues/:number/comments?dir=` — list an issue's comments. Requires
+/// `Read`.
+pub async fn gh_issue_comments(
+    State(_): State<AppState>,
+    session: Session,
+    Path(number): Path<u64>,
+    Query(q): Query<DirQuery>,
+) -> ApiResult<Json<Vec<CommentDto>>> {
+    session.require(Capability::Read, "gh:issue:comments", &q.dir)?;
+    let comments = Gh::new().issue_comments(&q.dir, number).await?;
+    Ok(Json(comments.into_iter().map(Into::into).collect()))
+}
+
+/// Body for commenting on an issue.
+#[derive(Debug, Deserialize)]
+pub struct CommentBody {
+    #[serde(default = "dot")]
+    pub dir: String,
+    pub body: String,
+}
+
+/// What we report after posting a comment.
+#[derive(Debug, Serialize)]
+pub struct CommentCreated {
+    /// URL of the new comment (as `gh issue comment` prints).
+    pub url: String,
+}
+
+/// `POST /gh/issues/:number/comments` — add a comment. Requires `Author`.
+pub async fn gh_comment_issue(
+    State(_): State<AppState>,
+    session: Session,
+    Path(number): Path<u64>,
+    Json(body): Json<CommentBody>,
+) -> ApiResult<Json<CommentCreated>> {
+    session.require(Capability::Author, "gh:issue:comment", &body.dir)?;
+    if body.body.trim().is_empty() {
+        return Err(crate::error::ApiError::bad_request(
+            "comment body must not be empty",
+        ));
+    }
+    let url = Gh::new()
+        .issue_comment(&body.dir, number, &body.body)
+        .await?;
+    Ok(Json(CommentCreated { url }))
+}
+
+// ---- pull requests ------------------------------------------------------
+
+/// One pull request.
+#[derive(Debug, Serialize)]
+pub struct PrDto {
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    pub url: String,
+    pub body: String,
+    pub author: Option<String>,
+    pub labels: Vec<String>,
+    pub head_ref: String,
+    pub base_ref: String,
+    pub is_draft: bool,
+    pub mergeable: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub closed_at: Option<String>,
+    pub merged_at: Option<String>,
+}
+
+impl From<gh::PullRequest> for PrDto {
+    fn from(p: gh::PullRequest) -> Self {
+        Self {
+            number: p.number,
+            title: p.title,
+            state: p.state,
+            url: p.url,
+            body: p.body,
+            author: p.author.map(|a| a.login),
+            labels: p.labels.into_iter().map(|l| l.name).collect(),
+            head_ref: p.head_ref,
+            base_ref: p.base_ref,
+            is_draft: p.is_draft,
+            mergeable: p.mergeable,
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+            closed_at: p.closed_at,
+            merged_at: p.merged_at,
+        }
+    }
+}
+
+/// `?dir=&state=` — list filter for pull requests.
+#[derive(Debug, Deserialize)]
+pub struct PrListQuery {
+    #[serde(default = "dot")]
+    dir: String,
+    /// `open` (default), `closed`, `merged`, or `all`.
+    #[serde(default)]
+    state: Option<String>,
+}
+
+/// `GET /gh/prs?dir=&state=` — list pull requests. Requires `Read`.
+pub async fn gh_prs(
+    State(_): State<AppState>,
+    session: Session,
+    Query(q): Query<PrListQuery>,
+) -> ApiResult<Json<Vec<PrDto>>> {
+    session.require(Capability::Read, "gh:prs", &q.dir)?;
+    let state = match q.state.as_deref() {
+        Some("closed") => PrState::Closed,
+        Some("merged") => PrState::Merged,
+        Some("all") => PrState::All,
+        _ => PrState::Open,
+    };
+    let prs = Gh::new().prs(&q.dir, state).await?;
+    Ok(Json(prs.into_iter().map(Into::into).collect()))
+}
+
+/// `GET /gh/prs/:number?dir=` — view one pull request. Requires `Read`.
+pub async fn gh_pr_view(
+    State(_): State<AppState>,
+    session: Session,
+    Path(number): Path<u64>,
+    Query(q): Query<DirQuery>,
+) -> ApiResult<Json<PrDto>> {
+    session.require(Capability::Read, "gh:pr:view", &q.dir)?;
+    Ok(Json(Gh::new().pr_view(&q.dir, number).await?.into()))
+}
+
+/// Body for merging a pull request.
+#[derive(Debug, Deserialize)]
+pub struct MergePrBody {
+    #[serde(default = "dot")]
+    pub dir: String,
+    /// `merge` (default), `squash`, or `rebase`.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// Delete the head branch after merging.
+    #[serde(default)]
+    pub delete_branch: bool,
+}
+
+/// `POST /gh/prs/:number/merge` — merge a pull request. Requires `Author`.
+/// Returns the PR's refreshed (now `MERGED`) state.
+pub async fn gh_merge_pr(
+    State(_): State<AppState>,
+    session: Session,
+    Path(number): Path<u64>,
+    Json(body): Json<MergePrBody>,
+) -> ApiResult<Json<PrDto>> {
+    session.require(Capability::Author, "gh:pr:merge", &body.dir)?;
+    let method = match body.method.as_deref() {
+        Some("squash") => MergeMethod::Squash,
+        Some("rebase") => MergeMethod::Rebase,
+        _ => MergeMethod::Merge,
+    };
+    let gh = Gh::new();
+    gh.pr_merge(&body.dir, number, method, body.delete_branch)
+        .await?;
+    Ok(Json(gh.pr_view(&body.dir, number).await?.into()))
+}
+
+/// `POST /gh/prs/:number/close?dir=` — close a PR without merging. Requires
+/// `Author`.
+pub async fn gh_close_pr(
+    State(_): State<AppState>,
+    session: Session,
+    Path(number): Path<u64>,
+    Query(q): Query<DirQuery>,
+) -> ApiResult<Json<PrDto>> {
+    session.require(Capability::Author, "gh:pr:close", &q.dir)?;
+    let gh = Gh::new();
+    gh.pr_close(&q.dir, number).await?;
+    Ok(Json(gh.pr_view(&q.dir, number).await?.into()))
 }

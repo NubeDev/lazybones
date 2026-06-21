@@ -22,10 +22,12 @@
 
 mod error;
 mod issue;
+mod pr;
 mod repo;
 
 pub use error::GhError;
-pub use issue::{Issue, IssueState};
+pub use issue::{Comment, Issue, IssueState};
+pub use pr::{MergeMethod, PrState, PullRequest};
 pub use repo::{
     Branch, ChangeKind, LocalBranch, RepoView, TreeEntry, Worktree, resolve_status,
 };
@@ -410,6 +412,145 @@ impl Gh {
             .await
             .map(|_| ())
     }
+
+    /// List the comments on an issue, oldest first (as GitHub returns them).
+    pub async fn issue_comments(
+        &self,
+        dir: impl AsRef<Path>,
+        number: u64,
+    ) -> Result<Vec<Comment>, GhError> {
+        let view: issue::CommentsView = self
+            .run_json(
+                dir,
+                [
+                    "issue".to_string(),
+                    "view".to_string(),
+                    number.to_string(),
+                    "--json".to_string(),
+                    "comments".to_string(),
+                ],
+            )
+            .await?;
+        Ok(view.comments)
+    }
+
+    /// List the logins that can be `@`-mentioned / assigned in the repo at
+    /// `dir` — its assignable collaborators. Backed by the assignees API
+    /// endpoint, whose `{owner}/{repo}` `gh` expands from the repo's remote
+    /// (like [`branches`](Self::branches)). Used to power `@`-mention
+    /// autocomplete in the comment box.
+    pub async fn mentionable_users(
+        &self,
+        dir: impl AsRef<Path>,
+    ) -> Result<Vec<String>, GhError> {
+        let out = self
+            .run(
+                dir,
+                [
+                    "api",
+                    "repos/{owner}/{repo}/assignees",
+                    "--paginate",
+                    "--jq",
+                    ".[].login",
+                ],
+            )
+            .await?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    /// Add a comment to an issue; returns the new comment's URL (as
+    /// `gh issue comment` prints).
+    pub async fn issue_comment(
+        &self,
+        dir: impl AsRef<Path>,
+        number: u64,
+        body: &str,
+    ) -> Result<String, GhError> {
+        self.run(
+            dir,
+            ["issue", "comment", &number.to_string(), "--body", body],
+        )
+        .await
+    }
+
+    // ---- pull requests --------------------------------------------------
+
+    /// List pull requests filtered by state.
+    pub async fn prs(
+        &self,
+        dir: impl AsRef<Path>,
+        state: PrState,
+    ) -> Result<Vec<PullRequest>, GhError> {
+        self.run_json(
+            dir,
+            [
+                "pr",
+                "list",
+                "--state",
+                state.as_arg(),
+                "--json",
+                "number,title,state,url,author,labels,body,headRefName,baseRefName,isDraft,mergeable,createdAt,updatedAt,closedAt,mergedAt",
+            ],
+        )
+        .await
+    }
+
+    /// View one pull request by number.
+    pub async fn pr_view(
+        &self,
+        dir: impl AsRef<Path>,
+        number: u64,
+    ) -> Result<PullRequest, GhError> {
+        self.run_json(
+            dir,
+            [
+                "pr".to_string(),
+                "view".to_string(),
+                number.to_string(),
+                "--json".to_string(),
+                "number,title,state,url,author,labels,body,headRefName,baseRefName,isDraft,mergeable,createdAt,updatedAt,closedAt,mergedAt"
+                    .to_string(),
+            ],
+        )
+        .await
+    }
+
+    /// Merge a pull request with the given strategy. `delete_branch` maps to
+    /// `gh pr merge --delete-branch` (drop the head branch after merging).
+    pub async fn pr_merge(
+        &self,
+        dir: impl AsRef<Path>,
+        number: u64,
+        method: MergeMethod,
+        delete_branch: bool,
+    ) -> Result<(), GhError> {
+        let mut args = vec![
+            "pr".to_string(),
+            "merge".to_string(),
+            number.to_string(),
+            method.as_flag().to_string(),
+        ];
+        if delete_branch {
+            args.push("--delete-branch".to_string());
+        }
+        self.run(dir, args).await.map(|_| ())
+    }
+
+    /// Close a pull request without merging.
+    pub async fn pr_close(
+        &self,
+        dir: impl AsRef<Path>,
+        number: u64,
+    ) -> Result<(), GhError> {
+        self.run(dir, ["pr", "close", &number.to_string()])
+            .await
+            .map(|_| ())
+    }
 }
 
 /// Spawn `bin <args...>` in `dir`, capture stdout (trailing newlines trimmed),
@@ -514,6 +655,34 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].number, 7);
         assert_eq!(issues[0].labels[0].name, "p1");
+    }
+
+    #[tokio::test]
+    async fn issue_comments_parse_from_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let json = r#"{"comments":[{"author":{"login":"me"},"body":"first","url":"u1","createdAt":"2026-06-21T10:00:00Z"},{"author":{"login":"you"},"body":"second","url":"u2","createdAt":"2026-06-21T11:00:00Z"}]}"#;
+        let bin = fake_gh(tmp.path(), &format!("printf '%s' '{json}'"));
+        let gh = Gh::with_bin(bin);
+        let comments = gh.issue_comments(".", 7).await.unwrap();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].body, "first");
+        assert_eq!(comments[0].author.as_ref().unwrap().login, "me");
+        assert_eq!(comments[1].created_at.as_deref(), Some("2026-06-21T11:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn prs_parse_from_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let json = r#"[{"number":12,"title":"feat","state":"OPEN","url":"u","body":"b","author":{"login":"me"},"labels":[{"name":"p1"}],"headRefName":"feat/x","baseRefName":"master","isDraft":false,"mergeable":"MERGEABLE"}]"#;
+        let bin = fake_gh(tmp.path(), &format!("printf '%s' '{json}'"));
+        let gh = Gh::with_bin(bin);
+        let prs = gh.prs(".", PrState::Open).await.unwrap();
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].number, 12);
+        assert_eq!(prs[0].head_ref, "feat/x");
+        assert_eq!(prs[0].base_ref, "master");
+        assert_eq!(prs[0].mergeable, "MERGEABLE");
+        assert!(!prs[0].is_draft);
     }
 
     #[tokio::test]

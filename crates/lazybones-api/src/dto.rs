@@ -60,6 +60,31 @@ pub struct BlockBody {
     pub reason: String,
 }
 
+/// `POST /follow-ups` body: an agent (or operator) flags something for human
+/// attention. The run is taken from the path-free body so an agent can file
+/// against its own run; `kind` is a coarse class the UI groups by.
+#[derive(Debug, Deserialize)]
+pub struct FollowUpBody {
+    /// The run this follow-up belongs to (the workflow `run_id`).
+    pub run: String,
+    /// The task it concerns, if any.
+    #[serde(default)]
+    pub task: Option<String>,
+    /// Coarse class: `consent` | `credential` | `spawn` | `gate` | `note`.
+    /// Defaults to `note` when omitted.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// One-line summary.
+    pub title: String,
+    /// Full reason + suggested fix (markdown).
+    pub detail: String,
+    /// Optional idempotency key — re-filing the same `(run, dedup_key)` bumps the
+    /// existing follow-up instead of creating a duplicate. Defaults to the title
+    /// when omitted, so repeated identical titles coalesce.
+    #[serde(default)]
+    pub dedup_key: Option<String>,
+}
+
 /// `POST /tasks/:id/cancel` body: an optional reason (defaults when omitted).
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -161,6 +186,45 @@ pub struct UpdateTemplateBody {
     /// Rarely-set worktree mode intrinsic to the recipe; usually omitted.
     #[serde(default)]
     pub default_worktree_mode: Option<WorktreeMode>,
+}
+
+/// `POST /skills` body: a reusable block of agent instructions to author.
+#[derive(Debug, Deserialize)]
+pub struct CreateSkillBody {
+    /// Unique skill id; `409` if it is already taken.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+    /// Optional longer description shown in the picker.
+    #[serde(default)]
+    pub description: String,
+    /// The skill text/instructions an agent follows (markdown).
+    #[serde(default)]
+    pub body: String,
+}
+
+/// `PUT /skills/:id` body: the new state of an existing skill. The id comes from
+/// the path; every other field is overwritten wholesale.
+#[derive(Debug, Deserialize)]
+pub struct UpdateSkillBody {
+    /// Human title.
+    pub title: String,
+    /// Optional longer description shown in the picker.
+    #[serde(default)]
+    pub description: String,
+    /// The skill text/instructions an agent follows (markdown).
+    #[serde(default)]
+    pub body: String,
+}
+
+/// `POST /:owner/:id/attachments` body: a polymorphic thing to attach. The owner
+/// is fixed by the route (`owner_kind` + the path id); the thing is open.
+#[derive(Debug, Deserialize)]
+pub struct AttachBody {
+    /// The attached thing's kind (e.g. `skill`).
+    pub thing_kind: String,
+    /// The attached thing's id (its uuid/friendly key, e.g. `code-review-rust`).
+    pub thing_id: String,
 }
 
 /// The workspace sub-object of a `POST /workflows` body.

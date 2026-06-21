@@ -1,0 +1,56 @@
+# Default skill catalogue — seeded into the `skill` table on first boot.
+#
+# This is editable data, not code: an operator can add/edit/remove skills at
+# runtime via the CRUD API, and the seed never clobbers their changes (see
+# seed_default_skills). These are demo recipes to make a fresh install useful —
+# attach them to a template (e.g. `code-review-rust` onto an `open-pr` template).
+#
+# `id` must be a friendly, install-unique key. `body` is the instruction block an
+# agent is meant to follow; keep it provider-agnostic and concrete.
+
+- id: code-review-rust
+  title: Rust code review
+  description: Checklist for reviewing Rust changes before approval.
+  body: |
+    Review this Rust change for correctness and idiom:
+    - No `unwrap()`/`expect()`/`panic!` in non-test code; return `Result` and add
+      context (`.map_err`/`?`) instead.
+    - Public items carry `///` docs; fallible public fns have an `# Errors` section.
+    - No needless `clone()`/allocation in hot paths; borrow where you can.
+    - Errors are typed (`thiserror`), not stringly; match the crate's existing enum.
+    - New behaviour has a unit test covering the happy path and one failure path.
+    - `cargo clippy --all-targets` is clean — no `#[allow]` added to silence it.
+
+- id: write-tests
+  title: Write thorough tests
+  description: Add focused, fast tests that cover the happy path and the edges.
+  body: |
+    Add tests for the change:
+    - One test per behaviour, named for what it asserts (not `test_1`).
+    - Cover the happy path, the boundary cases, and at least one failure/error path.
+    - Keep tests hermetic and fast: no network, no sleeps, no shared global state;
+      use in-memory fixtures where the codebase already does.
+    - Assert on observable outcomes, not internal implementation details.
+    - Make sure the new tests actually fail when the code under test is broken.
+
+- id: open-pr
+  title: Open a pull request
+  description: Push the branch and open a clean, reviewable PR against the base.
+  body: |
+    Finish the work and open a PR:
+    - Ensure the build and the test suite pass locally before pushing.
+    - Write a title in imperative mood (e.g. "Add skill seeding") and a body that
+      states the what, the why, and how it was verified.
+    - Keep the diff scoped to the task — no unrelated churn or formatting drift.
+    - Call out any follow-ups or known gaps explicitly rather than hiding them.
+
+- id: conventional-commits
+  title: Conventional commit messages
+  description: Write commit messages in the Conventional Commits style.
+  body: |
+    Write each commit as `type(scope): summary`:
+    - `type` is one of feat, fix, docs, refactor, test, chore, perf, build, ci.
+    - `scope` is the affected area (e.g. `scheduler`, `store`); omit if broad.
+    - The summary is imperative and ≤ 72 chars, no trailing period.
+    - Add a body explaining the why when the change isn't self-evident.
+    - One logical change per commit; don't bundle unrelated edits.

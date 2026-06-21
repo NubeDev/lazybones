@@ -30,13 +30,45 @@ case "$1" in
 esac
 exit 0
 "#;
-    std::fs::write(&path, script).unwrap();
+    write_exec(&path, script)
+}
+
+/// A `hcom` stub whose *spawn* always fails: the `1 <tool> …` launch prints no
+/// `Names:` line and exits non-zero, so the scheduler blocks the task at
+/// claim/spawn time (the `tick::block` path) rather than ever running an agent.
+/// `list`/`events` still answer so reconcile/tail don't error.
+fn write_spawn_failing_hcom(dir: &Path) -> String {
+    let path = dir.join("hcom");
+    let script = r#"#!/bin/sh
+case "$1" in
+  list)
+    echo '[]'
+    ;;
+  events)
+    echo '{"timed_out": true}'
+    ;;
+  1)
+    echo "launch refused: no agent slot" 1>&2
+    exit 1
+    ;;
+  *)
+    echo "Names: testagent"
+    ;;
+esac
+exit 0
+"#;
+    write_exec(&path, script)
+}
+
+/// Write `script` to `path` as an executable shell stub, returning its path.
+fn write_exec(path: &Path, script: &str) -> String {
+    std::fs::write(path, script).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        let mut perms = std::fs::metadata(path).unwrap().permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
+        std::fs::set_permissions(path, perms).unwrap();
     }
     path.to_string_lossy().into_owned()
 }
@@ -156,5 +188,53 @@ async fn auto_retry_reattempts_up_to_the_cap_then_stays_blocked() {
         store.chat_history("flaky").await.unwrap().len(),
         1,
         "no second guidance message once the budget is spent"
+    );
+}
+
+/// Regression: a task that fails at *claim/spawn* time (before any agent runs)
+/// must honour its auto-retry policy too. This used to silently stay blocked —
+/// the claim/spawn path had its own `block` with no auto-retry, so a spawn or
+/// worktree failure ignored the policy entirely. Both paths now share one
+/// `block`, so a spawn failure auto-revives exactly like an agent BLOCKED.
+#[tokio::test]
+async fn auto_retry_fires_on_a_spawn_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo_with_remote(tmp.path());
+    let hcom_bin = write_spawn_failing_hcom(tmp.path());
+
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+
+    // Auto-retry on (long-term), cap 1: the first spawn failure should auto-revive
+    // once, then a second spawn failure exhausts the budget and stays blocked.
+    let mut t = Task::seed("spawny", "r", "Spawny", "build it", vec![], vec![], None);
+    t.auto_retry = Some(RetryStrategy::LongTerm);
+    t.max_retries = 1;
+    store.create_task(&t).await.unwrap();
+
+    let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(&repo), &hcom_bin);
+
+    // Tick 1: promote → claim → spawn fails → block → auto-revive (→ ready).
+    engine.tick().await;
+    assert!(
+        wait_for(&store, "spawny", Status::Ready).await,
+        "a spawn failure under an auto-retry policy should revive, not stay blocked; got {:?}",
+        status_of(&store, "spawny").await
+    );
+    let after_first = store.get_task("spawny").await.unwrap().unwrap();
+    assert_eq!(after_first.retry_count, 1, "the spawn-failure auto-retry was spent");
+
+    // Tick 2: spawn fails again → budget now spent (1 >= 1) → stays blocked.
+    engine.tick().await;
+    assert!(
+        wait_for(&store, "spawny", Status::Blocked).await,
+        "the second spawn failure exhausts the budget and stays blocked; got {:?}",
+        status_of(&store, "spawny").await
+    );
+    assert_eq!(
+        store.get_task("spawny").await.unwrap().unwrap().retry_count,
+        1,
+        "no auto-retry past the cap on the claim/spawn path"
     );
 }

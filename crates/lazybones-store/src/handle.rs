@@ -15,10 +15,17 @@ use crate::agent::{
     AgentCatalog, AgentCatalogEdit, create_agent, delete_agent, get_agent, list_agents,
     seed_default_agents, update_agent,
 };
+use crate::attachment::{Attachment, attach, detach, list_attachments};
+use crate::skill::{
+    Skill, create_skill, delete_skill, get_skill, list_skills, seed_default_skills, update_skill,
+};
 use crate::chat::{ChatMessage, ChatRole, append_chat, chat_history};
 use crate::connect::{StoreEngine, open_engine};
 use crate::error::Result;
 use crate::event::{Activity, Event, EventBus, LiveEvent, run_history};
+use crate::follow_up::{
+    FollowUp, FollowUpFilter, NewFollowUpEntry, file_follow_up, resolve_follow_up, run_follow_ups,
+};
 use crate::hcom_log::{
     HcomLogEntry, HcomLogFilter, NewHcomLogEntry, append_hcom_log, run_hcom_log,
 };
@@ -178,9 +185,10 @@ impl StoreHandle {
     }
 
     /// The concept ids of `pending` tasks whose deps are all `done`, **excluding**
-    /// any task whose parent run is in `stopped_runs` (a paused workflow promotes
-    /// nothing). Standalone tasks (no `run_id`) are always eligible. Pass the ids
-    /// from [`stopped_run_ids`](Self::stopped_run_ids), or `&[]` to promote freely.
+    /// any task whose parent run is in `excluded` (a paused or not-yet-started
+    /// workflow promotes nothing). Standalone tasks (no `run_id`) are always
+    /// eligible. Pass the ids from [`unpromotable_run_ids`](Self::unpromotable_run_ids),
+    /// or `&[]` to promote freely.
     ///
     /// # Errors
     /// Returns a [`StoreError`](crate::StoreError) if the query fails.
@@ -188,16 +196,18 @@ impl StoreHandle {
         newly_ready(&self.db, stopped_runs).await
     }
 
-    /// The ids of every run whose lifecycle is `stopped` — the paused workflows
-    /// the scheduler must not promote or claim for. Cheap (one `list_runs`).
+    /// The ids of every run the scheduler must **not** promote or claim for: a
+    /// `stopped` (paused) workflow, or an `active` one that has never been started
+    /// (`started_at` is `null`). Creating a workflow must not run it — only an
+    /// explicit `start` (which stamps `started_at`) does. Cheap (one `list_runs`).
     ///
     /// # Errors
     /// Returns a [`StoreError`](crate::StoreError) if the query fails.
-    pub async fn stopped_run_ids(&self) -> Result<Vec<String>> {
+    pub async fn unpromotable_run_ids(&self) -> Result<Vec<String>> {
         Ok(list_runs(&self.db)
             .await?
             .into_iter()
-            .filter(|r| r.lifecycle == Lifecycle::Stopped)
+            .filter(|r| r.lifecycle == Lifecycle::Stopped || r.started_at.is_none())
             .map(|r| r.id)
             .collect())
     }
@@ -366,6 +376,37 @@ impl StoreHandle {
         advance_hcom_cursor(&self.db, id, cursor).await
     }
 
+    /// File a follow-up — a durable "a human needs to act" note — idempotent on
+    /// `(run, dedup_key)`. The scheduler calls this when it hits a wall it can't
+    /// clear (a consent screen, a missing credential, a repeated spawn failure);
+    /// agents call it via `POST /follow-ups` to flag something for review.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn file_follow_up(&self, entry: NewFollowUpEntry) -> Result<FollowUp> {
+        file_follow_up(&self.db, entry).await
+    }
+
+    /// A run's follow-ups, most-recently-updated first, narrowed by `filter`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn run_follow_ups(
+        &self,
+        run: &str,
+        filter: &FollowUpFilter,
+    ) -> Result<Vec<FollowUp>> {
+        run_follow_ups(&self.db, run, filter).await
+    }
+
+    /// Mark one follow-up `resolved` by id; `None` if no such row.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn resolve_follow_up(&self, id: &str) -> Result<Option<FollowUp>> {
+        resolve_follow_up(&self.db, id).await
+    }
+
     /// The current time as an RFC3339 string — the one timestamp source callers
     /// (the API) use to stamp `created_at`/`started_at` so they need not depend
     /// on SurrealDB directly.
@@ -415,6 +456,102 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
     pub async fn delete_template(&self, id: &str) -> Result<bool> {
         delete_template(&self.db, id).await
+    }
+
+    /// Create a skill, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_skill(&self, skill: &Skill) -> Result<Skill> {
+        create_skill(&self.db, skill).await
+    }
+
+    /// Edit an existing skill, failing if its id is unknown. Preserves the
+    /// original `created_at`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no skill with that id exists
+    /// or the write fails.
+    pub async fn update_skill(&self, skill: &Skill) -> Result<Skill> {
+        update_skill(&self.db, skill).await
+    }
+
+    /// Read a single skill by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_skill(&self, id: &str) -> Result<Option<Skill>> {
+        get_skill(&self.db, id).await
+    }
+
+    /// List every skill.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_skills(&self) -> Result<Vec<Skill>> {
+        list_skills(&self.db).await
+    }
+
+    /// Delete a skill by id. Returns whether one existed. Does not cascade to its
+    /// attachments (they carry no hard FK).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_skill(&self, id: &str) -> Result<bool> {
+        delete_skill(&self.db, id).await
+    }
+
+    /// Seed the bundled demo skill catalogue, never clobbering existing ids.
+    /// Returns how many skills were newly created.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the bundled YAML can't be
+    /// parsed or a write fails.
+    pub async fn seed_default_skills(&self, now: &str) -> Result<usize> {
+        seed_default_skills(&self.db, now).await
+    }
+
+    /// Attach a polymorphic thing `(thing_kind, thing_id)` to an owner
+    /// `(owner_kind, owner_id)`. Idempotent. See [`attachment`](crate::attachment).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read or write fails.
+    pub async fn attach(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        thing_kind: &str,
+        thing_id: &str,
+    ) -> Result<Attachment> {
+        attach(&self.db, owner_kind, owner_id, thing_kind, thing_id).await
+    }
+
+    /// Detach a thing from an owner. Returns whether the link existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn detach(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        thing_kind: &str,
+        thing_id: &str,
+    ) -> Result<bool> {
+        detach(&self.db, owner_kind, owner_id, thing_kind, thing_id).await
+    }
+
+    /// List an owner's attachments, optionally narrowed to one `thing_kind`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_attachments(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        thing_kind: Option<&str>,
+    ) -> Result<Vec<Attachment>> {
+        list_attachments(&self.db, owner_kind, owner_id, thing_kind).await
     }
 
     /// Seed the bundled default agent catalog, never clobbering existing ids.

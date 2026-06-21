@@ -1,11 +1,15 @@
-import { GitCommitHorizontal, ListChecks } from "lucide-react";
+import { useState } from "react";
+import { GitCommitHorizontal, ListChecks, MessagesSquare, Settings2 } from "lucide-react";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { FieldRow, Mono } from "@/features/tasks/detail/field-row";
 import { SpecView } from "@/features/tasks/detail/spec-view";
 import { TaskRetryControls } from "@/features/tasks/detail/task-retry-controls";
+import { layerTasks } from "./plan-graph";
+import { TaskLogsPanel } from "./task-logs-panel";
 import { duration, relativeTime, shortTime } from "@/lib/utils/platform";
 import type { Task } from "@/types/task";
 
@@ -23,8 +27,13 @@ export function WorkflowTasks({ tasks }: { tasks: Task[] }) {
     );
   }
 
-  // Stable order: dependents after their deps where possible, else by id.
-  const ordered = [...tasks].sort((a, b) => a.id.localeCompare(b.id));
+  // Workflow order: walk the dependency graph depth-first so each task lists
+  // after the tasks it depends on (e.g. unit → tests → review → PR), matching
+  // the Plan tab's left→right layout. Reuses the Plan graph's layering: flatten
+  // the layers, and within a layer break ties by id so the order is stable.
+  const ordered = layerTasks(tasks)
+    .flatMap((layer) => [...layer].sort((a, b) => a.task.id.localeCompare(b.task.id)))
+    .map((node) => node.task);
 
   return (
     <div className="space-y-3">
@@ -37,6 +46,10 @@ export function WorkflowTasks({ tasks }: { tasks: Task[] }) {
 
 function TaskSettingsCard({ task }: { task: Task }) {
   const isBlocked = task.status === "blocked";
+  // Per-card view toggle. Starts on Settings; the Logs trace lazy-loads only
+  // once the user switches to it (TaskLogsPanel's query is gated on `active`),
+  // so the user never leaves the page to read an agent's logs.
+  const [view, setView] = useState("settings");
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
@@ -50,7 +63,32 @@ function TaskSettingsCard({ task }: { task: Task }) {
         </div>
       </div>
 
-      <div className="mt-3 grid gap-4 md:grid-cols-2">
+      <Tabs value={view} onValueChange={setView} className="mt-3">
+        <TabsList>
+          <TabsTrigger value="settings">
+            <Settings2 className="size-3.5" /> Settings
+          </TabsTrigger>
+          <TabsTrigger value="logs">
+            <MessagesSquare className="size-3.5" /> Logs
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="settings" className="mt-3">
+          <TaskSettings task={task} isBlocked={isBlocked} />
+        </TabsContent>
+
+        <TabsContent value="logs" className="mt-3">
+          <TaskLogsPanel taskId={task.id} active={view === "logs"} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function TaskSettings({ task, isBlocked }: { task: Task; isBlocked: boolean }) {
+  return (
+    <>
+      <div className="grid gap-4 md:grid-cols-2">
         <div>
           <SectionLabel>Spec</SectionLabel>
           <SpecView spec={task.spec} />
@@ -119,7 +157,7 @@ function TaskSettingsCard({ task }: { task: Task }) {
           Shared with the task inspector so both surfaces stay in lockstep. */}
       <Separator className="my-3" />
       <TaskRetryControls task={task} />
-    </div>
+    </>
   );
 }
 

@@ -19,8 +19,13 @@ use configure::Config;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "lazybones_cli=info,lazybones_api=info".into()),
+            // Default to info across all our crates — the engine especially, whose
+            // scheduler decisions (promote/claim/block/auto-retry) are the main
+            // operational signal. It was omitted here, so those lines were silently
+            // filtered out by default; only an explicit RUST_LOG showed them.
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "lazybones_cli=info,lazybones_api=info,lazybones_engine=info".into()
+            }),
         )
         .init();
 

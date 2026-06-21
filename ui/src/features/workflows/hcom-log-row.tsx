@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils/cn";
-import { shortTime } from "@/lib/utils/platform";
+import { fullTime, shortTime } from "@/lib/utils/platform";
 import type { HcomLogEntry, HcomLogKind } from "@/types/event";
 
 const KIND_VARIANT: Record<HcomLogKind, "default" | "accent" | "outline"> = {
@@ -47,7 +47,10 @@ export function HcomLogRow({
 }) {
   return (
     <li className="flex gap-3 py-2 text-xs">
-      <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">
+      <span
+        className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground"
+        title={fullTime(entry.at)}
+      >
         {shortTime(entry.at)}
       </span>
       <Badge variant={KIND_VARIANT[entry.kind]} className="h-5 shrink-0 px-2">

@@ -176,6 +176,10 @@ async fn stopped_run_claims_nothing() {
     t.run_id = Some("wf-stopped".into());
     t.status = Status::Ready;
     store.create_task(&t).await.unwrap();
+    // The run was started (operator pressed Start) before being paused — only a
+    // started run can be stopped/resumed. Stamp `started_at` so the post-resume
+    // claim isn't blocked by the "created-but-never-started promotes nothing" guard.
+    store.mark_run_started("wf-stopped", "2026-01-01T00:00:01Z").await.unwrap();
     store.stop_run("wf-stopped").await.unwrap();
 
     let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(&repo), &hcom_bin);
@@ -206,6 +210,48 @@ async fn stopped_run_claims_nothing() {
     assert!(
         matches!(after, Status::Running | Status::Gating | Status::Done),
         "after resume the task is claimed and an agent spawned; got {after:?}"
+    );
+}
+
+/// A created-but-never-started workflow must promote/claim nothing: its root
+/// task whose deps are all satisfied stays `pending` across a tick, because no
+/// operator has pressed Start (the run's `started_at` is still `null`).
+/// Regression guard for "creating a workflow auto-ran it."
+#[tokio::test]
+async fn unstarted_run_promotes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo_with_remote(tmp.path());
+    let hcom_bin = write_fake_hcom(tmp.path());
+
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+
+    // An active workflow with a ready-to-promote root task, but never started.
+    let run = Run::new("wf-unstarted", "Unstarted WF", workspace(&repo), "2026-01-01T00:00:00Z");
+    store.create_run(&run).await.unwrap();
+    assert!(run.started_at.is_none(), "a fresh run has no started_at");
+    let mut t = Task::seed("root", "wf-unstarted", "Root", "build it", vec![], vec![], None);
+    t.run_id = Some("wf-unstarted".into());
+    store.create_task(&t).await.unwrap();
+
+    let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(&repo), &hcom_bin);
+
+    // A full tick must leave the task untouched: not promoted, not claimed.
+    engine.tick().await;
+    assert_eq!(
+        status_of(&store, "root").await,
+        Status::Pending,
+        "an unstarted run's root task must not be promoted"
+    );
+
+    // Start it (the operator's "go") and the same task promotes on the next tick.
+    store.mark_run_started("wf-unstarted", "2026-01-01T00:00:01Z").await.unwrap();
+    engine.tick().await;
+    assert_ne!(
+        status_of(&store, "root").await,
+        Status::Pending,
+        "after start the task leaves pending"
     );
 }
 

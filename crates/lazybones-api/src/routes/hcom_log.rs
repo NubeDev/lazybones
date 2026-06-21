@@ -48,7 +48,14 @@ pub async fn run_hcom_log(
 }
 
 /// `GET /tasks/:id/hcom` — sugar for `GET /runs/:run/hcom?task=:id`: one agent's
-/// full trace. Resolves the task's run label, then filters to that task.
+/// full trace. Resolves the task's run, then filters to that task.
+///
+/// The hcom log is keyed by the workflow `run_id`, not the dotted event-grouping
+/// `run` label (the tail in `hcom_tail.rs` resolves a tag to `(run_id, task)`, and
+/// the workflow Logs tab seeds from `run_id`). A workflow task's `run` is a legacy
+/// label like `lazybones-run` that does **not** match where its events landed, so
+/// keying off `run` here returns an empty trace. Prefer `run_id`; fall back to
+/// `run` only for a standalone task that has no `run_id`.
 pub async fn task_hcom_log(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -59,8 +66,9 @@ pub async fn task_hcom_log(
         .get_task(&id)
         .await?
         .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+    let run = task.run_id.as_deref().unwrap_or(&task.run);
     let mut filter = query.into_filter();
     filter.task = Some(id);
-    let entries = state.store.run_hcom_log(&task.run, &filter).await?;
+    let entries = state.store.run_hcom_log(run, &filter).await?;
     Ok(Json(entries))
 }

@@ -3,19 +3,25 @@ import { listDir } from "@/lib/api/fs";
 import {
   checkoutGhBranch,
   closeGhIssue,
+  closeGhPr,
+  commentGhIssue,
   createGhBranch,
   createGhIssue,
   deleteGhBranch,
   getGhAuth,
   getGhRepo,
   listGhBranches,
+  listGhIssueComments,
   listGhIssues,
   listGhLocalBranches,
+  listGhMentionable,
+  listGhPrs,
   listGhWorktrees,
+  mergeGhPr,
   pruneGhWorktrees,
   removeGhWorktree,
 } from "@/lib/api/gh";
-import type { IssueStateFilter } from "@/types/gh";
+import type { IssueStateFilter, MergeMethod, PrStateFilter } from "@/types/gh";
 
 /** Browse host directories for the repo/dir picker. `path = null` ⇒ `$HOME`. */
 export function useDirListing(path: string | null, enabled = true) {
@@ -166,5 +172,81 @@ export function useCloseGhIssue() {
       closeGhIssue(dir, number),
     onSuccess: (_res, { dir }) =>
       qc.invalidateQueries({ queryKey: ["gh-issues", dir] }),
+  });
+}
+
+/** Repo logins that can be `@`-mentioned (for comment autocomplete). Cached a
+ *  while — the collaborator set changes rarely. */
+export function useGhMentionable(dir: string | null) {
+  return useQuery({
+    queryKey: ["gh-mentionable", dir],
+    queryFn: ({ signal }) => listGhMentionable(dir!, signal),
+    enabled: !!dir,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** Comments on one issue. Skipped until `number` is set (panel collapsed). */
+export function useGhIssueComments(dir: string, number: number | null) {
+  return useQuery({
+    queryKey: ["gh-issue-comments", dir, number],
+    queryFn: ({ signal }) => listGhIssueComments(dir, number!, signal),
+    enabled: number != null,
+    retry: false,
+  });
+}
+
+/** Add a comment to an issue, then refresh that issue's comment thread. */
+export function useCommentGhIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dir, number, body }: { dir: string; number: number; body: string }) =>
+      commentGhIssue(dir, number, body),
+    onSuccess: (_res, { dir, number }) =>
+      qc.invalidateQueries({ queryKey: ["gh-issue-comments", dir, number] }),
+  });
+}
+
+/** Pull requests for a dir, filtered by state. */
+export function useGhPrs(dir: string | null, state: PrStateFilter = "open") {
+  return useQuery({
+    queryKey: ["gh-prs", dir, state],
+    queryFn: ({ signal }) => listGhPrs(dir!, state, signal),
+    enabled: !!dir,
+    retry: false,
+  });
+}
+
+/** Merge a PR, then refresh that dir's PR lists (a merge also moves branches). */
+export function useMergeGhPr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      dir,
+      number,
+      method,
+      deleteBranch,
+    }: {
+      dir: string;
+      number: number;
+      method?: MergeMethod;
+      deleteBranch?: boolean;
+    }) => mergeGhPr(dir, number, method, deleteBranch),
+    onSuccess: (_res, { dir }) => {
+      qc.invalidateQueries({ queryKey: ["gh-prs", dir] });
+      invalidateBranchState(qc, dir);
+    },
+  });
+}
+
+/** Close a PR without merging, then refresh that dir's PR lists. */
+export function useCloseGhPr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dir, number }: { dir: string; number: number }) =>
+      closeGhPr(dir, number),
+    onSuccess: (_res, { dir }) =>
+      qc.invalidateQueries({ queryKey: ["gh-prs", dir] }),
   });
 }

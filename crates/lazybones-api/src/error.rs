@@ -71,6 +71,7 @@ impl IntoResponse for ApiError {
             ApiError::Store(
                 StoreError::TaskNotFound(_)
                 | StoreError::TemplateNotFound(_)
+                | StoreError::SkillNotFound(_)
                 | StoreError::RunNotFound(_)
                 | StoreError::AgentNotFound(_),
             ) => (StatusCode::NOT_FOUND, self.to_string()),
@@ -80,6 +81,7 @@ impl IntoResponse for ApiError {
             ApiError::Store(
                 StoreError::TaskExists(_)
                 | StoreError::TemplateExists(_)
+                | StoreError::SkillExists(_)
                 | StoreError::RunExists(_)
                 | StoreError::AgentExists(_),
             ) => (StatusCode::CONFLICT, self.to_string()),

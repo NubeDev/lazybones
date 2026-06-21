@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Check, Plug } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, Plug, Search } from "lucide-react";
 import { Topbar } from "@/components/layout/topbar";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,18 +12,142 @@ import {
   loopToken,
   setLoopToken,
 } from "@/lib/api/config";
-import { isDesktop } from "@/lib/utils/platform";
+import {
+  isDesktop,
+  getTimezone,
+  setTimezone,
+} from "@/lib/utils/platform";
+
+/** The IANA timezone names for the picker. `Intl.supportedValuesOf` is the
+ *  canonical source; fall back to a small set on the rare engine without it. */
+function timezoneNames(): string[] {
+  const intl = Intl as typeof Intl & {
+    supportedValuesOf?: (key: string) => string[];
+  };
+  if (typeof intl.supportedValuesOf === "function") {
+    try {
+      return intl.supportedValuesOf("timeZone");
+    } catch {
+      /* fall through */
+    }
+  }
+  return [
+    "UTC",
+    "Asia/Ho_Chi_Minh",
+    "Asia/Bangkok",
+    "Asia/Singapore",
+    "Australia/Sydney",
+    "Europe/London",
+    "America/New_York",
+    "America/Los_Angeles",
+  ];
+}
+
+/** The browser's own zone, shown as the default option's hint. */
+function browserZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return "local";
+  }
+}
+
+/** A searchable timezone picker: a filter box over the full IANA list, plus a
+ *  "Follow browser" default that's always offered. The selected value is shown
+ *  as the placeholder; the matching list scrolls below. Empty `value` means
+ *  follow-browser. */
+function TimezonePicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (tz: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const followBrowser = `Follow browser (${browserZone()})`;
+  const zones = useMemo(() => timezoneNames(), []);
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return zones;
+    return zones.filter((z) => z.toLowerCase().includes(q));
+  }, [zones, query]);
+
+  return (
+    <div className="rounded-md border border-border bg-surface">
+      <div className="flex items-center gap-2 border-b border-border px-3">
+        <Search className="size-3.5 shrink-0 text-muted-foreground" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search timezones…"
+          aria-label="Search timezones"
+          className="h-9 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      <ul className="max-h-56 overflow-y-auto py-1" role="listbox">
+        {/* "Follow browser" default — only shown when it matches the filter. */}
+        {(!query.trim() || followBrowser.toLowerCase().includes(query.trim().toLowerCase())) && (
+          <TimezoneOption
+            label={followBrowser}
+            selected={value === ""}
+            onSelect={() => onChange("")}
+          />
+        )}
+        {matches.map((name) => (
+          <TimezoneOption
+            key={name}
+            label={name}
+            selected={value === name}
+            onSelect={() => onChange(name)}
+          />
+        ))}
+        {matches.length === 0 && (
+          <li className="px-3 py-2 text-sm text-muted-foreground">No timezones match “{query}”.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function TimezoneOption({
+  label,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <li role="option" aria-selected={selected}>
+      <button
+        type="button"
+        onClick={onSelect}
+        className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted ${
+          selected ? "text-accent" : "text-foreground"
+        }`}
+      >
+        {label}
+        {selected && <Check className="size-3.5 shrink-0" />}
+      </button>
+    </li>
+  );
+}
 
 /** Settings: where lazybonesd lives and the loop token for guarded mutations.
  *  Persisted to localStorage; a save reloads so every query repoints. */
 export function SettingsPage() {
   const [base, setBase] = useState(apiBase());
   const [token, setToken] = useState(loopToken());
+  const [tz, setTz] = useState(getTimezone() ?? "");
   const [saved, setSaved] = useState(false);
 
   function save() {
     setApiBase(base.trim());
     setLoopToken(token.trim());
+    setTimezone(tz);
     setSaved(true);
     // Repoint all in-flight queries cleanly.
     setTimeout(() => window.location.reload(), 400);
@@ -55,6 +179,12 @@ export function SettingsPage() {
                   onChange={(e) => setToken(e.target.value)}
                 />
               </Field>
+              <Field
+                label="Display timezone"
+                hint={`How all dates & times are shown. "Follow browser" uses this device's zone (${browserZone()}).`}
+              >
+                <TimezonePicker value={tz} onChange={setTz} />
+              </Field>
               <Separator />
               <div className="flex items-center justify-end gap-3">
                 {saved && (
@@ -79,6 +209,7 @@ export function SettingsPage() {
             <CardContent className="space-y-2 text-xs">
               <Row k="Runtime" v={isDesktop() ? "Tauri desktop" : "Browser"} />
               <Row k="Current API" v={apiBase()} />
+              <Row k="Display timezone" v={getTimezone() ?? `browser (${browserZone()})`} />
               <Row k="Polling" v="every 4s (no SSE feed yet)" />
             </CardContent>
           </Card>

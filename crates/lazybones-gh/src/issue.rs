@@ -46,3 +46,25 @@ pub struct Author {
 pub struct Label {
     pub name: String,
 }
+
+/// One comment on an issue (or PR), from `gh issue view --json comments`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Comment {
+    #[serde(default)]
+    pub author: Option<Author>,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub url: String,
+    /// RFC3339 timestamp.
+    #[serde(default, rename = "createdAt")]
+    pub created_at: Option<String>,
+}
+
+/// Wrapper for `gh issue view <n> --json comments`, whose payload is a single
+/// object `{ "comments": [...] }`.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct CommentsView {
+    #[serde(default)]
+    pub comments: Vec<Comment>,
+}

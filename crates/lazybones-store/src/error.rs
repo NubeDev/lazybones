@@ -50,6 +50,18 @@ pub enum StoreError {
     #[error("template already exists: {0}")]
     TemplateExists(String),
 
+    /// A skill id was referenced that does not exist in the store.
+    #[error("skill not found: {0}")]
+    SkillNotFound(String),
+
+    /// A skill was created with an id that is already taken.
+    #[error("skill already exists: {0}")]
+    SkillExists(String),
+
+    /// The bundled demo skill catalogue (YAML) failed to parse on seed.
+    #[error("skill catalogue seed failed: {0}")]
+    SkillSeed(String),
+
     /// A run (workflow) id was referenced that does not exist in the store.
     #[error("run not found: {0}")]
     RunNotFound(String),

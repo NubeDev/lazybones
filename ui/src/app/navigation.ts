@@ -4,6 +4,7 @@ import {
   History,
   Settings,
   FileText,
+  Sparkles,
   Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -12,6 +13,7 @@ import type { LucideIcon } from "lucide-react";
 export type View =
   | "dashboard"
   | "templates"
+  | "skills"
   | "workflows"
   | "tasks"
   | "runs"
@@ -26,6 +28,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { view: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { view: "templates", label: "Templates", icon: FileText },
+  { view: "skills", label: "Skills", icon: Sparkles },
   { view: "workflows", label: "Workflows", icon: Workflow },
   { view: "tasks", label: "Tasks", icon: ListTodo },
   { view: "runs", label: "Run history", icon: History },

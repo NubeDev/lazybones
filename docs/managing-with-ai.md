@@ -203,6 +203,24 @@ picks back up):
 curl -X POST $BASE/workflows/ship-auth/resume -H "$AUTH"
 ```
 
+**Restart** (reset the workflow's tasks to `pending` to run from the beginning;
+stays `active`, does **not** auto-start — press Start when ready):
+```sh
+curl -X POST $BASE/workflows/ship-auth/restart -H "$AUTH" -H "$JSON" -d '{
+  "include_done": false,      # also reset done tasks (true = full from-scratch redo)
+  "remove_worktrees": false   # also git-worktree-remove each reset task's tree
+}'
+```
+Both flags default `false` (the safe, resume-style restart: keep done tasks, reuse
+worktrees). Live agents are always killed first. Unlike **Stop & reset**, restart
+leaves the run `active` and re-promotes immediately on Start rather than pausing.
+
+**Delete** (the only archive/tombstone path; `409` if any task is still live —
+stop first):
+```sh
+curl -X DELETE $BASE/workflows/ship-auth -H "$AUTH"   # → { "deleted": true|false }
+```
+
 > A `stopped` workflow promotes/claims nothing and refuses task-level retries
 > (`409`) until resumed — so "stopped" never lies. Stop is reversible; lifecycle is
 > only ever `active` or `stopped`, and `DELETE /workflows/:id` is the archive path.
@@ -218,6 +236,14 @@ curl $BASE/tasks/auth
 Watch these fields: `status`, `heartbeat` (RFC3339 liveness ping), `session` (hcom
 agent name / kill handle), `worktree`, `branch`, `commit` (set on `done`), `reason`
 (set on `blocked`).
+
+Timing stamps (RFC3339; `null` until reached, durations are derived, never stored):
+`started_at` (first claim — kept across reclaims/revives), `finished_at` (on `done`),
+`failed_at` (on `blocked`; cleared when revived or finished).
+
+Retry-policy fields (see §2 "Revive a blocked task"): `auto_retry`
+(`"long_term" | "quick" | null`), `max_retries` (cap, default `2`), `retry_count`
+(hands-off attempts spent so far; zeroed on a clean reset/restart and on `done`).
 
 ### Full transition history (audit trail)
 Every status change is a durable, queryable event. `run` is the event-grouping
@@ -247,6 +273,68 @@ curl -X POST $BASE/tasks/auth/cancel -H "$AUTH" -H "$JSON" -d '{"reason":"cancel
 You generally do **not** drive `claim`/`gate`/`done`/`heartbeat` by hand — the
 scheduler and the spawned agent own those. They exist for the loop/agent, not the
 operator.
+
+### Revive a blocked task (retry / auto-retry / chat)
+
+A `blocked` task is otherwise a dead end — the scheduler only ever promotes
+`pending` tasks, so a failed one never re-enters the run on its own. These three
+verbs put it back. All require the loop token and all **refuse with `409` if the
+parent workflow is `stopped`** — resume the workflow first (§1c). Each is scoped to
+one task id (`404` unknown).
+
+**Retry** (`POST /tasks/:id/retry`) — two shapes, chosen by whether you send a
+`strategy`:
+
+```sh
+# Clean retry (transient failure): kill any live agent, reset blocked → pending,
+# clear the worktree/claim/reason and zero the auto-retry counter. Fresh start.
+curl -X POST $BASE/tasks/auth/retry -H "$AUTH" -H "$JSON" -d '{
+  "remove_worktrees": false        # true also git-worktree-removes the tree
+}'
+
+# Guided retry (it failed for a reason): revive in place (blocked → ready), KEEP
+# the worktree, and fold the strategy's guidance into the re-spawn prompt so the
+# agent builds on its partial work.
+curl -X POST $BASE/tasks/auth/retry -H "$AUTH" -H "$JSON" -d '{
+  "strategy": "long_term"          # "long_term" = fix the root cause properly
+}'                                 # "quick"     = smallest change to go green
+```
+`409` if the task isn't `blocked` (a `done` task is finished — restart the workflow
+to re-run it).
+
+**Auto-retry policy** (`PUT /tasks/:id/auto-retry`) — durable, hands-off config: on
+a block the scheduler re-attempts the task with the strategy's guidance, up to
+`max_retries` times, before leaving it for a human. Manual retry is never capped (a
+person is in the loop).
+```sh
+curl -X PUT $BASE/tasks/auth/auto-retry -H "$AUTH" -H "$JSON" -d '{
+  "strategy": "quick",             # "long_term" | "quick" | null (null = turn off)
+  "max_retries": 3                 # optional; omit to leave the cap unchanged (default 2)
+}'
+```
+Sets `auto_retry`/`max_retries` on the task; the scheduler bumps `retry_count` each
+hands-off attempt and stops when `retry_count >= max_retries`. `strategy: null`
+disables it. This is config only — it never moves the task itself.
+
+**Chat** (`GET`/`POST /tasks/:id/chat`) — converse with a task's agent. The post is
+stored durably first, then acted on by the task's state:
+```sh
+curl $BASE/tasks/auth/chat                                   # the conversation, oldest first
+curl -X POST $BASE/tasks/auth/chat -H "$AUTH" -H "$JSON" -d '{"text":"use the existing helper"}'
+```
+The response's `delivery` says what happened: `delivered` (sent live to a
+running/gating agent on its hcom thread), `revived` (a `blocked` task was reopened —
+the next tick re-spawns it in its kept worktree with this message in the prompt), or
+`stored` (recorded as guidance, folded in at the next claim). `409` on a `done` task
+(restart to re-run); `400` on empty text.
+
+> **The two revive mechanisms** (don't conflate): a **clean reset** (`retry` with no
+> strategy, `resume`, `restart`) sends `blocked → pending` and discards the
+> worktree/counter — for transient/flaky failures. A **guided revive** (`retry` with
+> a strategy, `chat` on a blocked task, or auto-retry) sends `blocked → ready`, keeps
+> the worktree, and appends guidance to the prompt — for "it failed for a reason,
+> here's how to fix it." `RetryStrategy` (`long_term | quick`) is the shared intent
+> behind manual strategy-retry and hands-off auto-retry.
 
 ---
 
@@ -362,11 +450,17 @@ curl -X POST $BASE/workflows -H "$AUTH" -H "$JSON" -d '{"id":"wf","title":"WF","
 curl -X POST $BASE/workflows/wf/tasks -H "$AUTH" -H "$JSON" -d '{"id":"t1","title":"Do X","spec":"...","deps":[]}'
 curl -X POST $BASE/workflows/wf/tasks -H "$AUTH" -H "$JSON" -d '{"id":"t2","title":"PR","from_template":"open-pr","deps":["t1"]}'
 
-# 2. go
+# 2. go (optionally arm auto-retry first so blocks self-heal up to the cap)
+curl -X PUT $BASE/tasks/t1/auto-retry -H "$AUTH" -H "$JSON" -d '{"strategy":"quick","max_retries":2}'
 curl -X POST $BASE/workflows/wf/start -H "$AUTH"
 
 # 3. supervise
 curl -N $BASE/stream &
 curl $BASE/tasks/t1
 curl "$BASE/runs/wf/hcom?limit=200"
+
+# 4. a task blocked? revive it (guided retry keeps its worktree + folds in guidance)
+curl -X POST $BASE/tasks/t1/retry -H "$AUTH" -H "$JSON" -d '{"strategy":"long_term"}'
+# ...or workshop it conversationally (a chat on a blocked task revives it):
+curl -X POST $BASE/tasks/t1/chat  -H "$AUTH" -H "$JSON" -d '{"text":"the gate fails on lint — fix that first"}'
 ```

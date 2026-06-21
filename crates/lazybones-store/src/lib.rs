@@ -5,30 +5,36 @@
 //! a run needs to survive a restart lives here, reached over the [`StoreHandle`].
 
 mod agent;
+mod attachment;
 mod bootstrap;
 mod chat;
 mod check_health;
 mod connect;
 mod error;
 mod event;
+mod follow_up;
 mod handle;
 mod hcom_log;
 mod init_schema;
 mod run;
 mod secret;
+mod skill;
 mod task;
 mod template;
 mod workfile;
 
 pub use agent::{AgentCatalog, AgentCatalogEdit, seed_default_agents};
+pub use attachment::Attachment;
 pub use chat::{ChatMessage, ChatRole};
 pub use connect::StoreEngine;
 pub use error::{Result, StoreError};
 pub use event::{Activity, Event, EventBus, LiveEvent};
+pub use follow_up::{FollowUp, FollowUpFilter, NewFollowUpEntry};
 pub use handle::StoreHandle;
 pub use hcom_log::{HcomLogEntry, HcomLogFilter, NewHcomLogEntry};
 pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};
+pub use skill::{Skill, seed_default_skills};
 pub use task::{
     DEFAULT_MAX_RETRIES, RetryStrategy, Status, Task, TaskEdit, Transition, WorktreeMode,
 };

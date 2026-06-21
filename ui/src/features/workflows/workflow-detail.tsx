@@ -23,15 +23,18 @@ import {
 } from "@/lib/hooks/use-workflows";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { TaskBoard } from "@/features/tasks/task-board";
+import { TaskPage } from "@/features/tasks/detail/task-page";
 import { duration, shortTime } from "@/lib/utils/platform";
 import { repoBasename } from "./repo-path";
 import { PlanGraphView } from "./plan-graph-view";
 import { WorkflowTasks } from "./workflow-tasks";
 import { WorkflowEvents } from "./workflow-events";
 import { WorkflowHcomLog } from "./workflow-hcom-log";
+import { WorkflowFollowUps } from "./workflow-follow-ups";
 import { WorkflowControls } from "./workflow-controls";
 import { AddTaskDialog } from "./add-task-dialog";
 import { WorkflowIssues } from "./workflow-issues";
+import { WorkflowPrs } from "./workflow-prs";
 import { WorkflowGit } from "./workflow-git";
 import { WorkflowFiles } from "./workflow-files";
 
@@ -49,6 +52,8 @@ export function WorkflowDetail({
   const { data: workflowTasks } = useWorkflowTasks(id);
   const resume = useResumeWorkflow();
   const [tab, setTab] = useState("plan");
+  // The task opened in the shared detail panel (from Plan/Board clicks), or null.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // The server already scopes these to this workflow's `run_id`; the filter is a
   // defensive second layer so a foreign task can never render here even if the
@@ -59,6 +64,12 @@ export function WorkflowDetail({
   );
   const blockedCount = useMemo(
     () => runTasks.filter((t) => t.status === "blocked").length,
+    [runTasks],
+  );
+  // Lookup for the detail panel, so it can render instantly from cache while it
+  // refetches and resolve deps/onSelect to sibling tasks.
+  const byId = useMemo(
+    () => new Map(runTasks.map((t) => [t.id, t])),
     [runTasks],
   );
 
@@ -107,6 +118,20 @@ export function WorkflowDetail({
 
   const pct =
     wf.task_count > 0 ? Math.round((wf.done_count / wf.task_count) * 100) : 0;
+
+  // Clicking a Plan node / Board card opens the task as a full page over the
+  // workflow; Back returns to the workflow detail.
+  if (selectedId) {
+    return (
+      <TaskPage
+        id={selectedId}
+        byId={byId}
+        onBack={() => setSelectedId(null)}
+        onSelect={setSelectedId}
+        onDeleted={() => setSelectedId(null)}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -264,7 +289,9 @@ export function WorkflowDetail({
               <TabsTrigger value="git">Git</TabsTrigger>
               <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="logs">Logs</TabsTrigger>
+              <TabsTrigger value="follow-ups">Follow-ups</TabsTrigger>
               <TabsTrigger value="issues">Issues</TabsTrigger>
+              <TabsTrigger value="prs">Pull requests</TabsTrigger>
             </TabsList>
             {/* "Add task" belongs to the Tasks tab — show it only there so each
                 tab owns its own primary action (Issues has its own "New issue"). */}
@@ -274,7 +301,7 @@ export function WorkflowDetail({
           </div>
 
           <TabsContent value="plan">
-            <PlanGraphView tasks={runTasks} />
+            <PlanGraphView tasks={runTasks} onSelect={setSelectedId} />
           </TabsContent>
 
           <TabsContent value="tasks">
@@ -287,8 +314,8 @@ export function WorkflowDetail({
                 tasks={runTasks}
                 isLoading={isLoading}
                 error={null}
-                selectedId={null}
-                onSelect={() => {}}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
               />
             </div>
           </TabsContent>
@@ -316,11 +343,20 @@ export function WorkflowDetail({
             <WorkflowHcomLog tasks={runTasks} />
           </TabsContent>
 
+          <TabsContent value="follow-ups">
+            <WorkflowFollowUps run={wf.id} />
+          </TabsContent>
+
           <TabsContent value="issues">
             <WorkflowIssues dir={wf.workspace.repo} />
           </TabsContent>
+
+          <TabsContent value="prs">
+            <WorkflowPrs dir={wf.workspace.repo} />
+          </TabsContent>
         </Tabs>
       </div>
+
     </div>
   );
 }

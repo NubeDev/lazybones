@@ -11,6 +11,7 @@ use lazybones_store::{Lifecycle, Run, Status, StoreHandle, Task, Transition};
 use crate::config::EngineConfig;
 use crate::hcom::Hcom;
 
+use super::block::block;
 use super::effective::{self, EffectiveGit};
 use super::{finish, hcom_tail, prompt, reclaim, worktree};
 
@@ -34,7 +35,7 @@ async fn promote(store: &StoreHandle) {
     // The paused workflows to exclude. On a query failure, fall back to "none
     // stopped" — promoting is the safe default; the claim guard still refuses to
     // spawn for a stopped run, so nothing actually runs.
-    let stopped = store.stopped_run_ids().await.unwrap_or_default();
+    let stopped = store.unpromotable_run_ids().await.unwrap_or_default();
     let ready = match store.newly_ready(&stopped).await {
         Ok(ids) => ids,
         Err(e) => {
@@ -82,12 +83,17 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
     for task in ordered.into_iter().take(budget) {
         let run = run_for(store, &task, &mut runs).await;
 
-        // A stopped (paused) workflow claims nothing: skip its tasks even if they
-        // are `ready` (a human reset/reclaim can leave ready tasks behind). This
-        // is the spawn-side guard that closes the "cancelled run still runs" bug —
-        // a revived task in a stopped run must never be re-claimed. Standalone
-        // tasks (no parent run) are unaffected.
-        if run.as_ref().is_some_and(|r| r.lifecycle != Lifecycle::Active) {
+        // A workflow that isn't actively started claims nothing: skip its tasks
+        // even if they are `ready` (a human reset/reclaim can leave ready tasks
+        // behind). This is the spawn-side guard that closes the "cancelled run
+        // still runs" bug — a revived task in a stopped run must never be
+        // re-claimed — and also the "created-but-not-started run runs" bug: an
+        // `active` run with no `started_at` has not been started by an operator.
+        // Standalone tasks (no parent run) are unaffected.
+        if run
+            .as_ref()
+            .is_some_and(|r| r.lifecycle != Lifecycle::Active || r.started_at.is_none())
+        {
             continue;
         }
 
@@ -98,7 +104,7 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         let reuse_path = match resolve_reuse(store, &task, &eff).await {
             Ok(p) => p,
             Err(reason) => {
-                block(store, &task.id, reason).await;
+                block(store, &task, reason, ACTOR).await;
                 continue;
             }
         };
@@ -107,7 +113,7 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         let provisioned = match worktree::provision(&task, &eff, cfg, reuse_path.as_deref()).await {
             Ok(p) => p,
             Err(e) => {
-                block(store, &task.id, format!("worktree provisioning failed: {e}")).await;
+                block(store, &task, format!("worktree provisioning failed: {e}"), ACTOR).await;
                 continue;
             }
         };
@@ -148,7 +154,7 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         {
             Ok(name) => name,
             Err(e) => {
-                block(store, &task.id, format!("agent spawn failed: {e}")).await;
+                block(store, &task, format!("agent spawn failed: {e}"), ACTOR).await;
                 continue;
             }
         };
@@ -277,16 +283,6 @@ async fn budget(store: &StoreHandle, cfg: &EngineConfig) -> anyhow::Result<usize
     let running = store.list_tasks(Some(Status::Running)).await?.len();
     let gating = store.list_tasks(Some(Status::Gating)).await?.len();
     Ok(cfg.concurrency.saturating_sub(running + gating))
-}
-
-/// Block a task with `reason`, logging any failure.
-async fn block(store: &StoreHandle, id: &str, reason: String) {
-    if let Err(e) = store
-        .transition(id, Transition::Block { reason }, ACTOR)
-        .await
-    {
-        tracing::warn!(task = %id, "block transition failed: {e}");
-    }
 }
 
 #[cfg(test)]

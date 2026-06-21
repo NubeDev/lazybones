@@ -19,6 +19,7 @@ mod engine;
 mod files;
 mod fs_list;
 mod gate;
+mod follow_ups;
 mod get;
 mod gh;
 mod guard;
@@ -33,10 +34,16 @@ mod secrets_delete;
 mod secrets_env;
 mod secrets_list;
 mod secrets_put;
+mod skills_create;
+mod skills_delete;
+mod skills_get;
+mod skills_list;
+mod skills_update;
 mod stream;
 mod sync;
 mod tasks_retry;
 mod tasks_retry_policy;
+mod template_attachments;
 mod templates_create;
 mod templates_delete;
 mod templates_get;
@@ -109,6 +116,28 @@ pub fn router(state: AppState) -> Router {
                 .put(templates_update::update_template)
                 .delete(templates_delete::delete_template),
         )
+        // Generic attachments on a template (first owner of the polymorphic seam):
+        // attach/list skills (or any thing-kind) to a template.
+        .route(
+            "/templates/:id/attachments",
+            get(template_attachments::list_template_attachments)
+                .post(template_attachments::attach_to_template),
+        )
+        .route(
+            "/templates/:id/attachments/:thing_kind/:thing_id",
+            delete(template_attachments::detach_from_template),
+        )
+        // Skills: reusable blocks of agent instructions (global, stateless).
+        .route(
+            "/skills",
+            get(skills_list::list_skills).post(skills_create::create_skill),
+        )
+        .route(
+            "/skills/:id",
+            get(skills_get::get_skill)
+                .put(skills_update::update_skill)
+                .delete(skills_delete::delete_skill),
+        )
         // Workflows (one-off runs, stored in the `run` table; path stays user-facing).
         .route(
             "/workflows",
@@ -140,6 +169,14 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id", get(runs::run_history))
         // The fabric's record for a whole run: the raw hcom log of every agent.
         .route("/runs/:id/hcom", get(hcom_log::run_hcom_log))
+        // Follow-ups: the "needs a human" surface. The scheduler files these when
+        // it hits a wall it can't clear; agents file their own; operators resolve.
+        .route("/runs/:id/follow-ups", get(follow_ups::run_follow_ups))
+        .route("/follow-ups", post(follow_ups::file_follow_up))
+        .route(
+            "/follow-ups/:id/resolve",
+            post(follow_ups::resolve_follow_up),
+        )
         // Live push feed of status transitions (SSE) — for the dashboard + loop.
         .route("/stream", get(stream::stream))
         // Native filesystem browse for the UI's repo/dir picker (New workflow).
@@ -167,8 +204,17 @@ pub fn router(state: AppState) -> Router {
             "/gh/issues",
             get(gh::gh_issues).post(gh::gh_create_issue),
         )
+        .route("/gh/mentionable", get(gh::gh_mentionable))
         .route("/gh/issues/:number", get(gh::gh_issue_view))
         .route("/gh/issues/:number/close", post(gh::gh_close_issue))
+        .route(
+            "/gh/issues/:number/comments",
+            get(gh::gh_issue_comments).post(gh::gh_comment_issue),
+        )
+        .route("/gh/prs", get(gh::gh_prs))
+        .route("/gh/prs/:number", get(gh::gh_pr_view))
+        .route("/gh/prs/:number/merge", post(gh::gh_merge_pr))
+        .route("/gh/prs/:number/close", post(gh::gh_close_pr))
         // Engine + agent availability (so the UI can show what's set up).
         .route("/engine", get(engine::engine_status))
         .route("/agents", get(agents::list_agents))

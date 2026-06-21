@@ -26,9 +26,16 @@ use super::git::git;
 /// not in `~/.claude.json`, and never enables the global bypass-mode flag. It is
 /// only written when the target repo has no `.claude/settings.json` of its own, so
 /// a repo that commits its own posture keeps full control.
+///
+/// The list must cover every tool a headless agent reaches for, or it parks at an
+/// approval prompt nobody can answer and the scheduler reaps it as "screen settled
+/// before readiness" — exactly the `launch_blocked` loop a review task hits when it
+/// invokes `Skill`/`Task`/`TodoWrite`/`WebSearch` (a code-review agent runs the
+/// review skill, spawns sub-agents, and tracks todos). So we allow the full set a
+/// task agent uses, not just the file/shell primitives.
 const CLAUDE_SETTINGS_BOOTSTRAP: &str = r#"{
   "permissions": {
-    "allow": ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch"]
+    "allow": ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Skill", "Task", "TodoWrite", "NotebookEdit"]
   }
 }
 "#;

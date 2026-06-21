@@ -21,6 +21,10 @@ DEFINE FIELD IF NOT EXISTS run ON task TYPE string;\n\
 DEFINE INDEX IF NOT EXISTS task_run_status ON task FIELDS run, status;\n\
 DEFINE INDEX IF NOT EXISTS task_run_id ON task FIELDS run_id;\n\
 DEFINE TABLE IF NOT EXISTS template SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS skill SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS attachment SCHEMALESS;\n\
+DEFINE INDEX IF NOT EXISTS attachment_unique ON attachment FIELDS owner_kind, owner_id, thing_kind, thing_id UNIQUE;\n\
+DEFINE INDEX IF NOT EXISTS attachment_owner ON attachment FIELDS owner_kind, owner_id;\n\
 DEFINE TABLE IF NOT EXISTS agent SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS run SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS depends_on TYPE RELATION SCHEMALESS;\n\
@@ -40,7 +44,12 @@ DEFINE INDEX IF NOT EXISTS chat_task_at ON chat FIELDS task, at;\n\
 DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS learned TYPE RELATION SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS secret SCHEMALESS;\n\
-DEFINE FIELD IF NOT EXISTS env_var ON secret TYPE string;";
+DEFINE FIELD IF NOT EXISTS env_var ON secret TYPE string;\n\
+DEFINE TABLE IF NOT EXISTS follow_up SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS run ON follow_up TYPE string;\n\
+DEFINE FIELD IF NOT EXISTS status ON follow_up TYPE string;\n\
+DEFINE INDEX IF NOT EXISTS follow_up_run_dedup ON follow_up FIELDS run, dedup_key UNIQUE;\n\
+DEFINE INDEX IF NOT EXISTS follow_up_run_status ON follow_up FIELDS run, status;";
 
 /// Apply the schema on the bootstrapped connection.
 ///

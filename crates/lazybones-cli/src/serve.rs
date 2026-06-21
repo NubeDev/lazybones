@@ -24,6 +24,13 @@ async fn open_store(config: &Config) -> anyhow::Result<StoreHandle> {
         Ok(_) => {}
         Err(e) => tracing::warn!("agent catalog seed failed: {e}"),
     }
+    // Seed a few demo skills the same way: idempotent, non-clobbering, so a fresh
+    // install has starter recipes to attach to templates.
+    match store.seed_default_skills(&store.now()).await {
+        Ok(n) if n > 0 => tracing::info!(seeded = n, "skill catalogue seeded with demos"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("skill catalogue seed failed: {e}"),
+    }
     Ok(store)
 }
 
