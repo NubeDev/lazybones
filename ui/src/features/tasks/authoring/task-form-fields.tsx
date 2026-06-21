@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils/cn";
+import { AgentPicker } from "@/features/agents/agent-picker";
 import { WORKTREE_MODES, WorktreeModePicker } from "../worktree-mode";
 import type { TaskDraft } from "@/lib/api/tasks";
 
@@ -100,14 +101,15 @@ export function TaskFormFields({
         />
       </Field>
 
-      <Field label="Agent tool" hint="blank = run default">
-        <Input
-          value={draft.tool ?? ""}
-          onChange={(e) => onDraft({ ...draft, tool: e.target.value.trim() || null })}
-          placeholder="claude"
-          className="font-mono"
-        />
-      </Field>
+      <AgentPicker
+        tool={draft.tool ?? ""}
+        model={draft.model ?? null}
+        effort={draft.effort ?? null}
+        onToolChange={(t) => onDraft({ ...draft, tool: t.trim() || null })}
+        onModelChange={(m) => onDraft({ ...draft, model: m })}
+        onEffortChange={(e) => onDraft({ ...draft, effort: e })}
+        labels={{ agent: "Agent tool", agentHint: "blank = inherit run/workflow default" }}
+      />
 
       <Field label="Worktree" hint={WORKTREE_MODES[draft.worktree_mode].hint}>
         <WorktreeModePicker
@@ -152,5 +154,7 @@ export const EMPTY_DRAFT: TaskDraft = {
   deps: [],
   owns: [],
   tool: null,
+  model: null,
+  effort: null,
   worktree_mode: "new",
 };

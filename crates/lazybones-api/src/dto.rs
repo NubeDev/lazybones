@@ -132,6 +132,14 @@ pub struct UpdateTaskBody {
     /// New pinned agent tool, if any.
     #[serde(default)]
     pub tool: Option<String>,
+    /// New per-task model id forwarded to the agent CLI; omitted/`null` inherits
+    /// the run/global default.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// New per-task effort level forwarded to the agent CLI; omitted/`null`
+    /// inherits the run/global default.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// New worktree provisioning intent; defaults to `new`.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
@@ -276,6 +284,15 @@ pub struct CreateWorkflowBody {
     /// Human title.
     pub title: String,
     /// The repo + inherited git config.
+    pub workspace: WorkspaceBody,
+}
+
+/// `PATCH /workflows/:id` body: edit a workflow's workspace defaults (the
+/// inheritable git + agent config). The `repo` carried in `WorkspaceBody` is
+/// ignored — an existing workflow's repo is never re-pointed; the store keeps it.
+#[derive(Debug, Deserialize)]
+pub struct UpdateWorkflowBody {
+    /// The new workspace defaults. `repo` is ignored (kept as-is server-side).
     pub workspace: WorkspaceBody,
 }
 

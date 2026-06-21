@@ -14,6 +14,7 @@ mod resume;
 mod row;
 mod start;
 mod stop;
+mod update;
 
 pub use create::create_run;
 pub use cursor::advance_hcom_cursor;
@@ -25,6 +26,7 @@ pub use model::{Lifecycle, MergeMode, Run, Workspace};
 pub use resume::resume_run;
 pub use start::mark_started;
 pub use stop::stop_run;
+pub use update::update_workspace;
 
 #[cfg(test)]
 mod tests {
@@ -100,6 +102,52 @@ mod tests {
         assert_eq!(got.workspace.merge, Some(MergeMode::Merge));
         // An absent merge reads back as None (inherit the global).
         assert_eq!(sample().workspace.merge, None);
+    }
+
+    #[tokio::test]
+    async fn update_workspace_overwrites_defaults_but_keeps_repo() {
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+
+        let edited = update_workspace(
+            &db,
+            "workflow-1",
+            Workspace {
+                // A caller might pass a different repo; it must be ignored.
+                repo: "/some/other/repo".into(),
+                base_branch: Some("dev".into()),
+                branch_prefix: None,
+                worktree_mode: WorktreeMode::Reuse,
+                tool: Some("claude".into()),
+                model: Some("claude-opus-4-8".into()),
+                effort: Some("high".into()),
+                gate: None,
+                merge: Some(MergeMode::Merge),
+            },
+        )
+        .await
+        .unwrap();
+
+        // The repo is preserved; everything else is overwritten.
+        assert_eq!(edited.workspace.repo, "/repo/abc");
+        assert_eq!(edited.workspace.tool.as_deref(), Some("claude"));
+        assert_eq!(edited.workspace.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(edited.workspace.effort.as_deref(), Some("high"));
+        assert_eq!(edited.workspace.worktree_mode, WorktreeMode::Reuse);
+        assert_eq!(edited.workspace.merge, Some(MergeMode::Merge));
+
+        // Persisted across a read.
+        let got = get_run(&db, "workflow-1").await.unwrap().unwrap();
+        assert_eq!(got, edited);
+    }
+
+    #[tokio::test]
+    async fn update_workspace_missing_run_is_error() {
+        let db = db().await;
+        let err = update_workspace(&db, "nope", sample().workspace)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::StoreError::RunNotFound(_)));
     }
 
     #[tokio::test]

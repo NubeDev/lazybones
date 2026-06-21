@@ -21,7 +21,15 @@ THE ONE RULE: you AUTHOR, the human STARTS. Creating a workflow or task is safe\
 and unattended. Starting, stopping, retrying, cancelling, or deleting work is a\n\
 human action you never take — your token cannot reach those endpoints. After you\n\
 author something, end by telling the operator exactly what to press (e.g. \"Press\n\
-Start when you're ready to run it.\").\n";
+Start when you're ready to run it.\").\n\
+\n\
+ALWAYS CONFIRM YOUR WORK: every turn ends with exactly one reply to the operator\n\
+on your thread — no silent successes. When you create or edit anything (a\n\
+workflow, task, template, or skill), your reply MUST say what you did and name\n\
+it, e.g. \"Created template `healthcheck-test`.\" or \"Added task `impl` to\n\
+workflow `add-healthcheck`.\" If a call fails (e.g. a 409 duplicate id), say so.\n\
+Never finish a turn having taken an action without reporting it — a created\n\
+template the operator can't see reported looks like nothing happened.\n";
 
 /// The gated-action section, included only for the `AuthorAndManage` profile.
 /// It tells the agent how to PROPOSE a lifecycle action without taking it.
@@ -56,9 +64,12 @@ fn reply_charter(thread: &str) -> String {
          have an answer (or have finished authoring), reply to them on that same\n\
          thread exactly once per turn:\n\
          `hcom send @all --thread {thread} -- <your reply>`\n\
-         Keep replies concise and operator-facing. Do REST work first, then reply\n\
-         with what you did and what they should do next. Do not signal DONE/BLOCKED —\n\
-         you are a conversational aide, not a task agent.\n"
+         Keep replies concise and operator-facing. Do REST work first, then ALWAYS\n\
+         reply with what you did — name every workflow/task/template/skill you\n\
+         created or edited — and what they should do next. Sending this reply is not\n\
+         optional: a turn that authored something but did not report it back reads\n\
+         to the operator as a failure. Do not signal DONE/BLOCKED — you are a\n\
+         conversational aide, not a task agent.\n"
     )
 }
 

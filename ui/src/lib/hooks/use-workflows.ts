@@ -13,6 +13,7 @@ import {
   startWorkflow,
   stopResetWorkflow,
   stopWorkflow,
+  updateWorkflow,
   type RestartOptions,
   type WorkflowTaskDraft,
   type WorkspaceDraft,
@@ -70,6 +71,16 @@ export function useCreateWorkflow() {
       title: string;
       workspace: WorkspaceDraft;
     }) => createWorkflow(id, title, workspace),
+    onSuccess: () => invalidate(qc),
+  });
+}
+
+/** Edit a workflow's workspace defaults (`PATCH /workflows/:id`). */
+export function useUpdateWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, workspace }: { id: string; workspace: WorkspaceDraft }) =>
+      updateWorkflow(id, workspace),
     onSuccess: () => invalidate(qc),
   });
 }

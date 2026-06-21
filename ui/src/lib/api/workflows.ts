@@ -50,6 +50,22 @@ export function createWorkflow(
   });
 }
 
+/** `PATCH /workflows/:id` — edit a workflow's workspace defaults (the inheritable
+ *  git + agent config). `repo` is ignored server-side (kept as-is), so it's not in
+ *  the draft. `404` if the workflow is absent. Returns the updated detail. */
+export function updateWorkflow(
+  id: string,
+  workspace: WorkspaceDraft,
+): Promise<WorkflowDetail> {
+  return request<WorkflowDetail>(`/workflows/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    auth: true,
+    // The server keeps the existing repo; send the current one to satisfy the
+    // shared workspace body shape.
+    body: { workspace },
+  });
+}
+
 /** A task to add to a workflow. `from_template` supplies the spec when set. */
 export interface WorkflowTaskDraft {
   id: string;

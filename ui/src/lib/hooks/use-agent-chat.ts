@@ -25,6 +25,12 @@ export interface AgentChatState {
   /** The agent's latest live activity note while working ("Running a command…"),
    *  streamed from its hcom tool-status events; null when idle/unknown. */
   activity: string | null;
+  /** Epoch ms when the current turn started, while `working`; null when idle.
+   *  The panel ticks a live elapsed timer off this. */
+  startedAt: number | null;
+  /** How long the last completed turn took, in ms; null until one completes.
+   *  Shown next to the agent's reply ("· 12s"). */
+  lastDurationMs: number | null;
   error: string | null;
   /** Post a turn; opens a conversation on first send. */
   send: (text: string, pageContext?: PageContext) => Promise<void>;

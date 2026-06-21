@@ -42,8 +42,8 @@ use crate::hcom_log::{
 };
 use crate::init_schema::init_schema;
 use crate::run::{
-    Lifecycle, Run, advance_hcom_cursor, create_run, delete_run, get_run, list_run_tasks,
-    list_runs, mark_started, resume_run, stop_run,
+    Lifecycle, Run, Workspace, advance_hcom_cursor, create_run, delete_run, get_run,
+    list_run_tasks, list_runs, mark_started, resume_run, stop_run, update_workspace,
 };
 use crate::secret::{
     Cipher, SecretEnv, SecretMeta, delete_secret, list_secrets, put_secret, secret_env,
@@ -813,6 +813,16 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the query fails.
     pub async fn list_runs(&self) -> Result<Vec<Run>> {
         list_runs(&self.db).await
+    }
+
+    /// Overwrite a workflow's workspace defaults (the inheritable git + agent
+    /// config), keeping its `repo`, lifecycle and timestamps. Returns the run.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
+    /// write fails.
+    pub async fn update_workspace(&self, id: &str, workspace: Workspace) -> Result<Run> {
+        update_workspace(&self.db, id, workspace).await
     }
 
     /// List the tasks linked to workflow `run_id` (via the `run_id` FK).

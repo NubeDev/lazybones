@@ -36,6 +36,12 @@ export interface Task {
   deps: string[];
   owns: string[];
   tool: string | null;
+  /** Per-task model id forwarded to the agent CLI; `null` inherits the
+   *  run/global default (resolved most-specific-wins at execution time). */
+  model: string | null;
+  /** Per-task effort level forwarded to the agent CLI; `null` inherits the
+   *  run/global default. */
+  effort: string | null;
   worktree_mode: WorktreeMode;
   session: string | null;
   worktree: string | null;

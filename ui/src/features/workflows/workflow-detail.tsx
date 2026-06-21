@@ -7,6 +7,9 @@ import {
   AlertTriangle,
   PlayCircle,
   Clock,
+  Bot,
+  Cpu,
+  Gauge,
 } from "lucide-react";
 import { Topbar } from "@/components/layout/topbar";
 import { Button } from "@/components/ui/button";
@@ -34,6 +37,8 @@ import { WorkflowHcomLog } from "./workflow-hcom-log";
 import { WorkflowFollowUps } from "./workflow-follow-ups";
 import { WorkflowControls } from "./workflow-controls";
 import { AddTaskDialog } from "./add-task-dialog";
+import { ReorderDialog } from "./reorder-dialog";
+import { EditWorkflowDialog } from "./edit-workflow-dialog";
 import { WorkflowIssues } from "./workflow-issues";
 import { WorkflowPrs } from "./workflow-prs";
 import { WorkflowGit } from "./workflow-git";
@@ -184,6 +189,33 @@ export function WorkflowDetail({
             {WORKTREE_MODES[wf.workspace.worktree_mode].label}
           </span>
 
+          {/* The workflow's default agent triple — what its tasks inherit unless
+              a task pins its own (most-specific-wins at execution time). Click to
+              edit the workflow's agent + git defaults. */}
+          <EditWorkflowDialog
+            workflow={wf}
+            trigger={
+              <button
+                type="button"
+                title="Edit the workflow's agent + git defaults"
+                className="inline-flex items-center gap-3 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Bot className="size-3.5" />
+                  <span className="font-mono">{wf.workspace.tool ?? "default"}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Cpu className="size-3.5" />
+                  <span className="font-mono">{wf.workspace.model ?? "default"}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Gauge className="size-3.5" />
+                  <span className="font-mono">{wf.workspace.effort ?? "default"}</span>
+                </span>
+              </button>
+            }
+          />
+
           {/* Lifecycle timing: when the run started, when it settled (or its
               latest failure), and the elapsed time. Only shows once started; the
               duration runs to the finish stamp, or live to now while in flight. */}
@@ -304,9 +336,13 @@ export function WorkflowDetail({
               <TabsTrigger value="prs">Pull requests</TabsTrigger>
             </TabsList>
             {/* "Add task" belongs to the Tasks tab — show it only there so each
-                tab owns its own primary action (Issues has its own "New issue"). */}
+                tab owns its own primary action (Issues has its own "New issue").
+                Reorder lives beside it: it rewrites deps to set execution order. */}
             {tab === "tasks" && (
-              <AddTaskDialog workflow={wf} existingTasks={wf.task_ids} />
+              <div className="flex items-center gap-2">
+                {runTasks.length > 1 && <ReorderDialog tasks={runTasks} />}
+                <AddTaskDialog workflow={wf} existingTasks={wf.task_ids} />
+              </div>
             )}
           </div>
 

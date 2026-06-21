@@ -6,7 +6,7 @@ import { DepsList } from "./deps-list";
 import { SpecView } from "./spec-view";
 import { TaskRetryControls } from "./task-retry-controls";
 import { TaskChat } from "./task-chat";
-import { TaskTimingRows } from "@/features/workflows/workflow-tasks";
+import { TaskTimingRows, Inherited } from "@/features/workflows/workflow-tasks";
 import { relativeTime } from "@/lib/utils/platform";
 import type { Task } from "@/types/task";
 
@@ -75,6 +75,8 @@ export function DetailsSection({ task }: { task: Task }) {
       <div className="divide-y divide-border">
         <FieldRow label="Run">{task.run}</FieldRow>
         <FieldRow label="Tool">{task.tool ?? "config default"}</FieldRow>
+        <FieldRow label="Model">{task.model ?? <Inherited />}</FieldRow>
+        <FieldRow label="Effort">{task.effort ?? <Inherited />}</FieldRow>
         {task.session && <FieldRow label="Session"><Mono>{task.session}</Mono></FieldRow>}
         <FieldRow label="Worktree mode">
           {WORKTREE_MODES[task.worktree_mode_override ?? task.worktree_mode].label}

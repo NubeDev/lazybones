@@ -8,8 +8,10 @@ import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { FieldRow, Mono } from "@/features/tasks/detail/field-row";
 import { SpecView } from "@/features/tasks/detail/spec-view";
 import { TaskRetryControls } from "@/features/tasks/detail/task-retry-controls";
-import { layerTasks } from "./plan-graph";
+import { executionOrder } from "./reorder-deps";
 import { TaskLogsPanel } from "./task-logs-panel";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip } from "@/components/ui/tooltip";
 import { duration, relativeTime, shortTime } from "@/lib/utils/platform";
 import type { Task } from "@/types/task";
 
@@ -29,22 +31,28 @@ export function WorkflowTasks({ tasks }: { tasks: Task[] }) {
 
   // Workflow order: walk the dependency graph depth-first so each task lists
   // after the tasks it depends on (e.g. unit → tests → review → PR), matching
-  // the Plan tab's left→right layout. Reuses the Plan graph's layering: flatten
-  // the layers, and within a layer break ties by id so the order is stable.
-  const ordered = layerTasks(tasks)
-    .flatMap((layer) => [...layer].sort((a, b) => a.task.id.localeCompare(b.task.id)))
-    .map((node) => node.task);
+  // the Plan tab's left→right layout. `level` is the dependency depth — tasks
+  // sharing a level run in parallel; the badge surfaces it as the run step.
+  const ordered = executionOrder(tasks);
 
   return (
     <div className="space-y-3">
-      {ordered.map((task) => (
-        <TaskSettingsCard key={task.id} task={task} />
+      {ordered.map(({ task, level }, i) => (
+        <TaskSettingsCard key={task.id} task={task} step={i + 1} level={level} />
       ))}
     </div>
   );
 }
 
-function TaskSettingsCard({ task }: { task: Task }) {
+function TaskSettingsCard({
+  task,
+  step,
+  level,
+}: {
+  task: Task;
+  step: number;
+  level: number;
+}) {
   const isBlocked = task.status === "blocked";
   // Per-card view toggle. Starts on Settings; the Logs trace lazy-loads only
   // once the user switches to it (TaskLogsPanel's query is gated on `active`),
@@ -54,12 +62,22 @@ function TaskSettingsCard({ task }: { task: Task }) {
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-sm font-bold">{task.id}</span>
-            <StatusBadge status={task.status} />
+        <div className="flex min-w-0 items-start gap-2.5">
+          <Tooltip
+            label={`Run step ${step} · dependency level ${level + 1}. Tasks at the same level run in parallel.`}
+            side="right"
+          >
+            <Badge variant="accent" className="mt-0.5 shrink-0 tabular-nums">
+              {step}
+            </Badge>
+          </Tooltip>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-sm font-bold">{task.id}</span>
+              <StatusBadge status={task.status} />
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">{task.title}</p>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">{task.title}</p>
         </div>
       </div>
 
@@ -99,6 +117,12 @@ function TaskSettings({ task, isBlocked }: { task: Task; isBlocked: boolean }) {
           <div className="divide-y divide-border">
             <FieldRow label="Run">{task.run}</FieldRow>
             <FieldRow label="Tool">{task.tool ?? "config default"}</FieldRow>
+            <FieldRow label="Model">
+              {task.model ?? <Inherited />}
+            </FieldRow>
+            <FieldRow label="Effort">
+              {task.effort ?? <Inherited />}
+            </FieldRow>
             <FieldRow label="Worktree mode">
               {WORKTREE_MODES[task.worktree_mode_override ?? task.worktree_mode].label}
               {task.worktree_mode_override && (
@@ -193,6 +217,12 @@ export function TaskTimingRows({ task }: { task: Task }) {
       )}
     </>
   );
+}
+
+/** Shown for a model/effort the task doesn't pin — it inherits the workflow's
+ *  (or global) default, resolved most-specific-wins at execution time. */
+export function Inherited() {
+  return <span className="text-muted-foreground/70">inherited</span>;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

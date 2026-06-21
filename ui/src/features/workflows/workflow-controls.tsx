@@ -9,6 +9,7 @@ import {
   Trash2,
   RotateCcw,
   MoreHorizontal,
+  Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogClose } from "@/components/ui/dialog";
@@ -19,6 +20,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { EditWorkflowDialog } from "./edit-workflow-dialog";
 import { ApiError } from "@/lib/api/client";
 import {
   useStartWorkflow,
@@ -30,7 +32,7 @@ import {
 } from "@/lib/hooks/use-workflows";
 import type { WorkflowDetail } from "@/types/workflow";
 
-type ActiveDialog = "stop" | "restart" | "delete" | null;
+type ActiveDialog = "stop" | "restart" | "delete" | "edit" | null;
 
 /** Workflow header controls — collapsed to one contextual primary button plus a
  *  `⋯` overflow menu, so only the actions that make sense for the current derived
@@ -142,35 +144,44 @@ export function WorkflowControls({
         </Button>
       )}
 
-      {/* Overflow menu — only shows the actions valid for this state. */}
-      {(canRestart || canDelete) && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              disabled={busy}
-              title="More actions"
-              aria-label="More actions"
-            >
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            {canRestart && (
-              <DropdownMenuItem onSelect={() => setDialog("restart")}>
-                <RotateCcw /> Restart…
-              </DropdownMenuItem>
-            )}
-            {canRestart && canDelete && <DropdownMenuSeparator />}
-            {canDelete && (
-              <DropdownMenuItem tone="danger" onSelect={() => setDialog("delete")}>
-                <Trash2 /> Delete…
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      {/* Overflow menu — Edit is always available; Restart/Delete only when valid. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={busy}
+            title="More actions"
+            aria-label="More actions"
+          >
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem onSelect={() => setDialog("edit")}>
+            <Settings2 /> Edit workflow…
+          </DropdownMenuItem>
+          {(canRestart || canDelete) && <DropdownMenuSeparator />}
+          {canRestart && (
+            <DropdownMenuItem onSelect={() => setDialog("restart")}>
+              <RotateCcw /> Restart…
+            </DropdownMenuItem>
+          )}
+          {canRestart && canDelete && <DropdownMenuSeparator />}
+          {canDelete && (
+            <DropdownMenuItem tone="danger" onSelect={() => setDialog("delete")}>
+              <Trash2 /> Delete…
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* Edit workflow dialog — controlled from the menu item above. */}
+      <EditWorkflowDialog
+        workflow={workflow}
+        open={dialog === "edit"}
+        onOpenChange={(o) => setDialog(o ? "edit" : null)}
+      />
 
       {/* ---- Stop dialog: pause (keep work) vs pause + reset ---- */}
       <Dialog open={dialog === "stop"} onOpenChange={(o) => !o && setDialog(null)}>

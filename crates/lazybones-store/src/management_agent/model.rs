@@ -87,12 +87,16 @@ impl SessionMode {
         }
     }
 
-    /// Parse a stored mode string; default to `PerConversation`.
+    /// Parse a stored mode string; default to `PerTurn` — the reliable path.
+    /// Per-conversation resume to a *parked* headless agent is fragile: a finished
+    /// headless `claude` sits at `listening: uncommitted text` and doesn't reliably
+    /// act on the next `hcom send`, so a turn can hang with no reply. A fresh spawn
+    /// per turn (history replayed into the prompt) always acts.
     #[must_use]
     pub fn parse(s: &str) -> Self {
         match s {
-            "per_turn" => SessionMode::PerTurn,
-            _ => SessionMode::PerConversation,
+            "per_conversation" => SessionMode::PerConversation,
+            _ => SessionMode::PerTurn,
         }
     }
 }
@@ -144,7 +148,7 @@ pub struct ManagementAgentConfig {
 
 impl Default for ManagementAgentConfig {
     /// A usable default the API returns when nothing has been configured yet:
-    /// `claude`, `Author`, per-conversation sessions, no skills enabled.
+    /// `claude`, `Author`, per-turn sessions, no skills enabled.
     ///
     /// `permission_flags` is **empty** by design — unlike task agents, the
     /// management agent runs in a scratch dir bootstrapped with a Claude
@@ -158,7 +162,7 @@ impl Default for ManagementAgentConfig {
             model: None,
             effort: None,
             permission_profile: PermissionProfile::Author,
-            session_mode: SessionMode::PerConversation,
+            session_mode: SessionMode::PerTurn,
             enabled_skills: Vec::new(),
             permission_flags: Vec::new(),
             updated_at: String::new(),

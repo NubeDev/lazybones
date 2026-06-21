@@ -113,6 +113,32 @@ impl Hcom {
         Ok(events)
     }
 
+    /// The id of the newest event hcom currently knows about, or `0` if there are
+    /// none. Used by the management runner to pin a cursor *before* it spawns the
+    /// agent, so its incremental drain (`events_since`) sees only this turn's
+    /// output and never replays the conversation's backlog.
+    ///
+    /// # Errors
+    /// Returns an error if hcom cannot be launched or reports a SQL error.
+    pub async fn latest_event_id(&self) -> anyhow::Result<u64> {
+        let mut cmd = self.command();
+        cmd.arg("events").arg("--sql").arg("1=1").arg("--last").arg("1");
+        let out = cmd.output().await?;
+        if out.status.code() == Some(2) {
+            anyhow::bail!(
+                "hcom events --sql failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        let latest = parse_events(&String::from_utf8_lossy(&out.stdout))
+            .iter()
+            .filter_map(HcomEvent::id_int)
+            .map(|id| u64::try_from(id).unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        Ok(latest)
+    }
+
     /// The argv for the backlog drain — `events --sql "id > {cursor}" --last
     /// {DRAIN_CAP}`, no `--wait`. Factored out so the no-`--wait` contract is
     /// unit-testable without spawning hcom.

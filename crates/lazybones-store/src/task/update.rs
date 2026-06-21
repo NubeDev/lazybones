@@ -1,6 +1,6 @@
 //! Edit the seed fields of an existing task (the authoring re-write).
 //!
-//! Overwrites only the fields a human authors — title/spec/deps/owns/tool — and
+//! Overwrites only the fields a human authors — title/spec/deps/owns/tool/model/effort — and
 //! preserves the lifecycle + claim state exactly as [`upsert_task`](super::upsert::upsert_task)
 //! does on re-import (SCOPE.md: the DB is authoritative; an edit must not reset a
 //! `running` or `done` task). Dep edges are not touched here; the handle diffs
@@ -27,6 +27,10 @@ pub struct TaskEdit {
     pub owns: Vec<String>,
     /// New per-task agent tool override; `None` falls back to the run config.
     pub tool: Option<String>,
+    /// New per-task model override; `None` falls back to the run/global default.
+    pub model: Option<String>,
+    /// New per-task effort override; `None` falls back to the run/global default.
+    pub effort: Option<String>,
     /// New worktree provisioning intent for the loop's next claim.
     pub worktree_mode: WorktreeMode,
     /// The hands-off auto-retry policy. The outer `Option` is *edit presence*
@@ -59,6 +63,8 @@ pub async fn update_task(db: &Surreal<Db>, id: &str, edit: TaskEdit) -> Result<T
     to_write.deps = edit.deps;
     to_write.owns = edit.owns;
     to_write.tool = edit.tool;
+    to_write.model = edit.model;
+    to_write.effort = edit.effort;
     to_write.worktree_mode = edit.worktree_mode;
     // Policy edits are presence-gated: only overwrite when the caller supplied one.
     if let Some(auto_retry) = edit.auto_retry {

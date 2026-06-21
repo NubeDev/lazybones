@@ -35,6 +35,8 @@ pub async fn update_task(
                 deps: body.deps.clone(),
                 owns: body.owns,
                 tool: body.tool,
+                model: body.model,
+                effort: body.effort,
                 worktree_mode: body.worktree_mode,
                 // The auto-retry policy is operator config (Block-guarded), set via
                 // the retry route — not touched by this Author-guarded re-authoring.
