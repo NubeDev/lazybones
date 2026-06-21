@@ -39,6 +39,8 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
     sending,
     working,
     activity,
+    startedAt,
+    lastDurationMs,
     error,
     send,
     stop,
@@ -160,7 +162,12 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
           {messages.map((m, i) => (
             <MessageItem key={`${m.at}-${i}`} message={m} />
           ))}
-          {working && <WorkingBubble activity={activity} />}
+          {working && <WorkingBubble activity={activity} startedAt={startedAt} />}
+          {!working && lastDurationMs != null && (
+            <p className="px-1 text-[10px] text-muted-foreground/70">
+              Took {formatDuration(lastDurationMs)}
+            </p>
+          )}
           <div ref={endRef} />
         </div>
       </ScrollArea>
@@ -330,16 +337,46 @@ function MessageItem({ message }: { message: AgentMessage }) {
  *  moment a turn is sent until its reply streams back over SSE. The turn runs
  *  off-request for 5–180s, so this is what tells the operator it's alive rather
  *  than leaving a dead pause (scope §8 — live feedback). */
-function WorkingBubble({ activity }: { activity: string | null }) {
+function WorkingBubble({
+  activity,
+  startedAt,
+}: {
+  activity: string | null;
+  startedAt: number | null;
+}) {
+  const elapsed = useElapsed(startedAt);
   return (
     <div className="flex flex-col items-start gap-0.5">
       <div className="flex max-w-[85%] items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1.5 text-xs leading-snug text-muted-foreground">
         <Loader2 className="size-3.5 animate-spin" />
         <span>{activity ?? "Agent is working…"}</span>
       </div>
-      <span className="px-1 text-[10px] text-muted-foreground/70">agent</span>
+      <span className="px-1 text-[10px] text-muted-foreground/70">
+        agent{elapsed != null ? ` · ${formatDuration(elapsed)}` : ""}
+      </span>
     </div>
   );
+}
+
+/** A live elapsed-ms value that ticks ~every second while `startedAt` is set. */
+function useElapsed(startedAt: number | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt == null) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [startedAt]);
+  return startedAt == null ? null : Math.max(0, now - startedAt);
+}
+
+/** Format a ms duration compactly: `8s`, `1m 5s`. */
+function formatDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
 /** One message bubble. Operator turns right/accented, agent replies left/muted,
