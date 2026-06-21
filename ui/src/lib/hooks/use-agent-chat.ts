@@ -16,6 +16,14 @@ export interface AgentChatState {
   messages: AgentMessage[];
   connected: boolean;
   sending: boolean;
+  /** True from the moment a turn is sent until the agent's reply (or a timeout
+   *  note) arrives over SSE. Drives the panel's live "working…" indicator — the
+   *  turn is fire-and-forget, so `sending` flips false almost immediately while
+   *  the agent is still doing REST work for 5–180s. */
+  working: boolean;
+  /** The agent's latest live activity note while working ("Running a command…"),
+   *  streamed from its hcom tool-status events; null when idle/unknown. */
+  activity: string | null;
   error: string | null;
   /** Post a turn; opens a conversation on first send. */
   send: (text: string, pageContext?: PageContext) => Promise<void>;
@@ -38,6 +46,8 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [connected, setConnected] = useState(false);
   const [sending, setSending] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [activity, setActivity] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // De-dupe by (role, at, text) so a seed + stream overlap doesn't double-render.
   const seen = useRef<Set<string>>(new Set());
@@ -54,6 +64,8 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
     setMessages([]);
     setError(null);
     setConnected(false);
+    setWorking(false);
+    setActivity(null);
     setConversation(id);
   }, []);
 
@@ -62,8 +74,20 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
     setMessages([]);
     setError(null);
     setConnected(false);
+    setWorking(false);
+    setActivity(null);
     setConversation(null);
   }, []);
+
+  // Safety net for the working indicator: a turn replies (or times out with a
+  // note) within the runner's 180s budget, normally clearing `working` over SSE.
+  // If the stream is down so no message arrives, auto-clear a bit past that
+  // budget so the composer never stays locked forever.
+  useEffect(() => {
+    if (!working) return;
+    const t = setTimeout(() => setWorking(false), 195_000);
+    return () => clearTimeout(t);
+  }, [working]);
 
   // Subscribe to the per-conversation SSE stream once a conversation exists.
   useEffect(() => {
@@ -104,6 +128,22 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
       }
       if (msg.conversation_id !== conversation) return;
       append(msg);
+      // The agent has produced something for this turn — a reply, a confirm
+      // proposal, or a runner note (e.g. the timeout note). Stop the working
+      // indicator; the operator's own echoed turn (`user`) doesn't count.
+      if (msg.role !== "user") {
+        setWorking(false);
+        setActivity(null);
+      }
+    });
+    // Ephemeral "what the agent is doing now" ticks (not persisted).
+    es.addEventListener("activity", (ev) => {
+      try {
+        const { text } = JSON.parse((ev as MessageEvent).data) as { text: string };
+        if (text) setActivity(text);
+      } catch {
+        /* ignore malformed activity */
+      }
     });
     es.addEventListener("error", () => setConnected(false));
 
@@ -131,8 +171,14 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
           setConversation(res.conversation);
         }
         append(res.message);
+        // The turn is now running off-request on the daemon; show "working…"
+        // until its reply (or a timeout note) streams back over SSE.
+        setWorking(true);
+        setActivity(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "send failed");
+        setWorking(false);
+        setActivity(null);
       } finally {
         setSending(false);
       }
@@ -145,6 +191,8 @@ export function useAgentChat(initialConversation?: string | null): AgentChatStat
     messages,
     connected,
     sending,
+    working,
+    activity,
     error,
     send,
     openConversation,

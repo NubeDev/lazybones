@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, History, Plus, Send, MessagesSquare, RotateCcw, X } from "lucide-react";
+import { Bot, History, Loader2, Plus, Send, MessagesSquare, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/ui/markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,6 +27,8 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
     messages,
     connected,
     sending,
+    working,
+    activity,
     error,
     send,
     openConversation,
@@ -42,7 +44,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length]);
+  }, [messages.length, working]);
 
   // When the panel is on a fresh thread, offer to resume the most recent past
   // conversation that was opened on this same page scope (e.g. this template).
@@ -56,9 +58,10 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
     return match ?? null;
   }, [conversation, conversations, context, dismissedResume]);
 
+  const busy = sending || working;
   const submit = () => {
     const t = text.trim();
-    if (!t || sending) return;
+    if (!t || busy) return;
     void send(t, context);
     setText("");
   };
@@ -146,6 +149,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
           {messages.map((m, i) => (
             <MessageItem key={`${m.at}-${i}`} message={m} />
           ))}
+          {working && <WorkingBubble activity={activity} />}
           <div ref={endRef} />
         </div>
       </ScrollArea>
@@ -155,7 +159,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
       <div className="flex items-end gap-2 border-t border-border p-3">
         <textarea
           value={text}
-          disabled={sending}
+          disabled={busy}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -163,7 +167,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
               submit();
             }
           }}
-          placeholder="Message the Lazybones Agent…"
+          placeholder={working ? "Agent is working…" : "Message the Lazybones Agent…"}
           rows={2}
           className={cn(
             "flex-1 resize-none rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs",
@@ -171,7 +175,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
             "disabled:cursor-not-allowed disabled:opacity-60",
           )}
         />
-        <Button size="sm" disabled={sending || !text.trim()} onClick={submit} title="Send (Enter)">
+        <Button size="sm" disabled={busy || !text.trim()} onClick={submit} title="Send (Enter)">
           <Send /> Send
         </Button>
       </div>
@@ -293,6 +297,22 @@ function MessageItem({ message }: { message: AgentMessage }) {
     return <AgentConfirmCard summary={message.text} action={message.action} />;
   }
   return <Bubble role={message.role} text={message.text} at={message.at} />;
+}
+
+/** A live "agent is working…" placeholder shown on the agent (left) side from the
+ *  moment a turn is sent until its reply streams back over SSE. The turn runs
+ *  off-request for 5–180s, so this is what tells the operator it's alive rather
+ *  than leaving a dead pause (scope §8 — live feedback). */
+function WorkingBubble({ activity }: { activity: string | null }) {
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <div className="flex max-w-[85%] items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1.5 text-xs leading-snug text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" />
+        <span>{activity ?? "Agent is working…"}</span>
+      </div>
+      <span className="px-1 text-[10px] text-muted-foreground/70">agent</span>
+    </div>
+  );
 }
 
 /** One message bubble. Operator turns right/accented, agent replies left/muted,

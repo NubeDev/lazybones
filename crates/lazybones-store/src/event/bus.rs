@@ -50,6 +50,16 @@ pub enum LiveEvent {
     /// mirrored agent replies, and tool-action transparency notes
     /// (`docs/agent/lazybones-agent-scope.md` §8.4).
     AgentMessage(AgentMessage),
+    /// An ephemeral management-agent *activity* tick (NOT persisted) — what the
+    /// agent is doing right now ("Running Bash…", "Reading…"), derived from its
+    /// hcom tool-status events. Published on the per-conversation SSE so the panel
+    /// shows live progress instead of a blank spinner; history stays clean.
+    AgentActivity {
+        /// The conversation this activity belongs to.
+        conversation_id: String,
+        /// A short human-readable note ("Running Bash…").
+        text: String,
+    },
 }
 
 /// A cloneable publish/subscribe handle for the live feed.

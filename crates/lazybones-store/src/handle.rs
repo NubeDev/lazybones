@@ -479,6 +479,16 @@ impl StoreHandle {
         Ok(message)
     }
 
+    /// Publish an ephemeral management-agent *activity* tick on the live bus for
+    /// the per-conversation SSE — "what the agent is doing right now". NOT
+    /// persisted (a no-op for reloaded history); pure live feedback.
+    pub fn report_agent_activity(&self, conversation_id: &str, text: &str) {
+        self.bus.publish(LiveEvent::AgentActivity {
+            conversation_id: conversation_id.to_owned(),
+            text: text.to_owned(),
+        });
+    }
+
     /// Append a gated `confirm` message proposing `action` and publish it on the
     /// live bus for the per-conversation stream. The agent only *proposes*; the
     /// UI issues the call under the operator's token (scope §10.2).

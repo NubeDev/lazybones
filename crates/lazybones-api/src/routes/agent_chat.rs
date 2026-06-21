@@ -166,6 +166,15 @@ fn to_sse(
         LiveEvent::AgentMessage(msg) if msg.conversation_id == conversation => {
             Some(Ok(SseEvent::default().event("message").json_data(msg).ok()?))
         }
+        // Ephemeral "what the agent is doing now" tick — a separate `activity`
+        // event the panel renders as the live working line (not stored).
+        LiveEvent::AgentActivity {
+            conversation_id,
+            text,
+        } if conversation_id == conversation => Some(Ok(SseEvent::default()
+            .event("activity")
+            .json_data(serde_json::json!({ "text": text }))
+            .ok()?)),
         _ => None,
     }
 }

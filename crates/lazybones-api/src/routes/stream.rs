@@ -54,10 +54,10 @@ fn to_sse(
         LiveEvent::Activity(activity) => SseEvent::default().event("activity").json_data(activity),
         LiveEvent::HcomLog(entry) => SseEvent::default().event("hcom_log").json_data(entry),
         LiveEvent::Chat(message) => SseEvent::default().event("chat").json_data(message),
-        // Lazybones-Agent messages are carried only on the per-conversation
-        // stream (`/agent/chat/:conversation/stream`), never fanned out to every
-        // global `/stream` client (docs/agent/lazybones-agent-scope.md §8.4).
-        LiveEvent::AgentMessage(_) => return None,
+        // Lazybones-Agent messages + activity ticks are carried only on the
+        // per-conversation stream (`/agent/chat/:conversation/stream`), never
+        // fanned out to every global `/stream` client (scope §8.4).
+        LiveEvent::AgentMessage(_) | LiveEvent::AgentActivity { .. } => return None,
     };
     Some(Ok(sse.ok()?))
 }

@@ -104,6 +104,12 @@ pub async fn chat_turn(
     let session_live = matches!(config.session_mode, SessionMode::PerConversation)
         && session_exists(&hcom, conversation_id).await;
 
+    // Pin a cursor at the newest event *before* we spawn/send, so the incremental
+    // drain below sees only this turn's output and never replays the conversation's
+    // backlog. A failure here is non-fatal — we fall back to a cursor of 0 and the
+    // daemon/thread filters still keep us to fresh, agent-authored messages.
+    let mut cursor = hcom.latest_event_id().await.unwrap_or(0);
+
     if config.session_mode == SessionMode::PerTurn || !session_live {
         // Spawn a fresh session for this conversation. The management agent has no
         // worktree — it works purely through REST — so it runs in a dedicated
@@ -127,80 +133,204 @@ pub async fn chat_turn(
         hcom.send(conversation_id, user_text).await?;
     }
 
-    // Wait for the agent's reply on the conversation thread. Exclude the daemon's
-    // own messages: delivering a follow-up turn via `--from lazybones` posts that
-    // message onto the thread as `instance = 'ext_lazybones'`, and without this
-    // filter the wait would return immediately with the operator's own words
-    // echoed back as the "reply" instead of blocking for the agent's actual reply.
-    // The sender is the top-level `instance` column in hcom's `events_v` view
-    // (not a `data.$.from` JSON field).
+    // Live feedback (Problem 1): the agent may spend 5–180s doing REST round-trips
+    // before it replies. Incrementally drain the thread so each agent message lands
+    // on the conversation (and the SSE feed) the moment it's posted, AND emit
+    // ephemeral "Running a command…" activity ticks from the agent's tool-status
+    // events — so the operator sees live progress, not a blank spinner. Durable
+    // history gets only the messages; the activity ticks are transient. The agent's
+    // hcom base name (which attributes its status events) is resolved lazily inside
+    // the loop, since a freshly spawned agent isn't in `hcom list` immediately.
+    stream_replies(store, &hcom, conversation_id, &config, &mut cursor).await;
+
+    Ok(())
+}
+
+/// Resolve the hcom base name of the agent spawned for `tag` (the conversation
+/// id), e.g. `kale` for `ecksj…-kale`. Tool-status events are attributed to this
+/// base name. `None` if no live agent is found (activity streaming is then a
+/// no-op; messages still stream by thread).
+async fn agent_base_name(hcom: &Hcom, tag: &str) -> Option<String> {
+    match hcom.list().await {
+        Ok(agents) => agents
+            .into_iter()
+            .find(|a| a.tag.as_deref() == Some(tag) && a.status != "dead")
+            .map(|a| a.base_name),
+        Err(e) => {
+            tracing::warn!("management: hcom list for base name failed: {e}");
+            None
+        }
+    }
+}
+
+/// A short human-readable note for a tool-status `context` like `tool:Bash`.
+fn activity_note(context: &str) -> Option<String> {
+    let tool = context.strip_prefix("tool:")?;
+    let verb = match tool {
+        "Bash" => "Running a command",
+        "Read" => "Reading a file",
+        "Edit" | "Write" => "Writing a file",
+        "Glob" | "Grep" => "Searching",
+        "WebFetch" | "WebSearch" => "Looking something up",
+        "Task" => "Working",
+        other => return Some(format!("Using {other}…")),
+    };
+    Some(format!("{verb}…"))
+}
+
+/// How often to drain the conversation thread while waiting for the agent. Short
+/// enough that a reply (or an intermediate message) reaches the panel promptly,
+/// long enough not to hammer the `hcom` binary.
+const POLL_INTERVAL: Duration = Duration::from_millis(1200);
+
+/// Drain the conversation thread incrementally until the agent has replied and
+/// then gone quiet, or [`REPLY_TIMEOUT`] elapses. Every fresh agent message is
+/// streamed onto the durable conversation (and thus the SSE feed) as it arrives —
+/// so the operator sees progress, not one final dump after a long pause.
+///
+/// `cursor` is advanced past every event consumed, so re-polls never re-emit. A
+/// timeout with no reply appends a re-runnable note rather than erroring.
+async fn stream_replies(
+    store: &StoreHandle,
+    hcom: &Hcom,
+    conversation_id: &str,
+    config: &ManagementAgentConfig,
+    cursor: &mut u64,
+) {
     let ext_sender = format!("ext_{DAEMON_SENDER}");
-    let sql = format!(
-        "type = 'message' \
-         AND json_extract(data, '$.thread') = '{conversation_id}' \
-         AND instance != '{ext_sender}'"
-    );
-    let events = hcom.wait(&sql, REPLY_TIMEOUT).await.unwrap_or_default();
+    let deadline = tokio::time::Instant::now() + REPLY_TIMEOUT;
+    // Once the first real agent message lands the turn is essentially answered; we
+    // poll one more interval to catch any trailing message, then stop — rather
+    // than blocking out the full timeout.
+    let mut replied = false;
+    // Coalesce repeated identical activity ticks (claude fires several `tool:Bash`
+    // status events per call) so we don't spam the panel with the same line.
+    let mut last_activity: Option<String> = None;
+    // The agent's hcom base name, resolved lazily (a freshly spawned agent isn't
+    // in `hcom list` immediately). Until known, status-event attribution is skipped.
+    let mut agent_base: Option<String> = None;
 
-    // Belt-and-suspenders: skip any event still attributed to the daemon sender.
-    let reply = events.iter().rev().find_map(|e| {
-        if e.instance == ext_sender || e.instance == DAEMON_SENDER {
-            return None;
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            break;
         }
-        e.data
-            .get("text")
-            .and_then(|t| t.as_str())
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| (t.to_owned(), e.id_int()))
-    });
+        tokio::time::sleep(POLL_INTERVAL).await;
 
-    match reply {
-        Some((text, hcom_id)) => {
-            let parsed = super::confirm::parse_reply(&text);
-            // Persist the prose reply (if any) so the operator sees the agent's
-            // explanation alongside the confirm card.
-            if !parsed.text.is_empty() {
-                store
-                    .append_agent_message(conversation_id, AgentRole::Agent, &parsed.text, hcom_id)
-                    .await?;
+        if agent_base.is_none() {
+            agent_base = agent_base_name(hcom, conversation_id).await;
+        }
+
+        let events = match hcom.events_since(*cursor).await {
+            Ok(events) => events,
+            Err(e) => {
+                tracing::warn!(conversation = %conversation_id, "management: drain failed: {e}");
+                continue;
             }
-            // A gated action is only honoured when the profile allows it; an
-            // agent on a read/author profile that tries to propose one gets it
-            // surfaced as prose, never as an actionable card.
-            if let Some((summary, action)) = parsed.confirm {
-                if config.permission_profile.can_manage() {
-                    store
-                        .append_confirm_request(conversation_id, &summary, &action, hcom_id)
-                        .await?;
-                } else {
-                    store
-                        .append_agent_message(
-                            conversation_id,
-                            AgentRole::Tool,
-                            &format!(
-                                "(the agent proposed a lifecycle action — {summary} — but its \
-                                 permission profile cannot manage; enable \"Author & manage\" to \
-                                 act on it)"
-                            ),
-                            None,
-                        )
-                        .await?;
+        };
+
+        let mut saw_new = false;
+        for e in &events {
+            if let Some(id) = e.id_int().and_then(|id| u64::try_from(id).ok()) {
+                *cursor = (*cursor).max(id);
+            }
+
+            // Stream ephemeral activity from the agent's tool-status events
+            // ("Running a command…"), attributed by base name. Not persisted.
+            if e.kind == "status"
+                && agent_base.as_deref().is_some_and(|b| e.instance == b)
+                && let Some(context) = e.data.get("context").and_then(|c| c.as_str())
+                && let Some(note) = activity_note(context)
+            {
+                if last_activity.as_deref() != Some(note.as_str()) {
+                    store.report_agent_activity(conversation_id, &note);
+                    last_activity = Some(note);
                 }
+                continue;
             }
+
+            // Only the agent's own messages on *this* thread; skip the daemon's
+            // own `--from lazybones` echoes (top-level `instance` column).
+            if e.kind != "message" || e.instance == ext_sender || e.instance == DAEMON_SENDER {
+                continue;
+            }
+            if e.data.get("thread").and_then(|t| t.as_str()) != Some(conversation_id) {
+                continue;
+            }
+            let Some(text) = e
+                .data
+                .get("text")
+                .and_then(|t| t.as_str())
+                .filter(|t| !t.trim().is_empty())
+            else {
+                continue;
+            };
+            saw_new = true;
+            replied = true;
+            persist_reply(store, conversation_id, config, text, e.id_int()).await;
         }
-        None => {
+
+        // After the agent has answered, one quiet poll (no new messages) ends the
+        // turn — no need to hold the session open until the full timeout.
+        if replied && !saw_new {
+            return;
+        }
+    }
+
+    if !replied {
+        let _ = store
+            .append_agent_message(
+                conversation_id,
+                AgentRole::Tool,
+                "(the agent did not reply in time — send another message to continue)",
+                None,
+            )
+            .await;
+    }
+}
+
+/// Persist one agent message: its prose as an [`AgentRole::Agent`] reply, and a
+/// `CONFIRM:` line (managed profile only) as a gated confirm request — otherwise
+/// surfaced as prose so a read/author agent can't smuggle an actionable card.
+async fn persist_reply(
+    store: &StoreHandle,
+    conversation_id: &str,
+    config: &ManagementAgentConfig,
+    text: &str,
+    hcom_id: Option<i64>,
+) {
+    let parsed = super::confirm::parse_reply(text);
+    if !parsed.text.is_empty()
+        && let Err(e) = store
+            .append_agent_message(conversation_id, AgentRole::Agent, &parsed.text, hcom_id)
+            .await
+    {
+        tracing::warn!(conversation = %conversation_id, "management: persist reply failed: {e}");
+    }
+    if let Some((summary, action)) = parsed.confirm {
+        let result = if config.permission_profile.can_manage() {
+            store
+                .append_confirm_request(conversation_id, &summary, &action, hcom_id)
+                .await
+                .map(|_| ())
+        } else {
             store
                 .append_agent_message(
                     conversation_id,
                     AgentRole::Tool,
-                    "(the agent did not reply in time — send another message to continue)",
+                    &format!(
+                        "(the agent proposed a lifecycle action — {summary} — but its \
+                         permission profile cannot manage; enable \"Author & manage\" to \
+                         act on it)"
+                    ),
                     None,
                 )
-                .await?;
+                .await
+                .map(|_| ())
+        };
+        if let Err(e) = result {
+            tracing::warn!(conversation = %conversation_id, "management: persist confirm failed: {e}");
         }
     }
-
-    Ok(())
 }
 
 /// Whether `flag` is a bypass-permissions flag that must not reach the headless
