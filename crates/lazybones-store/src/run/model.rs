@@ -1,7 +1,7 @@
 //! The durable `Run` document — a Workflow: one concrete, one-off run on a repo.
 //!
 //! A Run is bound to a **workspace** (the repo + the git config its tasks
-//! inherit). Only `lifecycle` (`active | cancelled`) is a stored, human-set
+//! inherit). Only `lifecycle` (`active | stopped`) is a stored, human-set
 //! field; the user-facing *state* is **derived** from the run's tasks on read
 //! (see [`derived_state`](super::derived::derived_state)) so it can never drift
 //! from reality (SCOPE.md principle 6 — the DB is truth, not a rollup that lies).
@@ -95,14 +95,22 @@ pub struct Workspace {
 }
 
 /// The human-set lifecycle of a Run. Distinct from the derived *state*.
+///
+/// Only `done` (derived) and a hard `delete` are truly terminal — every
+/// lifecycle here is reversible, so the UI never claims a run is finished when it
+/// is not. A human pauses a run into `Stopped` (the scheduler then promotes/claims
+/// nothing) and flips it back to `Active` with resume. The old terminal
+/// `Cancelled` tombstone is gone: `delete` is the archive path, and any legacy
+/// `cancelled` row reads back as `Stopped` (resumable) — no migration needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lifecycle {
-    /// The workflow is live; the scheduler may claim its ready tasks.
+    /// The workflow is live; the scheduler may promote and claim its tasks.
     #[default]
     Active,
-    /// The workflow was cancelled by a human; no more tasks are promoted.
-    Cancelled,
+    /// The workflow was paused by a human: the scheduler promotes/claims nothing
+    /// until it is resumed. Fully reversible (resume → `Active`), never terminal.
+    Stopped,
 }
 
 impl Lifecycle {
@@ -111,15 +119,17 @@ impl Lifecycle {
     pub fn as_str(self) -> &'static str {
         match self {
             Lifecycle::Active => "active",
-            Lifecycle::Cancelled => "cancelled",
+            Lifecycle::Stopped => "stopped",
         }
     }
 
-    /// Parse the stored form; unknown values fall back to `Active`.
+    /// Parse the stored form; unknown values fall back to `Active`. The legacy
+    /// `cancelled` tombstone maps to `Stopped` so old rows become resumable
+    /// without a migration.
     #[must_use]
     pub fn parse(s: Option<&str>) -> Self {
         match s {
-            Some("cancelled") => Lifecycle::Cancelled,
+            Some("stopped" | "cancelled") => Lifecycle::Stopped,
             _ => Lifecycle::Active,
         }
     }

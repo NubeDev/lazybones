@@ -78,6 +78,12 @@ pub async fn post_chat(
         .await?
         .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
+    // A stopped (paused) workflow's tasks are not revivable: a chat post revives a
+    // blocked task (and even on a pending one is folded into the next claim), so
+    // it would steer/re-run work in a run the operator paused. Refuse until the
+    // workflow is resumed — consistent with retry/auto-retry.
+    super::guard::ensure_run_revivable(&state, &task).await?;
+
     // A done task is terminal and merged; there is no agent and no kept worktree
     // to resume. Restarting is the right tool, so reject before storing a message
     // that could never be acted on.

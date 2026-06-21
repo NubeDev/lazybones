@@ -73,20 +73,26 @@ struct Readiness {
     ready: bool,
 }
 
-/// The concept ids of `pending` tasks whose every dependency is `done`.
+/// The concept ids of `pending` tasks whose every dependency is `done`,
+/// **excluding** any task whose `run_id` is in `stopped_runs`.
 ///
 /// A task with no dependencies is ready immediately. Runs over the `depends_on`
-/// graph so the answer reflects the current status of each dependency.
+/// graph so the answer reflects the current status of each dependency. A paused
+/// (stopped) workflow promotes nothing, so its pending tasks are filtered out at
+/// the query — standalone tasks (`run_id = NONE`) are never excluded. Pass `&[]`
+/// to promote freely.
 ///
 /// # Errors
 /// Returns [`StoreError::Operation`] if the query fails.
-pub async fn newly_ready(db: &Surreal<Db>) -> Result<Vec<String>> {
+pub async fn newly_ready(db: &Surreal<Db>, stopped_runs: &[String]) -> Result<Vec<String>> {
     let rows: Vec<Readiness> = db
         .query(format!(
             "SELECT meta::id(id) AS id, \
              array::all((->depends_on->task.status), |$s| $s = 'done') AS ready \
-             FROM {TASK_TABLE} WHERE status = 'pending'"
+             FROM {TASK_TABLE} \
+             WHERE status = 'pending' AND (run_id = NONE OR run_id NOT IN $stopped)"
         ))
+        .bind(("stopped", stopped_runs.to_vec()))
         .await
         .map_err(StoreError::Operation)?
         .take(0)

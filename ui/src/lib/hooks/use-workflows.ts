@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addWorkflowTask,
-  cancelWorkflow,
   createWorkflow,
   deleteWorkflow,
   getWorkflow,
@@ -12,6 +11,8 @@ import {
   retryTask,
   setAutoRetry,
   startWorkflow,
+  stopResetWorkflow,
+  stopWorkflow,
   type RestartOptions,
   type WorkflowTaskDraft,
   type WorkspaceDraft,
@@ -91,11 +92,21 @@ export function useStartWorkflow() {
   });
 }
 
-/** Cancel a workflow (`POST /workflows/:id/cancel`). */
-export function useCancelWorkflow() {
+/** Stop (pause) a workflow (`POST /workflows/:id/stop`) — reversible. */
+export function useStopWorkflow() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => cancelWorkflow(id),
+    mutationFn: (id: string) => stopWorkflow(id),
+    onSuccess: () => invalidate(qc),
+  });
+}
+
+/** Stop & reset a workflow (`POST /workflows/:id/stop-reset`) — pause + reset
+ *  unfinished tasks to pending. Still reversible. */
+export function useStopResetWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => stopResetWorkflow(id),
     onSuccess: () => invalidate(qc),
   });
 }
@@ -110,7 +121,8 @@ export function useRestartWorkflow() {
   });
 }
 
-/** Resume a workflow → reset only its blocked tasks (`POST /workflows/:id/resume`). */
+/** Resume a workflow → flip lifecycle active + reset its blocked tasks
+ *  (`POST /workflows/:id/resume`). The un-pause for a stopped run. */
 export function useResumeWorkflow() {
   const qc = useQueryClient();
   return useMutation({

@@ -1,10 +1,11 @@
 //! `DELETE /workflows/:id` — hard-delete a workflow and its tasks.
 //!
-//! Distinct from `cancel` (which keeps the record with `lifecycle=cancelled`
-//! for history): delete removes the run row and cascades to its tasks. It
-//! refuses (`409`) if any task is still live (`running`/`gating`) so a delete
-//! can't orphan a worktree or leave an agent running — cancel first, then
-//! delete. Requires `Author` (loop-only), like the other delete routes.
+//! Distinct from `stop` (which keeps the record with `lifecycle=stopped`,
+//! reversibly): delete is the real archive path — it removes the run row and
+//! cascades to its tasks. It refuses (`409`) if any task is still live
+//! (`running`/`gating`) so a delete can't orphan a worktree or leave an agent
+//! running — stop first, then delete. Requires `Author` (loop-only), like the
+//! other delete routes.
 
 use axum::Json;
 use axum::extract::{Path, State};

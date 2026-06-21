@@ -12,7 +12,9 @@ use std::path::Path;
 use std::process::Command;
 
 use lazybones_engine::{EngineConfig, MergeMode, harness::Engine};
-use lazybones_store::{Status, StoreEngine, StoreHandle, Task};
+use lazybones_store::{
+    Run, Status, StoreEngine, StoreHandle, Task, WorktreeMode, Workspace,
+};
 
 /// Write a `hcom` stub that prints `Names: testagent` on launch, emits a DONE
 /// event on `events --wait`, and `[]` on `list --json`. Returns its path.
@@ -137,6 +139,74 @@ async fn task_walks_lifecycle_and_respects_dependency() {
     assert_eq!(status_of(&store, "auth").await, Status::Running, "auth starts after store done");
     let auth_done = wait_for(&store, "auth", Status::Done).await;
     assert!(auth_done, "auth should reach done; got {:?}", status_of(&store, "auth").await);
+}
+
+/// A workspace pointing at `repo` with all-inherited git config.
+fn workspace(repo: &Path) -> Workspace {
+    Workspace {
+        repo: repo.to_string_lossy().into_owned(),
+        base_branch: None,
+        branch_prefix: None,
+        worktree_mode: WorktreeMode::New,
+        tool: None,
+        model: None,
+        effort: None,
+        gate: None,
+        merge: None,
+    }
+}
+
+/// A stopped (paused) workflow must promote/claim nothing: a `ready` task whose
+/// parent run is `stopped` stays `ready` across a tick — no agent is spawned.
+/// This is the regression guard for the "cancelled run still runs" bug.
+#[tokio::test]
+async fn stopped_run_claims_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo_with_remote(tmp.path());
+    let hcom_bin = write_fake_hcom(tmp.path());
+
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+
+    // A workflow with one task already `ready`, then paused.
+    let run = Run::new("wf-stopped", "Stopped WF", workspace(&repo), "2026-01-01T00:00:00Z");
+    store.create_run(&run).await.unwrap();
+    let mut t = Task::seed("solo", "wf-stopped", "Solo", "build it", vec![], vec![], None);
+    t.run_id = Some("wf-stopped".into());
+    t.status = Status::Ready;
+    store.create_task(&t).await.unwrap();
+    store.stop_run("wf-stopped").await.unwrap();
+
+    let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(&repo), &hcom_bin);
+
+    // A full tick: reconcile → promote → claim. The stopped run must be skipped
+    // at claim, so the task is never moved off `ready`.
+    engine.tick().await;
+    assert_eq!(
+        status_of(&store, "solo").await,
+        Status::Ready,
+        "a stopped run's ready task must not be claimed"
+    );
+
+    // Give any (erroneously) spawned finish task a moment; it must still not run.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert_eq!(
+        status_of(&store, "solo").await,
+        Status::Ready,
+        "still not claimed after a grace window"
+    );
+
+    // Resume flips the run active; now the same task is claimed on the next tick.
+    // (The fake agent is instant, so it may already have raced past `running` to
+    // `gating`/`done` — the point is it left `ready`, i.e. it was claimed.)
+    store.resume_run("wf-stopped").await.unwrap();
+    engine.tick().await;
+    let after = status_of(&store, "solo").await;
+    assert!(
+        matches!(after, Status::Running | Status::Gating | Status::Done),
+        "after resume the task is claimed and an agent spawned; got {after:?}"
+    );
 }
 
 /// Poll a task's status up to ~5s, returning whether it reached `target`.

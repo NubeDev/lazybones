@@ -1,8 +1,8 @@
 //! Workflows (stored in the `run` table): the workspace-bound model, its row, the
-//! verbs that create/read/list/cancel/start them, the `list_run_tasks` query, and
-//! the pure `derived_state` function (run state is derived, never stored).
+//! verbs that create/read/list/stop/resume/start them, the `list_run_tasks`
+//! query, and the pure `derived_state` function (run state is derived, never
+//! stored).
 
-mod cancel;
 mod create;
 mod cursor;
 mod delete;
@@ -10,10 +10,11 @@ mod derived;
 mod get;
 mod list;
 mod model;
+mod resume;
 mod row;
 mod start;
+mod stop;
 
-pub use cancel::cancel_run;
 pub use create::create_run;
 pub use cursor::advance_hcom_cursor;
 pub use delete::delete_run;
@@ -21,7 +22,9 @@ pub use derived::{RunState, derived_state};
 pub use get::get_run;
 pub use list::{list_run_tasks, list_runs};
 pub use model::{Lifecycle, MergeMode, Run, Workspace};
+pub use resume::resume_run;
 pub use start::mark_started;
+pub use stop::stop_run;
 
 #[cfg(test)]
 mod tests {
@@ -100,11 +103,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_sets_lifecycle() {
+    async fn stop_and_resume_flip_lifecycle() {
         let db = db().await;
         create_run(&db, &sample()).await.unwrap();
-        let cancelled = cancel_run(&db, "workflow-1").await.unwrap();
-        assert_eq!(cancelled.lifecycle, Lifecycle::Cancelled);
+        let stopped = stop_run(&db, "workflow-1").await.unwrap();
+        assert_eq!(stopped.lifecycle, Lifecycle::Stopped);
+        // Resume is the reverse — a stopped run is never terminal.
+        let resumed = resume_run(&db, "workflow-1").await.unwrap();
+        assert_eq!(resumed.lifecycle, Lifecycle::Active);
+    }
+
+    #[tokio::test]
+    async fn newly_ready_excludes_stopped_runs_tasks() {
+        use crate::task::newly_ready;
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+
+        // A no-dep pending task owned by workflow-1 — ready while the run is live.
+        let mut t = Task::seed("t1", "workflow-1", "T1", "spec", vec![], vec![], None);
+        t.run_id = Some("workflow-1".into());
+        create_task(&db, &t).await.unwrap();
+        assert_eq!(newly_ready(&db, &[]).await.unwrap(), vec!["t1".to_owned()]);
+
+        // Once the parent run is stopped, the promote query drops its task.
+        stop_run(&db, "workflow-1").await.unwrap();
+        let stopped = vec!["workflow-1".to_owned()];
+        assert!(newly_ready(&db, &stopped).await.unwrap().is_empty());
     }
 
     #[tokio::test]

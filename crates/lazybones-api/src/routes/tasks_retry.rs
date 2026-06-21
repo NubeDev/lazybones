@@ -68,6 +68,10 @@ pub async fn retry_task(
         .await?
         .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
+    // A stopped (paused) workflow's tasks are not revivable — resume it first, or
+    // a revived task would silently re-run the moment the run resumes.
+    super::guard::ensure_run_revivable(&state, &task).await?;
+
     // Only a stuck task is revivable here. A `done` task is finished, merged work
     // (restart the workflow to re-run it); a still-live task (pending/ready/
     // running/gating) is already in the pipeline and would be regressed.

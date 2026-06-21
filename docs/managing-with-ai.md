@@ -185,12 +185,27 @@ curl $BASE/workflows/ship-auth       # detail + task_ids[]
 curl -X POST $BASE/workflows/ship-auth/start -H "$AUTH"   # → { "promoted": ["auth"] }
 ```
 
-**Cancel** (sets lifecycle `cancelled`, stops/blocks its tasks):
+**Stop** (pause; lifecycle `stopped`, kills agents and reclaims running tasks to
+`ready` — no work lost):
 ```sh
-curl -X POST $BASE/workflows/ship-auth/cancel -H "$AUTH"
+curl -X POST $BASE/workflows/ship-auth/stop -H "$AUTH"
 ```
 
-> Workflows have no delete or PATCH endpoint — they are `active` or `cancelled`.
+**Stop & reset** (pause AND reset unfinished tasks to `pending`, discarding
+in-flight progress; done tasks kept):
+```sh
+curl -X POST $BASE/workflows/ship-auth/stop-reset -H "$AUTH"
+```
+
+**Resume** (un-pause; lifecycle `active` + reset blocked tasks — the scheduler
+picks back up):
+```sh
+curl -X POST $BASE/workflows/ship-auth/resume -H "$AUTH"
+```
+
+> A `stopped` workflow promotes/claims nothing and refuses task-level retries
+> (`409`) until resumed — so "stopped" never lies. Stop is reversible; lifecycle is
+> only ever `active` or `stopped`, and `DELETE /workflows/:id` is the archive path.
 
 ---
 

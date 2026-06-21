@@ -4,7 +4,7 @@ import {
   Loader,
   AlertTriangle,
   CheckCircle2,
-  Ban,
+  PauseCircle,
   type LucideIcon,
 } from "lucide-react";
 import type { WorkflowState } from "./workflow";
@@ -50,10 +50,10 @@ export const WORKFLOW_STATE_META: Record<WorkflowState, WorkflowStateMeta> = {
     color: "var(--color-status-done)",
     description: "Every task is done",
   },
-  cancelled: {
-    label: "Cancelled",
-    icon: Ban,
+  stopped: {
+    label: "Stopped",
+    icon: PauseCircle,
     color: "var(--color-status-pending)",
-    description: "Cancelled by a human",
+    description: "Paused by a human — resume to continue",
   },
 };

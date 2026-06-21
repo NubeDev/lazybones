@@ -68,16 +68,18 @@ workspace:
   base_branch?: string          # default: global EngineConfig.base_branch
   branch_prefix?: string        # default: global EngineConfig.branch_prefix
   worktree_mode: new | reuse | branch   # the default git mode for this workflow's tasks
-lifecycle: active | cancelled   # human-set only (paused deferred to the Plan spec)
+lifecycle: active | stopped     # human-set only; stopped is a reversible pause
 created_at, started_at?
 ```
 
 **Run *state* is derived, never stored** (avoids drift from the tasks beneath it).
-Compute it from the run's tasks on read:
+Compute it from the run's lifecycle + tasks on read. Only `done` (derived) and a
+hard `delete` are terminal — `stopped` is a reversible pause, so the UI never
+lies that a run is finished:
 
 ```text
-cancelled         if lifecycle = cancelled
-done              if every task is done
+done              if every task is done            (wins: nothing left to resume)
+stopped           if lifecycle = stopped           (paused; reversible via resume)
 needs-attention   if any task is blocked
 running           if any task is running or gating
 ready             if any task is ready
@@ -161,12 +163,20 @@ no new mechanism required.
 | `GET /workflows/:id` | detail: workspace, derived state, generated task ids |
 | `POST /workflows/:id/tasks` | add a task to the workflow, optionally `from_template` |
 | `POST /workflows/:id/start` | activate: promote eligible root tasks to `ready` |
-| `POST /workflows/:id/cancel` | set lifecycle=cancelled; block unclaimed tasks + `hcom kill tag:<id>` claimed ones |
+| `POST /workflows/:id/stop` | pause (lifecycle=stopped): `hcom kill tag:<id>` + reclaim running tasks to `ready` (work kept) |
+| `POST /workflows/:id/stop-reset` | pause AND reset unfinished tasks to `pending` (throw in-flight progress away; done kept) |
+| `POST /workflows/:id/resume` | un-pause (lifecycle=active) + reset blocked tasks to `pending`; scheduler picks back up |
+
+A `stopped` run promotes/claims nothing (the scheduler's `newly_ready`/claim both
+read the parent run's lifecycle), and the task-level revive verbs (`retry`,
+`auto-retry`, chat-revive) refuse with `409` until the run is resumed — so a paused
+workflow can never quietly keep running. Stop is reversible; `delete` is the only
+archive/tombstone path.
 
 Capabilities (reuse the existing `Capability` enum — do **not** invent new variants
 unless one genuinely doesn't fit): template + workflow authoring use `Author`;
-`start` uses `Claim`; `cancel` uses `Block`. The existing task routes
-(`/tasks/...`) are untouched.
+`start` uses `Claim`; `stop`/`stop-reset`/`resume` use `Block`. The existing task
+routes (`/tasks/...`) are untouched.
 
 > Naming: use `/workflows` (not `/runs`) for the user-facing noun, since the user
 > says "workflow". Internally the store table can be `run` to match
@@ -177,7 +187,8 @@ unless one genuinely doesn't fit): template + workflow authoring use `Author`;
 
 - **No reusable Plans** (saved recipes instantiated repeatedly). Templates are the
   only reusable noun. Leave seams in the models.
-- **No `paused` lifecycle** — only `active | cancelled`.
+- **Two lifecycle states** — `active | stopped` (stopped is a reversible pause).
+  No separate cancelled tombstone; `delete` is the archive path.
 - **No branching/conditional tasks** — linear + fan-out deps only (already
   supported by the `depends_on` graph).
 - **No workflow YAML** as an authoring path — the DB is the product (SCOPE.md

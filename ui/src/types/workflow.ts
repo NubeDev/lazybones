@@ -26,8 +26,9 @@ export interface Workspace {
   effort: string | null;
 }
 
-/** Human-set lifecycle (the only stored workflow state). */
-export type Lifecycle = "active" | "cancelled";
+/** Human-set lifecycle (the only stored workflow state). `stopped` is a
+ *  reversible pause — only `done` (derived) and a hard delete are terminal. */
+export type Lifecycle = "active" | "stopped";
 
 /** The derived, server-computed workflow state. Never compute this client-side. */
 export type WorkflowState =
@@ -36,7 +37,7 @@ export type WorkflowState =
   | "running"
   | "needs-attention"
   | "done"
-  | "cancelled";
+  | "stopped";
 
 export const WORKFLOW_STATES: WorkflowState[] = [
   "draft",
@@ -44,7 +45,7 @@ export const WORKFLOW_STATES: WorkflowState[] = [
   "running",
   "needs-attention",
   "done",
-  "cancelled",
+  "stopped",
 ];
 
 /** Mirror of `lazybones_store::Run` — one concrete, one-off workflow. */

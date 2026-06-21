@@ -21,6 +21,7 @@ mod fs_list;
 mod gate;
 mod get;
 mod gh;
+mod guard;
 mod hcom_log;
 mod health;
 mod heartbeat;
@@ -44,7 +45,6 @@ mod templates_update;
 mod transcript;
 mod update;
 mod workflows_add_task;
-mod workflows_cancel;
 mod workflows_create;
 mod workflows_delete;
 mod workflows_get;
@@ -52,6 +52,8 @@ mod workflows_list;
 mod workflows_restart;
 mod workflows_resume;
 mod workflows_start;
+mod workflows_stop;
+mod workflows_stop_reset;
 mod workflows_tasks;
 
 use axum::Router;
@@ -122,10 +124,18 @@ pub fn router(state: AppState) -> Router {
                 .post(workflows_add_task::add_workflow_task),
         )
         .route("/workflows/:id/start", post(workflows_start::start_workflow))
-        .route("/workflows/:id/cancel", post(workflows_cancel::cancel_workflow))
+        // Stop (pause): lifecycle → stopped; reclaim running tasks to ready, keep
+        // all work. The scheduler then promotes/claims nothing for this run.
+        .route("/workflows/:id/stop", post(workflows_stop::stop_workflow))
+        // Stop & reset: pause AND reset unfinished tasks to pending (throw in-flight
+        // progress away). Still resumable — not a terminal tombstone.
+        .route(
+            "/workflows/:id/stop-reset",
+            post(workflows_stop_reset::stop_reset_workflow),
+        )
         .route("/workflows/:id/restart", post(workflows_restart::restart_workflow))
-        // Resume: reset only the workflow's blocked tasks → pending (continue
-        // from where it broke), leaving done/running/ready/pending untouched.
+        // Resume (un-pause): lifecycle → active + reset blocked tasks → pending, so
+        // the scheduler continues from where it left off.
         .route("/workflows/:id/resume", post(workflows_resume::resume_workflow))
         .route("/runs/:id", get(runs::run_history))
         // The fabric's record for a whole run: the raw hcom log of every agent.

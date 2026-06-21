@@ -1,7 +1,8 @@
 //! Hard-delete a workflow (run) and the tasks linked to it.
 //!
-//! Distinct from [`cancel_run`](super::cancel::cancel_run), which keeps the
-//! record (flipping `lifecycle` to `cancelled`) for history. Delete removes the
+//! Distinct from [`stop_run`](super::stop::stop_run), which keeps the
+//! record (flipping `lifecycle` to `stopped`, reversibly) for resume. Delete is
+//! the real archive/tombstone path: it removes the
 //! run row outright and cascades to its tasks (`run_id = :id`) so no orphaned
 //! task is left pointing at a ghost workflow. Each task is removed via
 //! [`delete_task`](crate::task::delete_task) so its `depends_on` edges

@@ -24,8 +24,8 @@ use crate::hcom_log::{
 };
 use crate::init_schema::init_schema;
 use crate::run::{
-    Run, advance_hcom_cursor, cancel_run, create_run, delete_run, get_run, list_run_tasks,
-    list_runs, mark_started,
+    Lifecycle, Run, advance_hcom_cursor, create_run, delete_run, get_run, list_run_tasks,
+    list_runs, mark_started, resume_run, stop_run,
 };
 use crate::secret::{
     Cipher, SecretEnv, SecretMeta, delete_secret, list_secrets, put_secret, secret_env,
@@ -177,12 +177,29 @@ impl StoreHandle {
         list_tasks(&self.db, status).await
     }
 
-    /// The concept ids of `pending` tasks whose deps are all `done`.
+    /// The concept ids of `pending` tasks whose deps are all `done`, **excluding**
+    /// any task whose parent run is in `stopped_runs` (a paused workflow promotes
+    /// nothing). Standalone tasks (no `run_id`) are always eligible. Pass the ids
+    /// from [`stopped_run_ids`](Self::stopped_run_ids), or `&[]` to promote freely.
     ///
     /// # Errors
     /// Returns a [`StoreError`](crate::StoreError) if the query fails.
-    pub async fn newly_ready(&self) -> Result<Vec<String>> {
-        newly_ready(&self.db).await
+    pub async fn newly_ready(&self, stopped_runs: &[String]) -> Result<Vec<String>> {
+        newly_ready(&self.db, stopped_runs).await
+    }
+
+    /// The ids of every run whose lifecycle is `stopped` — the paused workflows
+    /// the scheduler must not promote or claim for. Cheap (one `list_runs`).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn stopped_run_ids(&self) -> Result<Vec<String>> {
+        Ok(list_runs(&self.db)
+            .await?
+            .into_iter()
+            .filter(|r| r.lifecycle == Lifecycle::Stopped)
+            .map(|r| r.id)
+            .collect())
     }
 
     /// Stamp a running task with a fresh heartbeat. Returns `false` if absent.
@@ -499,17 +516,29 @@ impl StoreHandle {
         mark_started(&self.db, id, now).await
     }
 
-    /// Set a workflow's lifecycle to `cancelled`. Returns the updated run.
+    /// Pause a workflow: set its lifecycle to `stopped`. Returns the updated run.
+    /// Reversible via [`resume_run`](Self::resume_run); the scheduler promotes and
+    /// claims nothing for a stopped run.
     ///
     /// # Errors
     /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
     /// write fails.
-    pub async fn cancel_run(&self, id: &str) -> Result<Run> {
-        cancel_run(&self.db, id).await
+    pub async fn stop_run(&self, id: &str) -> Result<Run> {
+        stop_run(&self.db, id).await
+    }
+
+    /// Un-pause a workflow: set its lifecycle back to `active`. Returns the
+    /// updated run. The reverse of [`stop_run`](Self::stop_run).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
+    /// write fails.
+    pub async fn resume_run(&self, id: &str) -> Result<Run> {
+        resume_run(&self.db, id).await
     }
 
     /// Hard-delete a workflow and the tasks linked to it. Returns whether the
-    /// workflow existed. Unlike [`cancel_run`](Self::cancel_run), this removes
+    /// workflow existed. Unlike [`stop_run`](Self::stop_run), this removes
     /// the record; cascades to its tasks (each with its `depends_on` edges).
     ///
     /// # Errors

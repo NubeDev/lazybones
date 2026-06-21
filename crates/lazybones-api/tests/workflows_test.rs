@@ -600,6 +600,136 @@ async fn resume_resets_only_blocked_tasks() {
     assert_eq!(s, StatusCode::NOT_FOUND, "unknown workflow 404s");
 }
 
+/// Stop (pause) flips the run to `stopped` and quiesces in-flight work without
+/// losing it: a `running` task is reclaimed back to `ready` (not blocked, not
+/// reset). While stopped, the task-level revive verbs (retry/auto-retry/chat) all
+/// refuse with `409` — you must resume the workflow first — and resume lifts the
+/// guard. This is the regression test for "a cancelled run still lets you retry".
+#[tokio::test]
+async fn stop_pauses_and_blocks_revive_until_resume() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    let (s, _) = send(
+        &app,
+        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    for tid in ["running-1", "blocked-1"] {
+        let (s, _) = send(
+            &app,
+            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+    }
+    // One task in flight (running), one blocked.
+    drive_to_running(&store, "running-1").await;
+    drive_to_blocked(&store, "blocked-1", "boom").await;
+
+    // Stop the workflow → lifecycle stopped, derived state `stopped`.
+    let (s, body) = send(&app, loop_post("/workflows/wf/stop", json!(null))).await;
+    assert_eq!(s, StatusCode::OK, "stop → 200: {body}");
+    assert_eq!(body["state"], "stopped", "a stopped run derives `stopped`");
+    // The running task was reclaimed to ready (work kept), NOT blocked or reset.
+    assert_eq!(status_of(&store, "running-1").await, Status::Ready, "running reclaimed to ready");
+    let reclaimed = store.get_task("running-1").await.unwrap().unwrap();
+    assert_eq!(reclaimed.worktree.as_deref(), Some("/wt"), "worktree kept on stop");
+    // The blocked task is left blocked.
+    assert_eq!(status_of(&store, "blocked-1").await, Status::Blocked);
+
+    // While stopped, every task-level revive verb refuses with 409.
+    let (s, _) = send(&app, loop_post("/tasks/blocked-1/retry", json!(null))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "retry refused while stopped");
+    let (s, _) = send(&app, loop_post("/tasks/blocked-1/retry", json!({ "strategy": "quick" }))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "guided retry refused while stopped");
+    let (s, _) = loop_put(&app, "/tasks/blocked-1/auto-retry", json!({ "strategy": "quick" })).await;
+    assert_eq!(s, StatusCode::CONFLICT, "auto-retry refused while stopped");
+    let (s, _) = send(&app, loop_post("/tasks/blocked-1/chat", json!({ "text": "fix it" }))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "chat-revive refused while stopped");
+    // The blocked task did not move — the guard truly blocked the revive.
+    assert_eq!(status_of(&store, "blocked-1").await, Status::Blocked, "no revive happened");
+
+    // Resume → lifecycle active again; resume also resets the blocked task.
+    let (s, body) = send(&app, loop_post("/workflows/wf/resume", json!(null))).await;
+    assert_eq!(s, StatusCode::OK, "resume → 200: {body}");
+    assert_ne!(body["state"], "stopped", "resume un-pauses the run: {body}");
+    assert_eq!(status_of(&store, "blocked-1").await, Status::Pending, "resume reset the blocked task");
+
+    // With the run active, revive verbs work again: block a task, then retry it.
+    // (`blocked-1` was reset to pending by resume, so it can be re-driven.)
+    drive_to_blocked(&store, "blocked-1", "boom again").await;
+    let (s, _) = send(&app, loop_post("/tasks/blocked-1/retry", json!(null))).await;
+    assert_eq!(s, StatusCode::OK, "retry works once the run is resumed");
+    assert_eq!(status_of(&store, "blocked-1").await, Status::Pending);
+}
+
+/// Stop & reset pauses the run AND resets unfinished tasks to `pending` (throwing
+/// in-flight progress away), while keeping `done` tasks. Still resumable — not a
+/// terminal tombstone.
+#[tokio::test]
+async fn stop_reset_pauses_and_resets_unfinished() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+
+    let (s, _) = send(
+        &app,
+        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    for tid in ["running-1", "blocked-1", "done-1"] {
+        let (s, _) = send(
+            &app,
+            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+    }
+    drive_to_running(&store, "running-1").await;
+    drive_to_blocked(&store, "blocked-1", "boom").await;
+    drive_to_done(&store, "done-1").await;
+
+    let (s, body) = send(&app, loop_post("/workflows/wf/stop-reset", json!(null))).await;
+    assert_eq!(s, StatusCode::OK, "stop-reset → 200: {body}");
+    assert_eq!(body["state"], "stopped", "stop-reset leaves the run paused, not terminal");
+    // Unfinished tasks reset to pending; the done task is kept.
+    assert_eq!(status_of(&store, "running-1").await, Status::Pending, "running reset");
+    assert_eq!(status_of(&store, "blocked-1").await, Status::Pending, "blocked reset");
+    assert_eq!(status_of(&store, "done-1").await, Status::Done, "done kept");
+    // The reset cleared the in-flight task's worktree (a clean reset, not reclaim).
+    assert_eq!(
+        store.get_task("running-1").await.unwrap().unwrap().worktree,
+        None,
+        "stop-reset clears the worktree"
+    );
+
+    // Resume brings it back to active (still no tombstone).
+    let (s, body) = send(&app, loop_post("/workflows/wf/resume", json!(null))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_ne!(body["state"], "stopped", "resume un-pauses: {body}");
+}
+
+/// Drive `id` into `running` (claimed, with a worktree) in the store, bypassing
+/// the engine — a test-only shortcut for an in-flight task.
+async fn drive_to_running(store: &StoreHandle, id: &str) {
+    use lazybones_store::Transition;
+    store.transition(id, Transition::Ready, "test").await.unwrap();
+    store
+        .transition(
+            id,
+            Transition::Claim { session: "s".into(), worktree: "/wt".into(), branch: "b".into() },
+            "test",
+        )
+        .await
+        .unwrap();
+}
+
 /// Drive `id` straight to `done` in the store, bypassing the engine: a test-only
 /// shortcut to manufacture a terminal task (pending→ready→running→gating→done).
 async fn drive_to_done(store: &StoreHandle, id: &str) {

@@ -42,11 +42,16 @@ pub async fn set_auto_retry(
     let Json(opts) = body.unwrap_or_default();
 
     // Surface a clear 404 for an unknown task before writing anything.
-    state
+    let task = state
         .store
         .get_task(&id)
         .await?
         .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+
+    // A stopped (paused) workflow's tasks are not revivable: arming auto-retry
+    // would let the scheduler revive this task the instant the run resumes, so it
+    // is the same lie as a manual retry. Refuse until the workflow is resumed.
+    super::guard::ensure_run_revivable(&state, &task).await?;
 
     let task = state
         .store

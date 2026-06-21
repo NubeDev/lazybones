@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowLeft,
   FolderGit2,
@@ -48,6 +48,7 @@ export function WorkflowDetail({
   const { data: wf, isLoading, error } = useWorkflow(id);
   const { data: workflowTasks } = useWorkflowTasks(id);
   const resume = useResumeWorkflow();
+  const [tab, setTab] = useState("plan");
 
   // The server already scopes these to this workflow's `run_id`; the filter is a
   // defensive second layer so a foreign task can never render here even if the
@@ -188,6 +189,39 @@ export function WorkflowDetail({
           </div>
         </div>
 
+        {/* Stopped banner: the workflow is paused (lifecycle=stopped). The
+            scheduler promotes/claims nothing and task-level retries are refused
+            until it resumes — so surface a prominent Resume right here. Stopped is
+            reversible, never a tombstone (delete is the archive path). */}
+        {wf.state === "stopped" && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-status-pending/40 bg-status-pending/10 p-4">
+            <PlayCircle className="size-4 shrink-0 text-status-pending" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">
+                Workflow stopped
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Paused by an operator — the scheduler is promoting nothing and
+                task retries are refused. Resume to continue from where it left
+                off.
+              </p>
+            </div>
+            {resume.error instanceof ApiError && (
+              <span className="text-[11px] text-status-blocked">
+                {resume.error.message}
+              </span>
+            )}
+            <Button
+              size="sm"
+              className="shrink-0"
+              disabled={resume.isPending}
+              onClick={() => resume.mutate(wf.id)}
+            >
+              <PlayCircle /> Resume
+            </Button>
+          </div>
+        )}
+
         {/* Needs-attention banner: the workflow stalled on one or more blocked
             tasks. Surface Resume right here (it resets only the blocked tasks to
             pending so the run continues from where it broke) so the operator
@@ -220,7 +254,7 @@ export function WorkflowDetail({
           </div>
         )}
 
-        <Tabs defaultValue="plan">
+        <Tabs value={tab} onValueChange={setTab}>
           <div className="mb-4 flex items-center justify-between gap-2">
             <TabsList>
               <TabsTrigger value="plan">Plan</TabsTrigger>
@@ -232,10 +266,11 @@ export function WorkflowDetail({
               <TabsTrigger value="logs">Logs</TabsTrigger>
               <TabsTrigger value="issues">Issues</TabsTrigger>
             </TabsList>
-            <AddTaskDialog
-              workflow={wf}
-              existingTasks={wf.task_ids}
-            />
+            {/* "Add task" belongs to the Tasks tab — show it only there so each
+                tab owns its own primary action (Issues has its own "New issue"). */}
+            {tab === "tasks" && (
+              <AddTaskDialog workflow={wf} existingTasks={wf.task_ids} />
+            )}
           </div>
 
           <TabsContent value="plan">

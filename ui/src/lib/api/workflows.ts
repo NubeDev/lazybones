@@ -85,10 +85,22 @@ export function startWorkflow(id: string): Promise<{ promoted: string[] }> {
   );
 }
 
-/** `POST /workflows/:id/cancel` — set lifecycle=cancelled; block + kill agents. */
-export function cancelWorkflow(id: string): Promise<WorkflowSummary> {
+/** `POST /workflows/:id/stop` — pause the workflow (lifecycle=stopped): kill live
+ *  agents and reclaim running tasks back to ready (work kept), and promote/claim
+ *  nothing until resumed. Fully reversible — NOT a terminal tombstone. */
+export function stopWorkflow(id: string): Promise<WorkflowSummary> {
   return request<WorkflowSummary>(
-    `/workflows/${encodeURIComponent(id)}/cancel`,
+    `/workflows/${encodeURIComponent(id)}/stop`,
+    { method: "POST", auth: true },
+  );
+}
+
+/** `POST /workflows/:id/stop-reset` — pause the workflow AND reset its unfinished
+ *  tasks to pending (throw in-flight progress away), keeping done tasks. Still
+ *  resumable — resume re-promotes from the reset state. NOT terminal. */
+export function stopResetWorkflow(id: string): Promise<WorkflowSummary> {
+  return request<WorkflowSummary>(
+    `/workflows/${encodeURIComponent(id)}/stop-reset`,
     { method: "POST", auth: true },
   );
 }
@@ -114,9 +126,9 @@ export function restartWorkflow(
   );
 }
 
-/** `POST /workflows/:id/resume` — reset only this workflow's blocked tasks to
- *  pending (continue from where it broke), leaving done/running/pending alone.
- *  The scheduler re-promotes them on the next tick. */
+/** `POST /workflows/:id/resume` — un-pause the workflow: flip lifecycle → active
+ *  and reset only its blocked tasks to pending (continue from where it broke),
+ *  leaving done/running/pending alone. The scheduler picks up on the next tick. */
 export function resumeWorkflow(id: string): Promise<WorkflowSummary> {
   return request<WorkflowSummary>(
     `/workflows/${encodeURIComponent(id)}/resume`,
@@ -155,7 +167,7 @@ export function setAutoRetry(
 }
 
 /** `DELETE /workflows/:id` — hard-delete the workflow + its tasks. `409` if it
- *  still has live tasks (cancel first). Returns whether it existed. */
+ *  still has live tasks (stop first). Returns whether it existed. */
 export function deleteWorkflow(id: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/workflows/${encodeURIComponent(id)}`,

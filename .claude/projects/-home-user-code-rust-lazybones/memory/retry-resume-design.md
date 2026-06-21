@@ -1,11 +1,52 @@
 ---
 name: retry-resume-design
-description: How task retry/resume/auto-retry work and the revive-vs-reset distinction
+description: How task retry/resume/auto-retry work, the revive-vs-reset distinction, and the stop/resume run lifecycle
 metadata:
   type: project
 ---
 
 Workflow retry/resume capability (added 2026-06-21, branch feat/engine-scheduler).
+
+## Run lifecycle: stop / stop-reset / resume (added 2026-06-21)
+
+`Lifecycle` (stored, run/model.rs) is now `active | stopped` — the terminal
+`cancelled` tombstone was **dropped**. Only `done` (derived) and a hard `delete`
+are terminal; `stopped` is a reversible pause. `Lifecycle::parse` maps legacy
+`"cancelled"` → `Stopped`. `derived_state` (run/derived.rs) precedence is now
+`done → stopped → needs-attention → running → ready → draft` (done wins over
+stopped: an all-done run has nothing to resume). Store verbs: `stop_run`/
+`resume_run` (run/stop.rs share `set_lifecycle`, run/resume.rs); old `cancel_run`
+removed.
+
+**Scheduler guard** (the core bug fix — a "cancelled" run used to keep running):
+a stopped run promotes/claims NOTHING. `newly_ready(db, stopped_runs: &[String])`
+(task/depend.rs) excludes pending tasks whose `run_id` is in the stopped set
+(`run_id = NONE OR run_id NOT IN $stopped`); `handle.stopped_run_ids()` supplies
+it. `scheduler::tick::promote` passes it; `claim_and_spawn` also `continue`s when
+the cached parent run's lifecycle != Active. Tested in tick_walk_test.rs
+(`stopped_run_claims_nothing`).
+
+**409 guard** closing the bug at the API: the task-level revive verbs refuse when
+the parent run isn't `active` — `routes/guard.rs::ensure_run_revivable` is called
+from `tasks_retry`, `tasks_retry_policy` (auto-retry), and `chat` (post_chat).
+`workflows/:id/resume` is the escape hatch (it flips lifecycle → active first), so
+it's exempt. Tested in workflows_test.rs (`stop_pauses_and_blocks_revive_until_resume`).
+
+**Routes** (routes/mod.rs, one-file-per-route, `Block` cap): `POST /workflows/:id/
+stop` (workflows_stop.rs — pause + reclaim running→ready, keep work), `POST
+.../stop-reset` (workflows_stop_reset.rs, renamed from the old `cancel` — pause +
+reset unfinished→pending), `POST .../resume` (workflows_resume.rs — now flips
+lifecycle→active AND resets blocked→pending). `restart` unchanged (resets without
+pausing).
+
+**UI**: Cancel → a **Stop** button opening a dialog with "Stop (keep work)" /
+"Stop & reset" (workflow-controls.tsx); `terminal = state === "done"` only (stopped
+is NOT terminal); Resume shown when `stopped || needs-attention`; a prominent
+stopped banner in workflow-detail.tsx. Types: `Lifecycle = active|stopped`,
+`WorkflowState` drops cancelled → adds stopped (types/workflow.ts +
+workflow-state-meta.ts). API/hooks: `stopWorkflow`/`stopResetWorkflow` +
+`useStopWorkflow`/`useStopResetWorkflow` (replaced cancel). Docs updated:
+workflows-scope.md, managing-with-ai.md.
 
 Two distinct revive mechanisms exist for a `blocked` task — do not conflate them:
 - **Clean reset** (`store.reset`): `blocked → pending`, CLEARS worktree/claim/
