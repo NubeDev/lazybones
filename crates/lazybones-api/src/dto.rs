@@ -139,7 +139,8 @@ pub struct CreateTaskBody {
     /// The agent tool that should run this task, if pinned.
     #[serde(default)]
     pub tool: Option<String>,
-    /// How the loop should provision the worktree on claim; defaults to `new`.
+    /// How the loop should provision the worktree on claim; defaults to `shared`
+    /// (one branch + worktree for the whole workflow → one PR).
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
 }
@@ -168,7 +169,7 @@ pub struct UpdateTaskBody {
     /// inherits the run/global default.
     #[serde(default)]
     pub effort: Option<String>,
-    /// New worktree provisioning intent; defaults to `new`.
+    /// New worktree provisioning intent; defaults to `shared`.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
     /// Per-task folder-trust auto-seeding override (tri-state PATCH): field

@@ -272,7 +272,7 @@ export function AddTaskDialog({
               >
                 Inherit
               </button>
-              {(["new", "reuse", "branch"] as WorktreeMode[]).map((m) => (
+              {(["new", "shared", "reuse", "branch"] as WorktreeMode[]).map((m) => (
                 <button
                   key={m}
                   type="button"

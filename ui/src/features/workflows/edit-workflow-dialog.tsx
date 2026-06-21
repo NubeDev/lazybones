@@ -10,7 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/client";
 import { useUpdateWorkflow } from "@/lib/hooks/use-workflows";
-import { WORKTREE_MODES, WorktreeModePicker } from "@/features/tasks/worktree-mode";
+import { WorktreeModePicker } from "@/features/tasks/worktree-mode";
 import { BranchField } from "./branch-field";
 import { AgentPicker } from "@/features/agents/agent-picker";
 import type { WorkspaceDraft } from "@/lib/api/workflows";
@@ -129,7 +129,7 @@ function EditBody({
           />
         </Field>
 
-        <Field label="Worktree mode" hint={WORKTREE_MODES[ws.worktree_mode].hint}>
+        <Field label="Worktree mode">
           <WorktreeModePicker
             value={ws.worktree_mode}
             onChange={(m) => setWs({ ...ws, worktree_mode: m })}

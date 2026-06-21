@@ -250,6 +250,7 @@ function ModeSelect({
     [
       { key: "inherit", value: null, label: "Inherit" },
       { key: "new", value: "new", label: WORKTREE_MODES.new.label },
+      { key: "shared", value: "shared", label: WORKTREE_MODES.shared.label },
       { key: "reuse", value: "reuse", label: WORKTREE_MODES.reuse.label },
       { key: "branch", value: "branch", label: WORKTREE_MODES.branch.label },
     ];

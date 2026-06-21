@@ -96,6 +96,20 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
     // Cache the parent Run per run_id so we read each workflow at most once a tick.
     let mut runs: HashMap<String, Option<Run>> = HashMap::new();
 
+    // `Shared`-mode serialization guard. A shared run has ONE worktree+branch for
+    // all its tasks, so two agents must never work it at once. Seed the set with
+    // run_ids that already have a running task, and add each run we claim into
+    // this tick; a Shared task whose run is in the set is held back (stays ready,
+    // claimed a later tick once its sibling finishes). Non-Shared runs never enter
+    // the set, so this is inert for the isolated default.
+    let mut busy_shared_runs: std::collections::HashSet<String> = store
+        .list_tasks(Some(Status::Running))
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|t| t.run_id)
+        .collect();
+
     for task in ordered.into_iter().take(budget) {
         let run = run_for(store, &task, &mut runs).await;
 
@@ -114,6 +128,20 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         }
 
         let eff = effective::resolve(&task, run.as_ref(), cfg);
+
+        // Shared-mode serialization: if another task of this run already holds the
+        // shared tree (running, or claimed earlier this tick), hold this one back —
+        // it stays `ready` and is picked up once the sibling lands. Only Shared
+        // tasks with a real run consult this; everything else falls straight
+        // through. The budget slot isn't consumed (we `continue` before claim), so
+        // sibling runs still fill it.
+        if eff.worktree_mode == lazybones_store::WorktreeMode::Shared {
+            if let Some(run_id) = task.run_id.as_deref() {
+                if busy_shared_runs.contains(run_id) {
+                    continue;
+                }
+            }
+        }
 
         // Resolve a `reuse_from` source worktree before provisioning (the
         // scheduler reads the source task from the store — no HTTP to itself).
@@ -195,6 +223,13 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
             }
         };
         tracing::info!(task = %claimed.id, "claimed and spawned agent");
+
+        // Mark this run's shared tree as taken for the rest of the tick, so a
+        // sibling Shared task ordered after us waits its turn. Harmless for
+        // non-Shared runs (their tasks never consult the set).
+        if let Some(run_id) = claimed.run_id.clone() {
+            busy_shared_runs.insert(run_id);
+        }
 
         // 4–5. Drive await → gate → finish in its own task.
         tokio::spawn(finish::drive(

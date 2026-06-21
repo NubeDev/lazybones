@@ -402,7 +402,11 @@ export function WorkflowDetail({
           </TabsContent>
 
           <TabsContent value="prs">
-            <WorkflowPrs dir={wf.workspace.repo} />
+            <WorkflowPrs
+              dir={wf.workspace.repo}
+              base={wf.workspace.base_branch ?? null}
+              tasks={runTasks}
+            />
           </TabsContent>
         </Tabs>
       </div>

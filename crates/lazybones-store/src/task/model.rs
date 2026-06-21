@@ -8,19 +8,34 @@ use super::status::Status;
 /// How the run loop should provision the working tree when it claims a task.
 ///
 /// This is the operator's *intent*, set at authoring or start time; the loop
-/// reads it when claiming. `New` preserves the historical default (an isolated
-/// `git worktree add`); the others let a task reuse an existing tree or run on a
-/// chosen branch in the main checkout — no per-task worktree at all.
+/// reads it when claiming. `Shared` is the **authoring default** (one branch +
+/// worktree for the whole workflow → one PR); the others give isolated per-task
+/// worktrees (`New`), continue another task's tree (`Reuse`), or run in the main
+/// checkout (`Branch`).
+///
+/// Note the split between two "defaults": the `#[default]` (and so the API DTO's
+/// `#[serde(default)]`) is `Shared` — what a freshly-authored workflow/task gets
+/// when the operator doesn't choose. But [`parse`](Self::parse)'s fallback for a
+/// *missing or unrecognised stored value* stays `New`: legacy rows written before
+/// this field existed, and any bad data, stay isolated-by-default rather than
+/// being retroactively flipped to a shared tree they weren't provisioned for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WorktreeMode {
-    /// Provision a fresh, isolated worktree on a new branch (the default).
-    #[default]
+    /// Provision a fresh, isolated worktree on a new per-task branch.
     New,
     /// Reuse an existing worktree at the task's `worktree` path.
     Reuse,
     /// Run in the main checkout on the task's `branch`; create no worktree.
     Branch,
+    /// Run every task in the workflow on ONE shared branch + worktree, named
+    /// from the run (workflow) id rather than the task id. The tasks build on
+    /// each other sequentially in the same tree, so the whole workflow yields a
+    /// single branch — and thus a single PR — instead of one branch per task.
+    /// Falls back to `New` semantics for a standalone task (no `run_id`). This is
+    /// the default for newly-authored workflows and tasks.
+    #[default]
+    Shared,
 }
 
 impl WorktreeMode {
@@ -31,11 +46,15 @@ impl WorktreeMode {
             WorktreeMode::New => "new",
             WorktreeMode::Reuse => "reuse",
             WorktreeMode::Branch => "branch",
+            WorktreeMode::Shared => "shared",
         }
     }
 
-    /// Parse a stored mode string; missing or unknown values fall back to the
-    /// default (`New`), so legacy rows and bad data stay isolated-by-default.
+    /// Parse a *stored* mode string. Missing or unknown values fall back to
+    /// `New` (NOT the `#[default]` `Shared`): a row with no stored mode predates
+    /// this field, so it ran isolated — keep it that way rather than retroactively
+    /// treating it as shared. New authoring gets `Shared` via the enum default /
+    /// the DTO's `#[serde(default)]`, not through this fallback.
     ///
     /// Shared by both the task row and the template row so the string<->enum
     /// mapping lives in exactly one place.
@@ -44,6 +63,7 @@ impl WorktreeMode {
         match s {
             Some("reuse") => WorktreeMode::Reuse,
             Some("branch") => WorktreeMode::Branch,
+            Some("shared") => WorktreeMode::Shared,
             _ => WorktreeMode::New,
         }
     }
@@ -330,5 +350,37 @@ impl Task {
             issue_close_on_done: false,
             issue_synced_state: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorktreeMode;
+
+    #[test]
+    fn worktree_mode_string_round_trips() {
+        for mode in [
+            WorktreeMode::New,
+            WorktreeMode::Reuse,
+            WorktreeMode::Branch,
+            WorktreeMode::Shared,
+        ] {
+            assert_eq!(WorktreeMode::parse(Some(mode.as_str())), mode);
+        }
+        // The wire forms are exactly these lowercase tokens.
+        assert_eq!(WorktreeMode::Shared.as_str(), "shared");
+        assert_eq!(WorktreeMode::parse(Some("shared")), WorktreeMode::Shared);
+        // Unknown / missing STORED values stay isolated — a legacy row that
+        // predates this field ran `New`, and we don't retroactively share it.
+        assert_eq!(WorktreeMode::parse(Some("bogus")), WorktreeMode::New);
+        assert_eq!(WorktreeMode::parse(None), WorktreeMode::New);
+    }
+
+    #[test]
+    fn authoring_default_is_shared() {
+        // New workflows/tasks default to one-branch-one-PR. This is the value a
+        // DTO with `#[serde(default)]` resolves to when the operator omits the
+        // field — deliberately distinct from `parse`'s legacy fallback above.
+        assert_eq!(WorktreeMode::default(), WorktreeMode::Shared);
     }
 }

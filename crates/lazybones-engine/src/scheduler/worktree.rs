@@ -7,8 +7,17 @@
 //! | `New`  | `git worktree add <root>/<id> -b <prefix><id> <base>` | `<prefix><id>`  | `<repo>/<root>/<id>` |
 //! | `Reuse`| use `task.worktree`; **block** if missing/not a dir | `task.branch`     | `task.worktree`   |
 //! | `Branch`| `git checkout -B <branch> <base>` in the main checkout | `task.branch` or `<prefix><id>` | `<repo>` |
+//! | `Shared`| one worktree+branch per *run*, keyed by `run_id` (not `id`)    | `<prefix><run_id>`  | `<repo>/<root>/<run_id>` |
 //!
 //! `worktrees == false` forces `Branch` semantics (the serial fallback).
+//!
+//! `Shared` is the "one feature, many tasks, one PR" mode: every task in a
+//! workflow run claims the *same* worktree on the *same* branch (named from the
+//! run id), so they build on each other in one tree and the run produces a single
+//! branch to review. The first task creates the tree off base; later tasks add
+//! onto the now-advanced branch. Teardown leaves it in place until... well, it
+//! stays — there's no per-task tree to reap. A standalone task (no `run_id`) has
+//! no run to share, so it falls back to `New`.
 
 use std::path::{Path, PathBuf};
 
@@ -77,18 +86,40 @@ pub async fn provision(
         WorktreeMode::Branch
     };
 
+    // `Shared` keys the worktree+branch by the *run* (so all tasks share one),
+    // but is otherwise identical to `New`: a `git worktree add` off base, or onto
+    // the existing branch when it's already there (which it will be for every task
+    // after the first). A standalone task has no run to share, so it degrades to
+    // `New`. We compute the key once here and let both arms run the same add path.
+    let mode = match mode {
+        WorktreeMode::Shared if task.run_id.is_none() => WorktreeMode::New,
+        other => other,
+    };
+
     match mode {
-        WorktreeMode::New => {
-            let branch = format!("{}{}", eff.branch_prefix, task.id);
-            let path: PathBuf = repo.join(&cfg.worktree_root).join(&task.id);
+        WorktreeMode::New | WorktreeMode::Shared => {
+            // New: per-task key (`task.id`). Shared: per-run key (`run_id`), so
+            // every task in the run lands in the same tree on the same branch.
+            let key: &str = match mode {
+                WorktreeMode::Shared => task
+                    .run_id
+                    .as_deref()
+                    .expect("run_id present (Shared without it degraded to New above)"),
+                _ => &task.id,
+            };
+            let branch = format!("{}{}", eff.branch_prefix, key);
+            let path: PathBuf = repo.join(&cfg.worktree_root).join(key);
             let path_str = path.to_string_lossy().into_owned();
             // Idempotent across reclaims: if the worktree already exists, reuse it.
+            // For `Shared` this is the common case — the tree the prior task built
+            // in is right here, and the new task continues on top of its commits.
             if !path.is_dir() {
-                // The branch may already exist (a prior run, or a restart that
-                // removed the tree but not the branch). `worktree add -b` fails
-                // hard on a pre-existing branch, so check first and add *onto*
-                // the existing branch (no `-b`) when it's there — otherwise
-                // create it fresh from base. Keeps re-Start from breaking.
+                // The branch may already exist (a prior run, a restart that
+                // removed the tree but not the branch, or — for Shared — the
+                // first task already created it). `worktree add -b` fails hard on
+                // a pre-existing branch, so check first and add *onto* the
+                // existing branch (no `-b`) when it's there — otherwise create it
+                // fresh from base. Keeps re-Start (and Shared's 2nd+ task) working.
                 let exists = branch_exists(repo, &branch).await?;
                 let add: Vec<&str> = if exists {
                     vec!["worktree", "add", &path_str, &branch]
@@ -208,8 +239,11 @@ async fn branch_exists(repo: &Path, name: &str) -> anyhow::Result<bool> {
     Ok(out.ok)
 }
 
-/// Tear down a task's worktree after a green merge (no-op for `Branch`, which
-/// runs in the main checkout).
+/// Tear down a task's worktree after a green merge.
+///
+/// No-op for `Branch` (runs in the main checkout) and `Shared` (the tree is
+/// owned by the *run*, not this task — later tasks still build in it, so reaping
+/// it on one task's finish would pull the rug out from the next).
 ///
 /// # Errors
 /// Returns an error only if git cannot be launched; a non-zero removal is logged
@@ -220,7 +254,7 @@ pub async fn teardown(task: &Task, eff: &EffectiveGit, cfg: &EngineConfig) -> an
     } else {
         WorktreeMode::Branch
     };
-    if matches!(mode, WorktreeMode::Branch) {
+    if matches!(mode, WorktreeMode::Branch | WorktreeMode::Shared) {
         return Ok(());
     }
     if let Some(path) = &task.worktree {
@@ -351,6 +385,66 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(p.worktree, dir.path().to_string_lossy());
+    }
+
+    #[tokio::test]
+    async fn shared_mode_keys_tree_and_branch_by_run() {
+        // Two tasks of the same run, Shared mode: both must land in ONE worktree
+        // on ONE branch named from `run_id` — not their per-task ids. The second
+        // task continues in the tree the first created (idempotent re-add onto the
+        // existing branch).
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let eff = eff_for(dir.path(), WorktreeMode::Shared);
+
+        let mut t1 = Task::seed("rdm-01", "rubix", "t", "s", vec![], vec![], None);
+        t1.run_id = Some("rubix-device-management".into());
+        let mut t2 = Task::seed("rdm-02", "rubix", "t", "s", vec![], vec![], None);
+        t2.run_id = Some("rubix-device-management".into());
+
+        let p1 = provision(&t1, &eff, &cfg, None).await.unwrap();
+        let p2 = provision(&t2, &eff, &cfg, None).await.unwrap();
+
+        // Branch + path keyed by the run, identical for both tasks.
+        assert_eq!(p1.branch, "lazy/rubix-device-management");
+        assert_eq!(p2.branch, p1.branch);
+        assert_eq!(p2.worktree, p1.worktree);
+        assert!(Path::new(&p1.worktree).is_dir());
+        // The shared tree lives under the worktree root keyed by run id.
+        assert!(p1.worktree.ends_with(".lazy/wt/rubix-device-management"));
+    }
+
+    #[tokio::test]
+    async fn shared_mode_without_run_falls_back_to_new() {
+        // A standalone task (no run to share) in Shared mode must degrade to New:
+        // an isolated per-task tree on a per-task branch, never panicking on the
+        // absent run_id.
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let task = Task::seed("solo", "r", "t", "s", vec![], vec![], None);
+        let eff = eff_for(dir.path(), WorktreeMode::Shared);
+        let p = provision(&task, &eff, &cfg, None).await.unwrap();
+        assert_eq!(p.branch, "lazy/solo");
+        assert!(p.worktree.ends_with(".lazy/wt/solo"));
+    }
+
+    #[tokio::test]
+    async fn teardown_preserves_shared_tree() {
+        // Teardown after one Shared task finishes must leave the tree intact —
+        // later tasks of the run still build in it.
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let eff = eff_for(dir.path(), WorktreeMode::Shared);
+        let mut t1 = Task::seed("rdm-01", "rubix", "t", "s", vec![], vec![], None);
+        t1.run_id = Some("rubix".into());
+        let p = provision(&t1, &eff, &cfg, None).await.unwrap();
+        t1.worktree = Some(p.worktree.clone());
+
+        teardown(&t1, &eff, &cfg).await.unwrap();
+        assert!(Path::new(&p.worktree).is_dir(), "shared tree must survive teardown");
     }
 
     #[tokio::test]

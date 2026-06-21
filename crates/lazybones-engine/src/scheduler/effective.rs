@@ -15,6 +15,10 @@
 //! gate          = run.workspace.gate            ?? global gate
 //! ```
 //!
+//! `merge` resolves `run.workspace.merge ?? global merge` — EXCEPT a `Shared`
+//! worktree mode forces `merge = pr` (see `merge_for`): one shared branch only
+//! makes sense as one PR, so it's pushed, never auto-merged into base.
+//!
 //! The gate has no task layer: it is a property of the *workspace's* stack (a Rust
 //! workflow gates with `cargo`, a Node one with `npm`), so every task in a workflow
 //! shares it. `Some([])` on the workspace is an explicit **no gate**; `None` inherits
@@ -77,6 +81,22 @@ fn map_merge(m: StoreMergeMode) -> MergeMode {
     }
 }
 
+/// Reconcile the merge strategy with the worktree mode.
+///
+/// `Shared` mode means "all tasks on one branch → one PR". Auto-merging that
+/// branch into base as each task finishes (`FastForward`/`Merge`) would advance
+/// base under the still-live shared tree and, by the time the run ends, leave the
+/// branch with zero commits ahead of base — nothing to open a PR from. So a
+/// `Shared` workflow always lands as `Pr`: push the shared branch, never
+/// auto-merge, and leave the single PR for a human. Other modes keep whatever
+/// strategy was resolved.
+fn merge_for(worktree_mode: WorktreeMode, resolved: MergeMode) -> MergeMode {
+    match worktree_mode {
+        WorktreeMode::Shared => MergeMode::Pr,
+        _ => resolved,
+    }
+}
+
 /// Resolve `task`'s effective git settings given its (optional) parent `run` and
 /// the global `cfg`.
 ///
@@ -106,6 +126,8 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
         },
         Some(run) => {
             let ws = &run.workspace;
+            // Task override wins; else the workspace default.
+            let worktree_mode = task.worktree_mode_override.unwrap_or(ws.worktree_mode);
             EffectiveGit {
                 repo: PathBuf::from(&ws.repo),
                 base_branch: ws.base_branch.clone().unwrap_or_else(|| cfg.base_branch.clone()),
@@ -113,8 +135,7 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
                     .branch_prefix
                     .clone()
                     .unwrap_or_else(|| cfg.branch_prefix.clone()),
-                // Task override wins; else the workspace default.
-                worktree_mode: task.worktree_mode_override.unwrap_or(ws.worktree_mode),
+                worktree_mode,
                 // task ?? workspace ?? global, per field.
                 tool: task
                     .tool
@@ -134,8 +155,10 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
                 // workspace ?? global. `Some([])` is an explicit no-gate, so we
                 // honour the present-but-empty list rather than falling back.
                 gate: ws.gate.clone().unwrap_or_else(|| cfg.gate.clone()),
-                // workspace ?? global merge strategy.
-                merge: ws.merge.map_or(cfg.merge, map_merge),
+                // workspace ?? global merge strategy — but `Shared` forces `Pr`
+                // (see `merge_for`): auto-merging task branches into base mid-run
+                // would defeat the whole "one shared branch → one PR" contract.
+                merge: merge_for(worktree_mode, ws.merge.map_or(cfg.merge, map_merge)),
                 // task ?? global. No workspace layer — it's a per-task safety knob.
                 auto_trust_agent_folder: task
                     .auto_trust_agent_folder
@@ -405,5 +428,51 @@ mod tests {
 
         // A standalone task always uses the global merge.
         assert_eq!(resolve(&task, None, &cfg).merge, MergeMode::FastForward);
+    }
+
+    #[test]
+    fn shared_worktree_forces_merge_pr() {
+        // A `Shared` workflow must land as `Pr` no matter what merge was set —
+        // auto-merging the shared branch mid-run would leave nothing to PR.
+        let mut cfg = cfg();
+        cfg.merge = MergeMode::Merge; // global says auto-merge
+        let task = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+
+        // Workspace is Shared with no explicit merge → coerced to Pr (not the
+        // inherited global `Merge`).
+        let mut ws = ws_with_merge(None);
+        ws.worktree_mode = WorktreeMode::Shared;
+        assert_eq!(
+            resolve(&task, Some(&run_with(ws)), &cfg).merge,
+            MergeMode::Pr,
+        );
+
+        // Even an EXPLICIT fast-forward on a Shared workflow is overridden — the
+        // two are incoherent together, and Pr is the only mode that preserves the
+        // branch for review.
+        let mut ws = ws_with_merge(Some(StoreMergeMode::FastForward));
+        ws.worktree_mode = WorktreeMode::Shared;
+        assert_eq!(
+            resolve(&task, Some(&run_with(ws)), &cfg).merge,
+            MergeMode::Pr,
+        );
+
+        // A task-level override to Shared also forces Pr, even when the workspace
+        // is an auto-merging non-Shared mode.
+        let mut shared_task = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+        shared_task.worktree_mode_override = Some(WorktreeMode::Shared);
+        let run = run_with(ws_with_merge(Some(StoreMergeMode::Merge)));
+        assert_eq!(
+            resolve(&shared_task, Some(&run), &cfg).merge,
+            MergeMode::Pr,
+        );
+
+        // Sanity: a non-Shared workspace still honours its merge mode.
+        let mut ws = ws_with_merge(Some(StoreMergeMode::Merge));
+        ws.worktree_mode = WorktreeMode::New;
+        assert_eq!(
+            resolve(&task, Some(&run_with(ws)), &cfg).merge,
+            MergeMode::Merge,
+        );
     }
 }

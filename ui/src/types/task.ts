@@ -9,8 +9,9 @@ export type Status =
 
 /** Mirror of `lazybones_store::WorktreeMode` — how the loop provisions the
  *  working tree when it claims this task. `new` = isolated worktree (default);
- *  `reuse` = an existing worktree path; `branch` = the main checkout on a branch. */
-export type WorktreeMode = "new" | "reuse" | "branch";
+ *  `reuse` = an existing worktree path; `branch` = the main checkout on a branch;
+ *  `shared` = one branch+worktree for the whole workflow (one PR). */
+export type WorktreeMode = "new" | "reuse" | "branch" | "shared";
 
 /** Mirror of `lazybones_store::RetryStrategy` — the fix intent for a revived
  *  (re-attempted) task, folded into its re-spawn prompt as guidance. Drives both

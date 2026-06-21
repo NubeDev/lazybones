@@ -78,12 +78,28 @@
     - `workspace.repo` — an absolute path. If the operator is on a workflow page,
       default to that workflow's repo from the page context.
     - Optional: `base_branch`, `tool`/`model`/`effort` (else inherit defaults).
+    - `worktree_mode` — set at the workspace level so every task inherits it. This
+      is the big "how many PRs" decision; see "How the branch & worktree work" in
+      the `lazybones-add-task` skill. **Default to `shared`** (one branch + worktree
+      for the whole workflow → a single PR) unless the operator explicitly wants
+      tasks reviewed/merged separately or run in parallel — then use `new` (one
+      branch/PR per task). When you pick `shared` by default, say so in one line so
+      the operator can override. Only deviate from `shared` when asked.
+
+    ## merge mode and how it pairs with worktree mode
+    `merge` decides what happens to a task's branch when it goes green:
+    `fast-forward`/`merge` auto-land it onto `base_branch` and push; `pr` pushes the
+    branch and leaves opening the PR to a human. **You normally do NOT set `merge`
+    for a `shared` workflow** — `shared` is automatically treated as `pr` (one
+    shared branch is reviewed as one PR; auto-merging it mid-run would leave nothing
+    to PR). Only set `merge` for a `new`-mode workflow, and only if the operator
+    wants something other than the default. If unsure, omit `merge`.
 
     ## Procedure
     1. Confirm no id clash: `GET /workflows/:id` → expect 404.
-    2. Create it:
+    2. Create it (omit `merge` for a `shared` workflow — it's forced to `pr`):
        POST /workflows
-       { "id", "title", "workspace": { "repo", "base_branch?", "tool?", "model?", "effort?", "merge?" } }
+       { "id", "title", "workspace": { "repo", "base_branch?", "worktree_mode?", "tool?", "model?", "effort?", "merge?" } }
     3. For each task the operator described, run the `lazybones-add-task` skill.
     4. Report the created workflow and its tasks. Do NOT call /start.
        End with: "Created `<id>` with N tasks. Press Start when you're ready to
@@ -109,19 +125,62 @@
     - The `spec`: a concrete, self-contained instruction for the task agent.
     - Optional: `deps` (task ids that must finish first), `owns` (paths it owns),
       `from_template`, and `tool`/`model`/`effort` overrides.
+    - Optional `worktree_mode` — how the task's working tree + branch are set up.
+      Read "How the branch & worktree work" below before choosing; it decides how
+      many branches (and therefore PRs) the workflow produces.
+
+    ## How the branch & worktree work
+    When a task is claimed it gets a *working tree* (a checkout the agent edits in)
+    and a *branch* (where its commits land). The `worktree_mode` chooses the shape:
+
+    - `shared` (**default**) — **one** worktree on **one** branch
+      (`<branch_prefix><run_id>`, named for the workflow, not the task) for *every*
+      task in the run. Tasks build on each other sequentially in the same tree, so
+      the whole workflow becomes a single branch → a **single PR**. This is the
+      default because most workflows are one feature split into steps the operator
+      wants to review and merge together. The scheduler serializes a shared run's
+      tasks (no two agents in one tree at once). A standalone task (no workflow)
+      falls back to `new`.
+    - `new` — a fresh, **isolated** worktree on its own branch
+      (`<branch_prefix><task_id>`), forked from the workflow's `base_branch`. Tasks
+      run in parallel and never collide. Trade-off: **one branch per task**, so a
+      workflow of N tasks yields N branches and N PRs. Choose this only when tasks
+      are genuinely independent and you want them in parallel / reviewed
+      separately. A later task only sees an earlier task's work if it `deps` on it
+      AND the workflow's `merge` mode lands that work back onto base (then the later
+      task forks from the advanced base).
+    - `reuse` — run in another task's existing worktree via `reuse_from`; continue
+      exactly where it left off (sets up a dependency edge on that task).
+    - `branch` — run in the repo's **main checkout** on the task's branch, no
+      separate worktree. Serial only; rarely needed.
+
+    Picking the mode: **default to `shared`** — one feature in ordered steps,
+    reviewed and merged as one PR, is the common case. Use `new` only when the
+    tasks are genuinely independent and the operator wants them parallel or
+    reviewed separately. `reuse` when a task must continue another's exact
+    uncommitted tree. Don't deviate from `shared` unless the operator asks.
+
+    `worktree_mode` can be set per workflow (inherited by its tasks) or overridden
+    per task. On a workflow task, omit it to inherit the workflow's mode (which now
+    defaults to `shared`); set it only to deviate.
 
     ## Procedure
     1. Verify the workflow exists: `GET /workflows/:id`.
     2. Create the task on it:
        POST /workflows/:id/tasks
-       { "id", "title", "spec", "deps?": [..], "owns?": [..], "from_template?", "tool?", "model?", "effort?" }
-       (For a standalone task use `POST /tasks` with the same fields.)
-    3. Report the task and its dependency edges. Do not promote, claim, or start.
+       { "id", "title", "spec", "deps?": [..], "owns?": [..], "from_template?", "worktree_mode?", "tool?", "model?", "effort?" }
+       (For a standalone task use `POST /tasks` with the same fields. `worktree_mode`
+       is one of `new` | `shared` | `reuse` | `branch`; on a workflow task you can
+       also use `worktree_mode_override` to deviate from the inherited mode.)
+    3. Report the task, its dependency edges, and (if not the default) its
+       worktree mode. Do not promote, claim, or start.
 
     ## Guardrails
     - Authoring a task never runs it. `POST /tasks/:id/ready` only marks it ready;
       it still does nothing until the workflow is started by a human.
     - A duplicate id returns 409 — surface it rather than mutating blindly.
+    - If the operator wants "one PR for the whole workflow", that's `shared` mode
+      on the workflow (or every task) — not N isolated tasks they merge by hand.
 
 - id: lazybones-add-template
   title: Add a task-template

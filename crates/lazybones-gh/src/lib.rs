@@ -634,6 +634,19 @@ where
 
     tracing::debug!(bin, args = ?args, "running");
 
+    // A non-existent `current_dir` makes the spawn fail with the *same* `os
+    // error 2` as a missing binary, which reads as a misleading "is the CLI
+    // installed?". Check it up front and return a precise error — the common
+    // cause is running in a task worktree that was torn down after the task
+    // finished.
+    let dir = dir.as_ref();
+    if !dir.is_dir() {
+        return Err(GhError::WorkingDir {
+            bin: bin.to_string(),
+            dir: dir.display().to_string(),
+        });
+    }
+
     let output = Command::new(bin)
         .current_dir(dir)
         .args(&args)
@@ -699,6 +712,17 @@ mod tests {
         match err {
             GhError::Command { stderr, .. } => assert!(stderr.contains("not logged in")),
             other => panic!("expected Command error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_working_dir_is_distinct_error() {
+        // Running in a dir that doesn't exist must NOT masquerade as "gh missing".
+        let gh = Gh::new();
+        let err = gh.run("/no/such/dir/at/all", ["--version"]).await.unwrap_err();
+        match err {
+            GhError::WorkingDir { dir, .. } => assert!(dir.contains("/no/such/dir")),
+            other => panic!("expected WorkingDir error, got {other:?}"),
         }
     }
 

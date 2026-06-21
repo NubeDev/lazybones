@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/client";
 import { useCreateWorkflow } from "@/lib/hooks/use-workflows";
 import { useGhRepo } from "@/lib/hooks/use-gh";
-import { WORKTREE_MODES, WorktreeModePicker } from "@/features/tasks/worktree-mode";
+import { WorktreeModePicker } from "@/features/tasks/worktree-mode";
 import { RepoPicker } from "./repo-picker";
 import { BranchField } from "./branch-field";
 import { AgentPicker } from "@/features/agents/agent-picker";
@@ -21,7 +21,9 @@ const EMPTY: WorkspaceDraft = {
   repo: "",
   base_branch: null,
   branch_prefix: null,
-  worktree_mode: "new",
+  // Default to one-branch-one-PR for the whole workflow (matches the backend
+  // default); switch to Isolated for independent parallel tasks.
+  worktree_mode: "shared",
   tool: null,
   model: null,
   effort: null,
@@ -183,10 +185,7 @@ export function WorkflowDialog({
               />
             </Field>
 
-            <Field
-              label="Worktree mode"
-              hint={WORKTREE_MODES[ws.worktree_mode].hint}
-            >
+            <Field label="Worktree mode">
               <WorktreeModePicker
                 value={ws.worktree_mode}
                 onChange={(m) => setWs({ ...ws, worktree_mode: m })}
