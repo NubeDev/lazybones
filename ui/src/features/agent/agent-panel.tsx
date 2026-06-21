@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Bot, History, Plus, Send, MessagesSquare, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bot, History, Plus, Send, MessagesSquare, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/ui/markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils/cn";
 import { useAgentChat, useAgentConversations } from "@/lib/hooks/use-agent-chat";
 import { useAgentContext } from "./agent-context";
 import { AgentConfirmCard } from "./agent-confirm-card";
+import type { PageContext } from "@/types/page-context";
 import type { AgentConversation } from "@/types/agent-chat";
 import type { AgentMessage, AgentRole } from "@/types/agent-chat";
 
@@ -34,11 +35,26 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
   const { data: conversations } = useAgentConversations();
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Conversation ids the operator has waved off the resume prompt for, so a
+  // dismissed suggestion doesn't keep reappearing this panel session.
+  const [dismissedResume, setDismissedResume] = useState<Set<string>>(new Set());
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
+
+  // When the panel is on a fresh thread, offer to resume the most recent past
+  // conversation that was opened on this same page scope (e.g. this template).
+  const resumable = useMemo(() => {
+    if (conversation) return null; // already in a thread — nothing to suggest
+    const key = pageScopeKey(context);
+    if (!key) return null; // global/unscoped page — don't nag
+    const match = (conversations ?? []).find(
+      (c) => pageScopeKey(c.page_context) === key && !dismissedResume.has(c.id),
+    );
+    return match ?? null;
+  }, [conversation, conversations, context, dismissedResume]);
 
   const submit = () => {
     const t = text.trim();
@@ -103,6 +119,16 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
             openConversation(id);
             setHistoryOpen(false);
           }}
+        />
+      )}
+
+      {resumable && !historyOpen && (
+        <ResumeBanner
+          conversation={resumable}
+          onResume={() => openConversation(resumable.id)}
+          onDismiss={() =>
+            setDismissedResume((prev) => new Set(prev).add(resumable.id))
+          }
         />
       )}
 
@@ -189,6 +215,62 @@ function ConversationList({
       ))}
     </div>
   );
+}
+
+/** The meaningful scope a conversation/page belongs to — the entity in scope
+ *  (template/skill/task/workflow), preferred most-specific first. Incidental
+ *  fields (repo/branch) are ignored so a resume matches the *thing*, not the
+ *  exact envelope. Returns null for a global/unscoped page (no resume prompt). */
+function pageScopeKey(ctx: PageContext | null | undefined): string | null {
+  if (!ctx) return null;
+  if (ctx.selected_template_id) return `template:${ctx.selected_template_id}`;
+  if (ctx.selected_skill_id) return `skill:${ctx.selected_skill_id}`;
+  if (ctx.task_id) return `task:${ctx.task_id}`;
+  if (ctx.workflow_id) return `workflow:${ctx.workflow_id}`;
+  return null;
+}
+
+/** A "resume your last session here?" prompt shown on a fresh thread when a past
+ *  conversation exists for the current page scope. */
+function ResumeBanner({
+  conversation,
+  onResume,
+  onDismiss,
+}: {
+  conversation: AgentConversation;
+  onResume: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 border-b border-border bg-accent-soft/30 px-3 py-2">
+      <RotateCcw className="size-3.5 shrink-0 text-accent" />
+      <p className="min-w-0 flex-1 text-[11px] text-foreground/90">
+        Resume your last session on this {scopeNoun(conversation.page_context)} from{" "}
+        {relativeTime(conversation.created_at)}?
+      </p>
+      <Button size="sm" onClick={onResume} className="h-6 px-2 text-[11px]">
+        Resume
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={onDismiss}
+        className="h-6 px-1.5 text-[11px]"
+        title="Start fresh"
+      >
+        Dismiss
+      </Button>
+    </div>
+  );
+}
+
+/** The human noun for a page scope, for the resume prompt copy. */
+function scopeNoun(ctx: PageContext | null | undefined): string {
+  if (ctx?.selected_template_id) return "template";
+  if (ctx?.selected_skill_id) return "skill";
+  if (ctx?.task_id) return "task";
+  if (ctx?.workflow_id) return "workflow";
+  return "page";
 }
 
 /** A short label for a conversation, derived from the page it opened on. */
