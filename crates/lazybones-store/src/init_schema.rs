@@ -41,6 +41,13 @@ DEFINE TABLE IF NOT EXISTS chat SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS task ON chat TYPE string;\n\
 DEFINE FIELD IF NOT EXISTS at ON chat TYPE datetime;\n\
 DEFINE INDEX IF NOT EXISTS chat_task_at ON chat FIELDS task, at;\n\
+DEFINE TABLE IF NOT EXISTS settings SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS agent_conversation SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS created_at ON agent_conversation TYPE option<string>;\n\
+DEFINE TABLE IF NOT EXISTS agent_message SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS conversation_id ON agent_message TYPE string;\n\
+DEFINE FIELD IF NOT EXISTS at ON agent_message TYPE datetime;\n\
+DEFINE INDEX IF NOT EXISTS agent_message_conv_at ON agent_message FIELDS conversation_id, at;\n\
 DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS learned TYPE RELATION SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS secret SCHEMALESS;\n\

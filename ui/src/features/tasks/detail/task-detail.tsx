@@ -19,6 +19,7 @@ import { TaskDialog } from "../authoring/task-dialog";
 import { StartDialog } from "../start-dialog";
 import { TaskLogsPanel } from "@/features/workflows/task-logs-panel";
 import { useTask } from "@/lib/hooks/use-tasks";
+import { useSetAgentContext } from "@/features/agent/agent-context";
 import type { Task } from "@/types/task";
 
 /** The task inspector. Rather than one endless vertical scroll, the body is split
@@ -40,6 +41,12 @@ export function TaskDetail({
   const { data, isLoading } = useTask(id);
   const task = data ?? byId.get(id);
   const [tab, setTab] = useState("overview");
+
+  // Ground the Lazybones Agent in this task while the panel is open (scope §7).
+  useSetAgentContext({
+    task_id: id,
+    run_id: task?.run_id ?? task?.run ?? undefined,
+  });
 
   if (!task) {
     return (

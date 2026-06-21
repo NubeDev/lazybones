@@ -7,9 +7,13 @@
 
 mod config;
 mod hcom;
+pub mod management;
 mod scheduler;
 
 pub use config::{EngineConfig, MergeMode};
+pub use management::{
+    TurnContext, chat_turn, page_context_workflow_id, render_page_context,
+};
 pub use scheduler::run;
 
 use hcom::Hcom;

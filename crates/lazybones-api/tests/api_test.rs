@@ -42,7 +42,7 @@ async fn app() -> Router {
     )
     .await
     .unwrap();
-    let state = AppState::new(store, "run", LOOP_TOKEN);
+    let state = AppState::new(store, "run", "http://127.0.0.1:0", LOOP_TOKEN);
     router(state)
 }
 

@@ -6,12 +6,12 @@ use lazybones_auth::Capability;
 use lazybones_store::Skill;
 
 use crate::dto::CreateSkillBody;
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use crate::extract::Session;
 use crate::state::AppState;
 
 /// Create a skill. Requires `Author` (loop-only). Returns the created skill, or
-/// `409` if the id already exists.
+/// `409` if the id already exists, or `400` if a structured action is malformed.
 pub async fn create_skill(
     State(state): State<AppState>,
     session: Session,
@@ -19,6 +19,10 @@ pub async fn create_skill(
 ) -> ApiResult<Json<Skill>> {
     session.require(Capability::Author, "author", &body.id)?;
     let now = state.store.now();
-    let skill = Skill::new(&body.id, &body.title, &body.description, &body.body, now);
+    let mut skill = Skill::new(&body.id, &body.title, &body.description, &body.body, now);
+    if let Some(action) = body.action {
+        action.validate().map_err(ApiError::bad_request)?;
+        skill = skill.with_action(action);
+    }
     Ok(Json(state.store.create_skill(&skill).await?))
 }

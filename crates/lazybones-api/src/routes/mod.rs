@@ -6,6 +6,7 @@
 
 mod activity;
 mod agent_catalog;
+mod agent_chat;
 mod agent_test;
 mod agents;
 mod block;
@@ -27,6 +28,7 @@ mod hcom_log;
 mod health;
 mod heartbeat;
 mod list;
+mod management_agent;
 mod promote;
 mod ready;
 mod runs;
@@ -138,6 +140,34 @@ pub fn router(state: AppState) -> Router {
                 .put(skills_update::update_skill)
                 .delete(skills_delete::delete_skill),
         )
+        // The Lazybones Agent: a conversational operator aide. Its config lives in
+        // settings; it authors/reads through the same REST surface a human uses and
+        // never starts or runs anything (docs/agent/lazybones-agent-scope.md).
+        .route(
+            "/settings/management-agent",
+            get(management_agent::get_management_agent)
+                .put(management_agent::put_management_agent),
+        )
+        // Per-workflow config overrides (resolution is override ?? global).
+        .route(
+            "/settings/management-agent/workflows/:id",
+            get(management_agent::get_workflow_management_agent)
+                .put(management_agent::put_workflow_management_agent)
+                .delete(management_agent::delete_workflow_management_agent),
+        )
+        .route("/agent/chat", post(agent_chat::post_agent_chat))
+        .route(
+            "/agent/chat/:conversation",
+            get(agent_chat::get_agent_chat),
+        )
+        .route(
+            "/agent/chat/:conversation/stream",
+            get(agent_chat::agent_chat_stream),
+        )
+        .route(
+            "/agent/conversations",
+            get(agent_chat::list_agent_conversations),
+        )
         // Workflows (one-off runs, stored in the `run` table; path stays user-facing).
         .route(
             "/workflows",
@@ -215,6 +245,10 @@ pub fn router(state: AppState) -> Router {
         .route("/gh/prs/:number", get(gh::gh_pr_view))
         .route("/gh/prs/:number/merge", post(gh::gh_merge_pr))
         .route("/gh/prs/:number/close", post(gh::gh_close_pr))
+        .route(
+            "/gh/prs/:number/comments",
+            get(gh::gh_pr_comments).post(gh::gh_comment_pr),
+        )
         // Engine + agent availability (so the UI can show what's set up).
         .route("/engine", get(engine::engine_status))
         .route("/agents", get(agents::list_agents))

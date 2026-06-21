@@ -8,6 +8,6 @@ mod capability;
 mod error;
 mod session;
 
-pub use capability::Capability;
+pub use capability::{Capability, ManagementProfile};
 pub use error::AuthError;
 pub use session::ScopedSession;

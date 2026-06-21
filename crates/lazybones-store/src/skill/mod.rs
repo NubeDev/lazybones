@@ -16,7 +16,7 @@ pub use create::create_skill;
 pub use delete::delete_skill;
 pub use get::get_skill;
 pub use list::list_skills;
-pub use model::Skill;
+pub use model::{Skill, SkillAction, SkillParam};
 pub use seed::seed_default_skills;
 pub use update::update_skill;
 
@@ -62,6 +62,56 @@ mod tests {
         assert!(get_skill(&db, "code-review-rust").await.unwrap().is_none());
         // Deleting again reports "did not exist".
         assert!(!delete_skill(&db, "code-review-rust").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn structured_action_roundtrips() {
+        let db = db().await;
+        let action = SkillAction {
+            method: "POST".into(),
+            path_template: "/workflows/{id}/tasks".into(),
+            body_template: Some(serde_json::json!({ "id": "{task_id}", "title": "{title}" })),
+            params: vec![
+                SkillParam { name: "id".into(), required: true, description: "workflow".into() },
+                SkillParam { name: "task_id".into(), required: true, description: "task".into() },
+                SkillParam { name: "title".into(), required: true, description: "title".into() },
+            ],
+        };
+        let skill = sample().with_action(action.clone());
+        create_skill(&db, &skill).await.unwrap();
+        let got = get_skill(&db, "code-review-rust").await.unwrap().unwrap();
+        assert_eq!(got.action.as_ref().unwrap(), &action);
+    }
+
+    #[test]
+    fn action_validate_catches_undeclared_param_and_bad_method() {
+        let bad_method = SkillAction {
+            method: "GET".into(),
+            path_template: "/x".into(),
+            body_template: None,
+            params: vec![],
+        };
+        assert!(bad_method.validate().is_err());
+
+        let undeclared = SkillAction {
+            method: "POST".into(),
+            path_template: "/workflows/{id}/start".into(),
+            body_template: None,
+            params: vec![],
+        };
+        assert!(undeclared.validate().is_err());
+
+        let ok = SkillAction {
+            method: "POST".into(),
+            path_template: "/workflows/{id}/start".into(),
+            body_template: None,
+            params: vec![SkillParam {
+                name: "id".into(),
+                required: true,
+                description: "workflow id".into(),
+            }],
+        };
+        assert!(ok.validate().is_ok());
     }
 
     #[tokio::test]

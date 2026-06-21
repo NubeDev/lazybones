@@ -17,6 +17,8 @@ use tokio::sync::broadcast;
 use crate::chat::ChatMessage;
 use crate::hcom_log::HcomLogEntry;
 
+use crate::agent_chat::AgentMessage;
+
 use super::activity::Activity;
 use super::row::Event;
 
@@ -42,6 +44,12 @@ pub enum LiveEvent {
     /// agent" view updates without polling. Carries both operator messages and
     /// mirrored agent replies.
     Chat(ChatMessage),
+    /// A management-agent message just appended to a conversation — also durable
+    /// in the `agent_message` table, published here for the live edge so the
+    /// global agent chat panel updates without polling. Carries operator turns,
+    /// mirrored agent replies, and tool-action transparency notes
+    /// (`docs/agent/lazybones-agent-scope.md` §8.4).
+    AgentMessage(AgentMessage),
 }
 
 /// A cloneable publish/subscribe handle for the live feed.

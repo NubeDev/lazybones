@@ -51,7 +51,7 @@ fn get(path: &str) -> Request<Body> {
 #[tokio::test]
 async fn skill_crud_roundtrip() {
     let store = store().await;
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     // Create.
     let (s, body) = send(
@@ -125,7 +125,7 @@ async fn skill_crud_roundtrip() {
 #[tokio::test]
 async fn template_attachments_attach_list_filter_detach() {
     let store = store().await;
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     // An owner template + a skill to attach.
     let (s, _) = send(
@@ -205,7 +205,7 @@ async fn template_attachments_attach_list_filter_detach() {
 #[tokio::test]
 async fn attaching_to_a_missing_template_is_404() {
     let store = store().await;
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let (s, _) = send(
         &app,
@@ -220,4 +220,54 @@ async fn attaching_to_a_missing_template_is_404() {
 
     let (s, _) = send(&app, get("/templates/ghost/attachments")).await;
     assert_eq!(s, StatusCode::NOT_FOUND, "list on missing owner");
+}
+
+#[tokio::test]
+async fn structured_action_skill_validates_and_persists() {
+    let store = store().await;
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+
+    // A malformed action (template references an undeclared param) → 400.
+    let (s, _) = send(
+        &app,
+        loop_req(
+            "POST",
+            "/skills",
+            json!({
+                "id": "promote",
+                "title": "Promote",
+                "action": {
+                    "method": "POST",
+                    "path_template": "/tasks/{id}/ready",
+                    "params": []
+                }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "undeclared param must 400");
+
+    // A well-formed action persists and round-trips on read.
+    let (s, body) = send(
+        &app,
+        loop_req(
+            "POST",
+            "/skills",
+            json!({
+                "id": "promote",
+                "title": "Promote",
+                "action": {
+                    "method": "POST",
+                    "path_template": "/tasks/{id}/ready",
+                    "params": [{ "name": "id", "required": true, "description": "task id" }]
+                }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["action"]["path_template"], "/tasks/{id}/ready");
+
+    let (_, got) = send(&app, get("/skills/promote")).await;
+    assert_eq!(got["action"]["params"][0]["name"], "id");
 }

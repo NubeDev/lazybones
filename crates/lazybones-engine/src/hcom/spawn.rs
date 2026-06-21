@@ -73,6 +73,23 @@ impl Hcom {
             cmd.env(k, v);
         }
 
+        // Scrub Claude-Code session markers inherited from a parent `claude`
+        // process. When `lazybonesd` is itself launched from inside a Claude Code
+        // session (e.g. a dev run), the child agent inherits `CLAUDECODE=1` and
+        // `CLAUDE_CODE_*`, which flip the spawned CLI into a nested/child mode and
+        // resurrect interactive consent screens a headless agent can't answer —
+        // it is then reaped `launch_blocked`. A freshly booted production daemon
+        // has none of these, so removing them only ever makes spawns more like
+        // that clean baseline. `ANTHROPIC_API_KEY`/`CLAUDE_EFFORT` are untouched.
+        for (key, _) in std::env::vars() {
+            if key == "CLAUDECODE"
+                || key.starts_with("CLAUDE_CODE_")
+                || key == "CLAUDE_AGENT_SDK_VERSION"
+            {
+                cmd.env_remove(&key);
+            }
+        }
+
         let out = cmd.output().await?;
         if !out.status.success() {
             anyhow::bail!(

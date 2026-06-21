@@ -51,10 +51,18 @@ struct SeedSkill {
     description: String,
     #[serde(default)]
     body: String,
+    /// An optional structured action (open question 2); omitted for plain
+    /// markdown-runbook skills.
+    #[serde(default)]
+    action: Option<super::model::SkillAction>,
 }
 
 impl SeedSkill {
     fn into_skill(self, now: &str) -> Skill {
-        Skill::new(self.id, self.title, self.description, self.body, now.to_owned())
+        let skill = Skill::new(self.id, self.title, self.description, self.body, now.to_owned());
+        match self.action {
+            Some(action) => skill.with_action(action),
+            None => skill,
+        }
     }
 }

@@ -43,7 +43,16 @@ async fn open_store(config: &Config) -> anyhow::Result<StoreHandle> {
 /// Returns an error if the store cannot open or the listener cannot bind.
 pub async fn serve(config: Config, engine: EngineConfig) -> anyhow::Result<()> {
     let store = open_store(&config).await?;
-    let state = AppState::new(store.clone(), config.run.clone(), config.loop_token.clone());
+    // The base URL the management agent calls the REST API with: an explicit
+    // override, else derived from the bind address (loopback for a local daemon).
+    let base_url = std::env::var("LAZYBONES_BASE_URL")
+        .unwrap_or_else(|_| format!("http://{}", config.bind));
+    let state = AppState::new(
+        store.clone(),
+        config.run.clone(),
+        base_url,
+        config.loop_token.clone(),
+    );
     let app = router(state);
 
     // The loop is the daemon: if lazybonesd is up, the queue is being drained.

@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTasks } from "@/lib/hooks/use-tasks";
 import { useRunHistory } from "@/lib/hooks/use-run-history";
+import { useSetAgentContext } from "@/features/agent/agent-context";
 
 /** The Run history view: the full transition log for the active run, newest
  *  first. The run id is taken from the loaded tasks (one run per workfile). */
@@ -14,6 +15,9 @@ export function RunsPage() {
   const { data: tasks } = useTasks();
   const run = tasks?.[0]?.run ?? null;
   const { data: events, isLoading, error } = useRunHistory(run);
+
+  // Ground the Lazybones Agent in the run being viewed (scope §7).
+  useSetAgentContext({ run_id: run ?? undefined });
 
   const ordered = events ? [...events].reverse() : undefined;
 

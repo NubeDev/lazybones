@@ -19,6 +19,9 @@ pub(crate) struct SkillRow {
     /// `Option` columns so rows written before a field existed read back fine.
     pub(crate) description: Option<String>,
     pub(crate) body: Option<String>,
+    /// JSON-serialized [`SkillAction`]; `None` for a plain markdown skill. Stored
+    /// as a string so the row stays flat regardless of the action's JSON shape.
+    pub(crate) action: Option<String>,
     pub(crate) created_at: Option<String>,
     pub(crate) updated_at: Option<String>,
 }
@@ -31,6 +34,7 @@ impl SkillRow {
             title: s.title.clone(),
             description: Some(s.description.clone()),
             body: Some(s.body.clone()),
+            action: s.action.as_ref().and_then(|a| serde_json::to_string(a).ok()),
             created_at: Some(s.created_at.clone()),
             updated_at: Some(s.updated_at.clone()),
         }
@@ -43,6 +47,7 @@ impl SkillRow {
             title: self.title,
             description: self.description.unwrap_or_default(),
             body: self.body.unwrap_or_default(),
+            action: self.action.and_then(|s| serde_json::from_str(&s).ok()),
             created_at: self.created_at.unwrap_or_default(),
             updated_at: self.updated_at.unwrap_or_default(),
         }

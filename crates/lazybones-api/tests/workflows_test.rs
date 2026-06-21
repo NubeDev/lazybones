@@ -152,7 +152,7 @@ async fn three_workflows_run_concurrently_with_reuse() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     // 1. Two reusable templates.
     for (id, title) in [("code-review", "Code review"), ("open-pr", "Open a PR")] {
@@ -290,7 +290,7 @@ async fn reuse_from_missing_target_blocks_with_reason() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     // One workflow, reuse-by-default, with a single task pointing `reuse_from` at
     // a task id that does not exist anywhere — so it can never have a worktree.
@@ -357,7 +357,7 @@ async fn workflow_tasks_endpoint_is_scoped_to_its_run_id() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let mk_workflow = |id: &str| {
         loop_post(
@@ -421,7 +421,7 @@ async fn retry_revives_a_blocked_task_and_rejects_a_done_one() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let (s, _) = send(
         &app,
@@ -471,7 +471,7 @@ async fn guided_retry_revives_in_place_with_guidance() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let (s, _) = send(
         &app,
@@ -519,7 +519,7 @@ async fn auto_retry_policy_is_settable_and_clearable() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let (s, _) = send(
         &app,
@@ -558,7 +558,7 @@ async fn resume_resets_only_blocked_tasks() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let (s, _) = send(
         &app,
@@ -612,7 +612,7 @@ async fn stop_pauses_and_blocks_revive_until_resume() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let (s, _) = send(
         &app,
@@ -679,7 +679,7 @@ async fn stop_reset_pauses_and_resets_unfinished() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", LOOP_TOKEN));
+    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
 
     let (s, _) = send(
         &app,

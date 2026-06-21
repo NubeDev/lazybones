@@ -5,6 +5,7 @@
 //! a run needs to survive a restart lives here, reached over the [`StoreHandle`].
 
 mod agent;
+mod agent_chat;
 mod attachment;
 mod bootstrap;
 mod chat;
@@ -17,6 +18,7 @@ mod handle;
 mod hcom_log;
 mod init_schema;
 mod run;
+mod management_agent;
 mod secret;
 mod skill;
 mod task;
@@ -24,6 +26,7 @@ mod template;
 mod workfile;
 
 pub use agent::{AgentCatalog, AgentCatalogEdit, seed_default_agents};
+pub use agent_chat::{AgentConversation, AgentMessage, AgentRole, ConfirmAction};
 pub use attachment::Attachment;
 pub use chat::{ChatMessage, ChatRole};
 pub use connect::StoreEngine;
@@ -32,9 +35,12 @@ pub use event::{Activity, Event, EventBus, LiveEvent};
 pub use follow_up::{FollowUp, FollowUpFilter, NewFollowUpEntry};
 pub use handle::StoreHandle;
 pub use hcom_log::{HcomLogEntry, HcomLogFilter, NewHcomLogEntry};
+pub use management_agent::{
+    ManagementAgentConfig, ManagementAgentScope, PermissionProfile, SessionMode,
+};
 pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};
-pub use skill::{Skill, seed_default_skills};
+pub use skill::{Skill, SkillAction, SkillParam, seed_default_skills};
 pub use task::{
     DEFAULT_MAX_RETRIES, RetryStrategy, Status, Task, TaskEdit, Transition, WorktreeMode,
 };

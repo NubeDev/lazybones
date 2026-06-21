@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::capability::Capability;
+use crate::capability::{Capability, ManagementProfile};
 
 /// A session bound to a set of capabilities and, for an agent, its one task.
 #[derive(Debug, Clone)]
@@ -20,6 +20,20 @@ impl ScopedSession {
             actor: actor.into(),
             task: None,
             grants: Capability::loop_grant().iter().copied().collect(),
+        }
+    }
+
+    /// A management-agent session: a scoped, task-unbound identity whose grant
+    /// is derived from its permission profile (`Capability::management_grant`).
+    /// Unlike an agent session it is not pinned to one task — it authors across
+    /// the queue — but it never holds `Claim` or `Secret`, so it cannot run the
+    /// scheduler loop or read secrets (`docs/agent/lazybones-agent-scope.md` §10).
+    #[must_use]
+    pub fn for_management(actor: impl Into<String>, profile: ManagementProfile) -> Self {
+        Self {
+            actor: actor.into(),
+            task: None,
+            grants: Capability::management_grant(profile).iter().copied().collect(),
         }
     }
 

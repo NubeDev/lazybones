@@ -201,6 +201,9 @@ pub struct CreateSkillBody {
     /// The skill text/instructions an agent follows (markdown).
     #[serde(default)]
     pub body: String,
+    /// An optional structured action for deterministic execution (scope §6.1).
+    #[serde(default)]
+    pub action: Option<lazybones_store::SkillAction>,
 }
 
 /// `PUT /skills/:id` body: the new state of an existing skill. The id comes from
@@ -215,6 +218,9 @@ pub struct UpdateSkillBody {
     /// The skill text/instructions an agent follows (markdown).
     #[serde(default)]
     pub body: String,
+    /// An optional structured action for deterministic execution (scope §6.1).
+    #[serde(default)]
+    pub action: Option<lazybones_store::SkillAction>,
 }
 
 /// `POST /:owner/:id/attachments` body: a polymorphic thing to attach. The owner
@@ -449,6 +455,62 @@ pub struct UpdateAgentBody {
     /// New default effort.
     #[serde(default)]
     pub default_effort: Option<String>,
+}
+
+/// `PUT /settings/management-agent` body: the single global Lazybones-Agent
+/// configuration. `model`/`effort` are validated against the agent catalog;
+/// `permission_profile` and `session_mode` parse leniently (unknown ⇒ safe
+/// default) in the store layer.
+#[derive(Debug, Deserialize)]
+pub struct ManagementAgentBody {
+    /// FK into the agent catalog, e.g. `"claude"`.
+    pub tool: String,
+    /// Model ⊆ the tool's catalog entry, or `None` for the CLI default.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Effort ⊆ the tool's catalog entry, or `None` for the CLI default.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// `"read_only" | "author"`.
+    pub permission_profile: String,
+    /// `"per_conversation" | "per_turn"`.
+    #[serde(default = "default_session_mode")]
+    pub session_mode: String,
+    /// Skill ids the agent may use as operating runbooks.
+    #[serde(default)]
+    pub enabled_skills: Vec<String>,
+    /// Extra CLI flags for the tool process.
+    #[serde(default)]
+    pub permission_flags: Vec<String>,
+}
+
+/// Default session mode when the client omits it.
+fn default_session_mode() -> String {
+    "per_conversation".to_owned()
+}
+
+/// `POST /agent/chat` body: one operator turn for the Lazybones Agent.
+#[derive(Debug, Deserialize)]
+pub struct AgentChatBody {
+    /// The conversation to continue; absent opens a new one.
+    #[serde(default)]
+    pub conversation: Option<String>,
+    /// The operator's message.
+    pub text: String,
+    /// The page the operator is viewing, as a typed envelope (scope §7). Opaque
+    /// JSON here; rendered by the engine into the system prompt.
+    #[serde(default)]
+    pub page_context: Option<serde_json::Value>,
+}
+
+/// `POST /agent/chat` response: the conversation id + the stored operator turn.
+/// The agent's reply arrives over the per-conversation SSE stream.
+#[derive(Debug, Serialize)]
+pub struct AgentChatPosted {
+    /// The conversation this turn belongs to (newly minted if none was sent).
+    pub conversation: String,
+    /// The persisted operator message.
+    pub message: lazybones_store::AgentMessage,
 }
 
 #[cfg(test)]

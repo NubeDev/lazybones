@@ -19,6 +19,7 @@ import {
   useSkill,
   useUpdateSkill,
 } from "@/lib/hooks/use-skills";
+import { useSetAgentContext } from "@/features/agent/agent-context";
 import type { SkillDraft } from "@/lib/api/skills";
 import type { Skill } from "@/types/skill";
 
@@ -41,6 +42,9 @@ export function SkillPage({
 }) {
   const creating = skillId == null;
   const { data: skill, isLoading } = useSkill(skillId);
+
+  // Ground the Lazybones Agent in the open skill (scope §7).
+  useSetAgentContext({ selected_skill_id: skillId });
 
   // `editing` starts true when authoring; for an existing skill it's a toggle.
   const [editing, setEditing] = useState(creating);

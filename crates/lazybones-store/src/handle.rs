@@ -15,7 +15,17 @@ use crate::agent::{
     AgentCatalog, AgentCatalogEdit, create_agent, delete_agent, get_agent, list_agents,
     seed_default_agents, update_agent,
 };
+use crate::agent_chat::{
+    AgentConversation, AgentMessage, AgentRole, ConfirmAction, agent_message_history,
+    append_agent_message, append_confirm_request, create_agent_conversation,
+    get_agent_conversation, list_agent_conversations,
+};
 use crate::attachment::{Attachment, attach, detach, list_attachments};
+use crate::management_agent::{
+    ManagementAgentConfig, ManagementAgentScope, delete_management_agent_scoped,
+    get_management_agent, get_management_agent_resolved, get_management_agent_scoped,
+    put_management_agent, put_management_agent_scoped,
+};
 use crate::skill::{
     Skill, create_skill, delete_skill, get_skill, list_skills, seed_default_skills, update_skill,
 };
@@ -338,6 +348,148 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the query fails.
     pub async fn chat_history(&self, task: &str) -> Result<Vec<ChatMessage>> {
         chat_history(&self.db, task).await
+    }
+
+    /// Read the single Lazybones-Agent configuration, or `None` if unset.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_management_agent(&self) -> Result<Option<ManagementAgentConfig>> {
+        get_management_agent(&self.db).await
+    }
+
+    /// Write the single Lazybones-Agent configuration, returning it as stored.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn put_management_agent(
+        &self,
+        config: &ManagementAgentConfig,
+    ) -> Result<ManagementAgentConfig> {
+        put_management_agent(&self.db, config).await
+    }
+
+    /// Read the config stored at exactly `scope` (no fallback), or `None`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_management_agent_scoped(
+        &self,
+        scope: &ManagementAgentScope,
+    ) -> Result<Option<ManagementAgentConfig>> {
+        get_management_agent_scoped(&self.db, scope).await
+    }
+
+    /// Resolve the effective config for `scope`: its own override if set, else
+    /// the global record (`workflow-override ?? global`, scope §11 Q1).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if a read fails.
+    pub async fn get_management_agent_resolved(
+        &self,
+        scope: &ManagementAgentScope,
+    ) -> Result<Option<ManagementAgentConfig>> {
+        get_management_agent_resolved(&self.db, scope).await
+    }
+
+    /// Write the config at `scope`, returning it as stored.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn put_management_agent_scoped(
+        &self,
+        scope: &ManagementAgentScope,
+        config: &ManagementAgentConfig,
+    ) -> Result<ManagementAgentConfig> {
+        put_management_agent_scoped(&self.db, scope, config).await
+    }
+
+    /// Delete the config override at `scope`, returning whether it existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_management_agent_scoped(
+        &self,
+        scope: &ManagementAgentScope,
+    ) -> Result<bool> {
+        delete_management_agent_scoped(&self.db, scope).await
+    }
+
+    /// Open a new management-agent conversation, optionally snapshotting the
+    /// page context it was started on.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn create_agent_conversation(
+        &self,
+        page_context: Option<&serde_json::Value>,
+    ) -> Result<AgentConversation> {
+        create_agent_conversation(&self.db, page_context, &self.now()).await
+    }
+
+    /// Read a single management-agent conversation by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_agent_conversation(&self, id: &str) -> Result<Option<AgentConversation>> {
+        get_agent_conversation(&self.db, id).await
+    }
+
+    /// List all management-agent conversations, newest first.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn list_agent_conversations(&self) -> Result<Vec<AgentConversation>> {
+        list_agent_conversations(&self.db).await
+    }
+
+    /// Append one message to a management-agent conversation and publish it on
+    /// the live bus for the per-conversation SSE stream. Mirrored agent replies
+    /// (with `hcom_id`) are deduped on `(conversation_id, hcom_id)`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn append_agent_message(
+        &self,
+        conversation_id: &str,
+        role: AgentRole,
+        text: &str,
+        hcom_id: Option<i64>,
+    ) -> Result<AgentMessage> {
+        let message =
+            append_agent_message(&self.db, conversation_id, role, text, hcom_id).await?;
+        self.bus.publish(LiveEvent::AgentMessage(message.clone()));
+        Ok(message)
+    }
+
+    /// Append a gated `confirm` message proposing `action` and publish it on the
+    /// live bus for the per-conversation stream. The agent only *proposes*; the
+    /// UI issues the call under the operator's token (scope §10.2).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn append_confirm_request(
+        &self,
+        conversation_id: &str,
+        summary: &str,
+        action: &ConfirmAction,
+        hcom_id: Option<i64>,
+    ) -> Result<AgentMessage> {
+        let message =
+            append_confirm_request(&self.db, conversation_id, summary, action, hcom_id).await?;
+        self.bus.publish(LiveEvent::AgentMessage(message.clone()));
+        Ok(message)
+    }
+
+    /// Read a management-agent conversation's full history, oldest first.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn agent_message_history(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<AgentMessage>> {
+        agent_message_history(&self.db, conversation_id).await
     }
 
     /// Append one raw hcom event to the durable hcom log (idempotent on

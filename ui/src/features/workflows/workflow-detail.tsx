@@ -25,6 +25,7 @@ import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
 import { TaskBoard } from "@/features/tasks/task-board";
 import { TaskPage } from "@/features/tasks/detail/task-page";
 import { duration, shortTime } from "@/lib/utils/platform";
+import { useSetAgentContext } from "@/features/agent/agent-context";
 import { repoBasename } from "./repo-path";
 import { PlanGraphView } from "./plan-graph-view";
 import { WorkflowTasks } from "./workflow-tasks";
@@ -51,6 +52,15 @@ export function WorkflowDetail({
   const { data: wf, isLoading, error } = useWorkflow(id);
   const { data: workflowTasks } = useWorkflowTasks(id);
   const resume = useResumeWorkflow();
+
+  // Ground the Lazybones Agent in this workflow while the panel is open (scope §7).
+  useSetAgentContext({
+    workflow_id: id,
+    run_id: id,
+    repo: wf?.workspace.repo,
+    base_branch: wf?.workspace.base_branch ?? undefined,
+    task_id: undefined,
+  });
   const [tab, setTab] = useState("plan");
   // The task opened in the shared detail panel (from Plan/Board clicks), or null.
   const [selectedId, setSelectedId] = useState<string | null>(null);

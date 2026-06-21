@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
-import { Check, Plug, Search } from "lucide-react";
+import { Bot, Check, Clock, Plug, Search, Sparkles } from "lucide-react";
 import { Topbar } from "@/components/layout/topbar";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { AgentsPanel } from "@/features/agents/agents-panel";
+import { ManagementAgentCard } from "./management-agent-card";
 import {
   apiBase,
   setApiBase,
@@ -157,62 +159,113 @@ export function SettingsPage() {
     <div className="flex h-full flex-col">
       <Topbar title="Settings" subtitle="Connection + environment" />
       <div className="flex-1 overflow-y-auto p-5">
-        <div className="mx-auto max-w-2xl space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Plug className="size-4 text-accent" /> Daemon connection
-              </CardTitle>
-              <CardDescription>
-                The REST address of lazybonesd and the loop bearer token used for
-                guarded mutations (promote, claim, sync).
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Field label="API base URL" hint="e.g. http://127.0.0.1:7878">
-                <Input value={base} onChange={(e) => setBase(e.target.value)} />
-              </Field>
-              <Field label="Loop token" hint="default: lazybones-loop">
-                <Input
-                  type="password"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
-              </Field>
-              <Field
-                label="Display timezone"
-                hint={`How all dates & times are shown. "Follow browser" uses this device's zone (${browserZone()}).`}
-              >
-                <TimezonePicker value={tz} onChange={setTz} />
-              </Field>
-              <Separator />
-              <div className="flex items-center justify-end gap-3">
-                {saved && (
-                  <span className="inline-flex items-center gap-1 text-xs text-status-done">
-                    <Check className="size-3.5" /> Saved — reloading
-                  </span>
-                )}
-                <Button onClick={save} size="sm">
-                  Save & reconnect
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+        <div className="mx-auto max-w-2xl">
+          <Tabs defaultValue="connection">
+            <TabsList className="mb-4">
+              <TabsTrigger value="connection">
+                <Plug className="size-3.5" /> Connection
+              </TabsTrigger>
+              <TabsTrigger value="agents">
+                <Bot className="size-3.5" /> Agents
+              </TabsTrigger>
+              <TabsTrigger value="management">
+                <Sparkles className="size-3.5" /> Lazybones Agent
+              </TabsTrigger>
+              <TabsTrigger value="timezone">
+                <Clock className="size-3.5" /> Timezone
+              </TabsTrigger>
+            </TabsList>
 
-          <AgentsPanel />
+            <TabsContent value="connection" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Plug className="size-4 text-accent" /> Daemon connection
+                  </CardTitle>
+                  <CardDescription>
+                    The REST address of lazybonesd and the loop bearer token used for
+                    guarded mutations (promote, claim, sync).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Field label="API base URL" hint="e.g. http://127.0.0.1:7878">
+                    <Input value={base} onChange={(e) => setBase(e.target.value)} />
+                  </Field>
+                  <Field label="Loop token" hint="default: lazybones-loop">
+                    <Input
+                      type="password"
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                    />
+                  </Field>
+                  <Separator />
+                  <div className="flex items-center justify-end gap-3">
+                    {saved && (
+                      <span className="inline-flex items-center gap-1 text-xs text-status-done">
+                        <Check className="size-3.5" /> Saved — reloading
+                      </span>
+                    )}
+                    <Button onClick={save} size="sm">
+                      Save & reconnect
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Environment</CardTitle>
-              <CardDescription>How this client is running.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 text-xs">
-              <Row k="Runtime" v={isDesktop() ? "Tauri desktop" : "Browser"} />
-              <Row k="Current API" v={apiBase()} />
-              <Row k="Display timezone" v={getTimezone() ?? `browser (${browserZone()})`} />
-              <Row k="Polling" v="every 4s (no SSE feed yet)" />
-            </CardContent>
-          </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Environment</CardTitle>
+                  <CardDescription>How this client is running.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 text-xs">
+                  <Row k="Runtime" v={isDesktop() ? "Tauri desktop" : "Browser"} />
+                  <Row k="Current API" v={apiBase()} />
+                  <Row k="Display timezone" v={getTimezone() ?? `browser (${browserZone()})`} />
+                  <Row k="Polling" v="every 4s (no SSE feed yet)" />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="agents" className="space-y-4">
+              <AgentsPanel />
+            </TabsContent>
+
+            <TabsContent value="management" className="space-y-4">
+              <ManagementAgentCard />
+            </TabsContent>
+
+            <TabsContent value="timezone" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="size-4 text-accent" /> Display timezone
+                  </CardTitle>
+                  <CardDescription>
+                    How all dates &amp; times are shown across the app.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Field
+                    label="Display timezone"
+                    hint={`"Follow browser" uses this device's zone (${browserZone()}).`}
+                  >
+                    <TimezonePicker value={tz} onChange={setTz} />
+                  </Field>
+                  <Separator />
+                  <div className="flex items-center justify-end gap-3">
+                    {saved && (
+                      <span className="inline-flex items-center gap-1 text-xs text-status-done">
+                        <Check className="size-3.5" /> Saved — reloading
+                      </span>
+                    )}
+                    <Button onClick={save} size="sm">
+                      Save
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
     </div>
