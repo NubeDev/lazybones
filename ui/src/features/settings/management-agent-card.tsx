@@ -71,16 +71,39 @@ export function ManagementAgentCard() {
   const set = (partial: Partial<ManagementAgentDraft>) =>
     setDraft((d) => (d ? { ...d, ...partial } : d));
 
+  // Functional update so toggling several skills in quick succession reads the
+  // latest draft each time — a closure over `draft` would let a later toggle
+  // overwrite an earlier one (dropping a just-ticked skill).
   const toggleSkill = (id: string) =>
-    set({
-      enabled_skills: draft.enabled_skills.includes(id)
-        ? draft.enabled_skills.filter((s) => s !== id)
-        : [...draft.enabled_skills, id],
+    setDraft((d) => {
+      if (!d) return d;
+      const has = d.enabled_skills.includes(id);
+      return {
+        ...d,
+        enabled_skills: has
+          ? d.enabled_skills.filter((s) => s !== id)
+          : [...d.enabled_skills, id],
+      };
     });
 
   const save = () => {
     setSaved(false);
-    update.mutate(draft, { onSuccess: () => setSaved(true) });
+    update.mutate(draft, {
+      // Re-seed the draft from the server's stored config so the form provably
+      // reflects what was persisted (no silent drift between form and backend).
+      onSuccess: (stored) => {
+        setDraft({
+          tool: stored.tool,
+          model: stored.model,
+          effort: stored.effort,
+          permission_profile: stored.permission_profile,
+          session_mode: stored.session_mode,
+          enabled_skills: stored.enabled_skills,
+          permission_flags: stored.permission_flags,
+        });
+        setSaved(true);
+      },
+    });
   };
 
   const saveErr = update.error instanceof ApiError ? update.error.message : null;
