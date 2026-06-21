@@ -217,16 +217,18 @@ function ConversationList({
   );
 }
 
-/** The meaningful scope a conversation/page belongs to — the entity in scope
- *  (template/skill/task/workflow), preferred most-specific first. Incidental
- *  fields (repo/branch) are ignored so a resume matches the *thing*, not the
- *  exact envelope. Returns null for a global/unscoped page (no resume prompt). */
+/** The scope a conversation/page belongs to, most-specific first: the entity in
+ *  scope (template/skill/task/workflow) if any, else the page itself (`view`).
+ *  Incidental fields (repo/branch) are ignored so a resume matches the *thing*
+ *  (or the page), not the exact envelope. Returns null only for a context with
+ *  nothing at all (no resume prompt). */
 function pageScopeKey(ctx: PageContext | null | undefined): string | null {
   if (!ctx) return null;
   if (ctx.selected_template_id) return `template:${ctx.selected_template_id}`;
   if (ctx.selected_skill_id) return `skill:${ctx.selected_skill_id}`;
   if (ctx.task_id) return `task:${ctx.task_id}`;
   if (ctx.workflow_id) return `workflow:${ctx.workflow_id}`;
+  if (ctx.view) return `view:${ctx.view}`;
   return null;
 }
 

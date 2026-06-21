@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { useDeleteTemplate } from "@/lib/hooks/use-templates";
 import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
+import { useSetAgentContext } from "@/features/agent/agent-context";
 import { TemplateDialog } from "./template-dialog";
 import type { Template } from "@/types/workflow";
 
@@ -19,6 +20,10 @@ import type { Template } from "@/types/workflow";
 export function TemplateCard({ template }: { template: Template }) {
   const del = useDeleteTemplate();
   const [open, setOpen] = useState(false);
+  // While this template's editor is open, ground the Lazybones Agent in it, so
+  // chatting (and the resume prompt) is scoped to this specific template.
+  const [editing, setEditing] = useState(false);
+  useSetAgentContext(editing ? { selected_template_id: template.id } : {});
 
   return (
     <Card className="flex flex-col gap-2 p-4">
@@ -34,6 +39,7 @@ export function TemplateCard({ template }: { template: Template }) {
         <div className="flex shrink-0 items-center">
           <TemplateDialog
             template={template}
+            onOpenChange={setEditing}
             trigger={
               <Button variant="ghost" size="icon-sm" title="Edit template">
                 <Pencil />

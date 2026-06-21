@@ -50,9 +50,13 @@ function draftFrom(t: Template): TemplateDraft {
 export function TemplateDialog({
   trigger,
   template,
+  onOpenChange,
 }: {
   trigger?: React.ReactNode;
   template?: Template;
+  /** Notified when the dialog opens/closes (so a parent can ground the agent
+   *  in the template being edited). */
+  onOpenChange?: (open: boolean) => void;
 }) {
   const editing = template != null;
   const [open, setOpen] = useState(false);
@@ -101,6 +105,7 @@ export function TemplateDialog({
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
+        onOpenChange?.(o);
         if (!o) {
           mut.reset();
           reset();
