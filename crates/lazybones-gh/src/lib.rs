@@ -480,6 +480,40 @@ impl Gh {
 
     // ---- pull requests --------------------------------------------------
 
+    /// Open a new pull request; returns its URL (as `gh pr create` prints).
+    ///
+    /// `head` is the source branch and `base` the target; passing them
+    /// explicitly (rather than letting `gh` infer from the checkout) lets a
+    /// workflow open a PR for a branch it isn't currently sitting on. `draft`
+    /// maps to `gh pr create --draft`. The head branch must already be pushed —
+    /// `gh` errors clearly if it isn't, and that surfaces as a [`GhError::Command`].
+    pub async fn pr_create(
+        &self,
+        dir: impl AsRef<Path>,
+        title: &str,
+        body: &str,
+        head: &str,
+        base: &str,
+        draft: bool,
+    ) -> Result<String, GhError> {
+        let mut args = vec![
+            "pr".to_string(),
+            "create".to_string(),
+            "--title".to_string(),
+            title.to_string(),
+            "--body".to_string(),
+            body.to_string(),
+            "--head".to_string(),
+            head.to_string(),
+            "--base".to_string(),
+            base.to_string(),
+        ];
+        if draft {
+            args.push("--draft".to_string());
+        }
+        self.run(dir, args).await
+    }
+
     /// List pull requests filtered by state.
     pub async fn prs(
         &self,
@@ -715,6 +749,27 @@ mod tests {
         assert_eq!(prs[0].base_ref, "master");
         assert_eq!(prs[0].mergeable, "MERGEABLE");
         assert!(!prs[0].is_draft);
+    }
+
+    #[tokio::test]
+    async fn pr_create_passes_flags_and_returns_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Echo the args back so we can assert the flags, then print a URL on the
+        // last line (mirroring `gh pr create`, whose final stdout line is the URL).
+        let bin = fake_gh(
+            tmp.path(),
+            "printf '%s\\n' \"$*\"; printf 'https://github.com/o/r/pull/9\\n'",
+        );
+        let gh = Gh::with_bin(bin);
+        let out = gh
+            .pr_create(".", "my title", "my body", "feat/x", "master", true)
+            .await
+            .unwrap();
+        assert!(out.ends_with("https://github.com/o/r/pull/9"));
+        assert!(out.contains("pr create"));
+        assert!(out.contains("--head feat/x"));
+        assert!(out.contains("--base master"));
+        assert!(out.contains("--draft"));
     }
 
     #[tokio::test]

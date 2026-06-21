@@ -90,6 +90,17 @@ impl Hcom {
             }
         }
 
+        // Disable Claude Code's auto-memory feature for every spawned agent. The
+        // "save a memory" reflex writes into the protected `.claude/` metadata dir,
+        // which Claude Code gates behind an approval prompt that NO allow-list rule
+        // can suppress (only full bypass mode can) — so a headless agent that tries
+        // it parks `launch_blocked` on an unanswerable "Do you want to create
+        // memory-note.md?" prompt. A task/management agent has no business writing
+        // the host's global memory mid-run, so we turn the feature off outright.
+        // Set *after* the `CLAUDE_CODE_*` scrub above so it is authoritative and
+        // survives a daemon launched from inside a Claude Code session.
+        cmd.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
+
         let out = cmd.output().await?;
         if !out.status.success() {
             anyhow::bail!(

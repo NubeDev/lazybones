@@ -14,9 +14,41 @@ pub use config::{EngineConfig, MergeMode};
 pub use management::{
     TurnContext, chat_turn, page_context_workflow_id, render_page_context,
 };
+pub use scheduler::issue::IssueError;
 pub use scheduler::run;
 
 use hcom::Hcom;
+use lazybones_gh::Gh;
+use lazybones_store::{StoreHandle, Task};
+
+/// Create a GitHub issue from a task's title/spec and link it (control-surface
+/// primitive behind `POST /tasks/:id/issue`). Uses the user's authenticated
+/// `gh` CLI; the repo is resolved from the task's workflow.
+///
+/// # Errors
+/// Returns [`IssueError`] for a standalone task, a missing/unauthed `gh`, or a
+/// `gh`/store failure.
+pub async fn issue_create(store: &StoreHandle, id: &str) -> Result<Task, IssueError> {
+    scheduler::issue::create(store, &Gh::new(), id).await
+}
+
+/// Link an existing GitHub issue to a task by URL or `#number`, validating it
+/// resolves (behind `POST /tasks/:id/issue/link`).
+///
+/// # Errors
+/// Returns [`IssueError`] for a bad link, a standalone task, or a `gh`/store failure.
+pub async fn issue_link(store: &StoreHandle, id: &str, link: &str) -> Result<Task, IssueError> {
+    scheduler::issue::link(store, &Gh::new(), id, link).await
+}
+
+/// Unlink a task's GitHub issue (behind `DELETE /tasks/:id/issue`). Clears the
+/// task's link only; never touches the GitHub issue itself.
+///
+/// # Errors
+/// Returns [`IssueError`] if the task is missing or the store write fails.
+pub async fn issue_unlink(store: &StoreHandle, id: &str) -> Result<Task, IssueError> {
+    scheduler::issue::unlink(store, id).await
+}
 
 /// Cancel every hcom agent tagged with `tag` (a task id) — the control-surface
 /// primitive behind `POST /tasks/:id/cancel`. Pairs with a `Block` transition
@@ -142,8 +174,18 @@ pub mod harness {
         }
 
         /// Run one scheduler tick (reconcile → promote → claim → spawn).
+        ///
+        /// Passes a non-due tick counter so the coarse-cadence reverse issue-sync
+        /// (which would shell out to `gh`) never fires in a single-tick test;
+        /// tests that exercise the sync call [`tick_n`](Self::tick_n) directly.
         pub async fn tick(&self) {
-            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg).await;
+            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, 1).await;
+        }
+
+        /// Run one tick with an explicit `tick_count` — lets a test drive the
+        /// Nth-tick reverse issue-sync deterministically.
+        pub async fn tick_n(&self, tick_count: u64) {
+            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, tick_count).await;
         }
     }
 

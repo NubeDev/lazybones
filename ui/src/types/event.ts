@@ -29,3 +29,19 @@ export interface HcomLogEntry {
   /** RFC3339 timestamp of the event. */
   at: string;
 }
+
+/** One entry of hcom's `transcript … --json --full` output: a step of the agent's
+ *  run with its narration, the files it touched, and a timestamp. Fields are
+ *  optional because hcom's shape can vary across tools/versions. */
+export interface TranscriptEntry {
+  /** The agent's narration / reasoning text for this step. */
+  action?: string;
+  /** Files referenced or edited in this step. */
+  files?: string[];
+  /** 1-based step index within the run. */
+  position?: number;
+  /** RFC3339 timestamp of the step. */
+  timestamp?: string;
+  /** The prompt/user text in view at this step (usually only the first entry). */
+  user?: string;
+}

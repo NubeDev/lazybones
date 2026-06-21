@@ -53,8 +53,8 @@ use crate::template::{
 };
 use crate::task::{
     RetryStrategy, Status, Task, TaskEdit, Transition, bump_retry_count, create_task, delete_task,
-    get_task, list_tasks, newly_ready, record_heartbeat, relate_dep, reset_task, set_retry_policy,
-    transition_task, unrelate_dep, update_task, upsert_task,
+    get_task, list_tasks, newly_ready, record_heartbeat, relate_dep, reset_task, set_issue_link,
+    set_retry_policy, transition_task, unrelate_dep, update_task, upsert_task,
 };
 
 /// A cloneable handle to the durable store.
@@ -134,6 +134,17 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the write fails.
     pub async fn upsert_task(&self, task: &Task) -> Result<Task> {
         upsert_task(&self.db, task).await
+    }
+
+    /// Persist a task's GitHub-issue linkage (`issue_url`,
+    /// `issue_close_on_done`, `issue_synced_state`), preserving its lifecycle and
+    /// authored fields. The engine's issue actions + reverse-sync poll write here.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the task is missing or the
+    /// write fails.
+    pub async fn set_issue_link(&self, task: &Task) -> Result<Task> {
+        set_issue_link(&self.db, task).await
     }
 
     /// Create a new task document, failing if its id is already taken.

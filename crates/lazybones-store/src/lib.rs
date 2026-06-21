@@ -44,7 +44,8 @@ pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};
 pub use skill::{Skill, SkillAction, SkillParam, seed_default_skills};
 pub use task::{
-    DEFAULT_MAX_RETRIES, RetryStrategy, Status, Task, TaskEdit, Transition, WorktreeMode,
+    DEFAULT_MAX_RETRIES, IssueSyncState, RetryStrategy, Status, Task, TaskEdit, Transition,
+    WorktreeMode, issue_number_from_url,
 };
 pub use template::{Template, instantiate};
 pub use workfile::{SeedTask, deps_with_reuse, sync_seeds};

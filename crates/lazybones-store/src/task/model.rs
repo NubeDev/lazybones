@@ -105,6 +105,58 @@ impl RetryStrategy {
     }
 }
 
+/// Last-known state of a task's linked GitHub issue.
+///
+/// Stored on the task so the reverse poll (issue → task) detects a *change* of
+/// state instead of re-acting every tick. Mirrors [`WorktreeMode`]'s
+/// `as_str`/`parse` pattern; the wire form is lowercase (`open`/`closed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueSyncState {
+    /// The issue was open at the last sync.
+    Open,
+    /// The issue was closed at the last sync.
+    Closed,
+}
+
+impl IssueSyncState {
+    /// The lowercase wire/storage form (`open` / `closed`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IssueSyncState::Open => "open",
+            IssueSyncState::Closed => "closed",
+        }
+    }
+
+    /// Parse a stored state string; unknown/missing → `None` (never synced).
+    ///
+    /// Also accepts the upper-case `OPEN`/`CLOSED` that `gh issue view` emits in
+    /// its `state` field, so a live `Issue.state` can be classified directly.
+    #[must_use]
+    pub fn parse(s: Option<&str>) -> Option<Self> {
+        match s.map(str::to_ascii_lowercase).as_deref() {
+            Some("open") => Some(IssueSyncState::Open),
+            Some("closed") => Some(IssueSyncState::Closed),
+            _ => None,
+        }
+    }
+}
+
+/// Extract the issue **number** from a stored issue URL.
+///
+/// The `gh` issue methods key off the number, not the URL, so the actions and
+/// the reverse-sync poll resolve it from the trailing path segment of an
+/// `https://github.com/owner/repo/issues/<n>` URL. Returns `None` if the URL
+/// has no parseable trailing number.
+#[must_use]
+pub fn issue_number_from_url(url: &str) -> Option<u64> {
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .and_then(|seg| seg.parse().ok())
+}
+
 /// The default cap on hands-off auto-retries before a blocked task waits for a
 /// human. Configurable per task via `Task::max_retries`.
 pub const DEFAULT_MAX_RETRIES: u32 = 2;
@@ -137,6 +189,13 @@ pub struct Task {
     /// lets the CLI use its own default. One of the agent's catalog `efforts`.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Per-task override of folder-trust auto-seeding (the global
+    /// `auto_trust_agent_folder`): pre-seed Claude Code's `hasTrustDialogAccepted`
+    /// for this task's worktree before spawning, so a headless `claude` doesn't
+    /// freeze on the *"Yes, I trust this folder"* dialog. `None` inherits the
+    /// global default (on); `Some(false)` opts this task out.
+    #[serde(default)]
+    pub auto_trust_agent_folder: Option<bool>,
     /// How the loop should provision the working tree on claim. Defaults to
     /// `New` (isolated worktree); `#[serde(default)]` keeps tasks stored before
     /// this field readable.
@@ -205,6 +264,19 @@ pub struct Task {
     /// retry/restart and on `done`; the cap is `retry_count >= max_retries`.
     #[serde(default)]
     pub retry_count: u32,
+    /// The linked GitHub issue URL, if any. Covers both "created by us" and
+    /// "linked existing" — provenance is irrelevant once linked. `None` =
+    /// unlinked. `#[serde(default)]` so existing rows read back unlinked.
+    #[serde(default)]
+    pub issue_url: Option<String>,
+    /// Whether to close the linked issue when this task reaches `done`.
+    /// Defaults to `false`; `#[serde(default)]` keeps legacy rows readable.
+    #[serde(default)]
+    pub issue_close_on_done: bool,
+    /// Last-known state of the linked issue, so the reverse poll detects a
+    /// *change* instead of re-acting every tick. `None` until first sync.
+    #[serde(default)]
+    pub issue_synced_state: Option<IssueSyncState>,
 }
 
 /// `serde` default for [`Task::max_retries`] (a fn because `serde(default = …)`
@@ -236,6 +308,7 @@ impl Task {
             tool,
             model: None,
             effort: None,
+            auto_trust_agent_folder: None,
             worktree_mode: WorktreeMode::default(),
             session: None,
             worktree: None,
@@ -253,6 +326,9 @@ impl Task {
             auto_retry: None,
             max_retries: DEFAULT_MAX_RETRIES,
             retry_count: 0,
+            issue_url: None,
+            issue_close_on_done: false,
+            issue_synced_state: None,
         }
     }
 }

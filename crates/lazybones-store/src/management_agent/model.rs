@@ -150,12 +150,13 @@ impl Default for ManagementAgentConfig {
     /// A usable default the API returns when nothing has been configured yet:
     /// `claude`, `Author`, per-turn sessions, no skills enabled.
     ///
-    /// `permission_flags` is **empty** by design — unlike task agents, the
-    /// management agent runs in a scratch dir bootstrapped with a Claude
-    /// allow-list (`.claude/settings.json`), so it does NOT need (and must not
-    /// use) `--dangerously-skip-permissions`. That flag triggers Claude Code's
-    /// bypass-permissions consent screen, which a headless agent cannot answer
-    /// and which the allow-list already makes unnecessary.
+    /// `permission_flags` defaults to `--permission-mode auto`: a classifier
+    /// auto-approves each action, so a headless turn never hangs on an approval
+    /// gate the `.claude/settings.json` allow-list can't cover (a `.claude/`
+    /// write, a destructive Bash command). It must NOT be
+    /// `--dangerously-skip-permissions` — in claude v2.1.x that triggers the
+    /// bypass-permissions consent screen a headless agent can't answer
+    /// (`runner::is_bypass_flag` defensively strips it if a stored config has it).
     fn default() -> Self {
         Self {
             tool: "claude".to_owned(),
@@ -164,7 +165,7 @@ impl Default for ManagementAgentConfig {
             permission_profile: PermissionProfile::Author,
             session_mode: SessionMode::PerTurn,
             enabled_skills: Vec::new(),
-            permission_flags: Vec::new(),
+            permission_flags: vec!["--permission-mode".to_owned(), "auto".to_owned()],
             updated_at: String::new(),
         }
     }

@@ -36,7 +36,11 @@ pub fn compose(
          same thread (`hcom send @all --thread {id} -- <your reply>`), act on their\n\
          guidance, and signal DONE/BLOCKED again when you reach a new conclusion.\n\
          \n\
-         Do not touch files outside this worktree.\n\
+         Do not touch files outside this worktree. In particular, do NOT write\n\
+         memory notes or edit anything under `~/.claude` or any `.claude/` metadata\n\
+         directory — if you would normally save a memory, skip it silently and keep\n\
+         working. Never stop to ask for permission; if an action would require\n\
+         approval, skip it and continue.\n\
          \n\
          === TASK: {title} ===\n\
          {spec}\n",
@@ -95,6 +99,10 @@ mod tests {
         assert!(p.contains("Build the login."));
         // No conversation section on a first run.
         assert!(!p.contains("OPERATOR CONVERSATION"));
+        // The charter forbids the out-of-worktree memory write that parks a
+        // headless agent on the protected-`.claude/` approval prompt.
+        assert!(p.contains(".claude"));
+        assert!(p.to_lowercase().contains("memory"));
     }
 
     #[test]

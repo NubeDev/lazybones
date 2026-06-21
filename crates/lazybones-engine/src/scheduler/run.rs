@@ -28,9 +28,11 @@ pub async fn run(store: StoreHandle, cfg: EngineConfig) {
     );
 
     let mut ticker = tokio::time::interval(period);
+    let mut tick_count: u64 = 0;
     loop {
         ticker.tick().await;
-        tick(&store, &hcom, &cfg).await;
+        tick(&store, &hcom, &cfg, tick_count).await;
+        tick_count = tick_count.wrapping_add(1);
     }
 }
 

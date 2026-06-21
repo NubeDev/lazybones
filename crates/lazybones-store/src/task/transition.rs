@@ -48,6 +48,13 @@ pub enum Transition {
     /// worktree/branch are kept so the next claim resumes in place with the
     /// operator's chat guidance folded into the prompt.
     Revive,
+    /// `* -> done`: an **external** event (the linked GitHub issue was closed)
+    /// declares the work no longer needed, without a fresh agent commit. Unlike
+    /// [`Done`](Self::Done) it carries no commit — the task's existing `commit`
+    /// (if any) is preserved — and is reachable from any non-terminal state, so
+    /// the reverse-sync poll can land a task whatever stage it is in. This is the
+    /// commit-less completion the issue-linkage scope flagged.
+    ExternalDone,
 }
 
 impl Transition {
@@ -57,7 +64,7 @@ impl Transition {
             Transition::Ready | Transition::Reclaim | Transition::Revive => Status::Ready,
             Transition::Claim { .. } => Status::Running,
             Transition::Gate => Status::Gating,
-            Transition::Done { .. } => Status::Done,
+            Transition::Done { .. } | Transition::ExternalDone => Status::Done,
             Transition::Block { .. } => Status::Blocked,
         }
     }
@@ -84,7 +91,16 @@ pub async fn transition_task(
 
     let from = task.status;
     let to = transition.target();
-    if !from.can_transition(to) {
+    // `ExternalDone` is the one move that doesn't follow the normal edge graph:
+    // an external event (issue closed on GitHub) may land a task `done` from any
+    // non-terminal state. It is still rejected from a terminal state — a `done`
+    // or `blocked` task is not re-completed. Every other transition follows the
+    // lifecycle state machine.
+    let legal = match transition {
+        Transition::ExternalDone => !from.is_terminal(),
+        _ => from.can_transition(to),
+    };
+    if !legal {
         return Err(StoreError::IllegalTransition {
             task: id.to_owned(),
             from: from.as_str().to_owned(),
@@ -134,6 +150,14 @@ fn apply_side_data(task: &mut Task, transition: &Transition, now: &str) {
             task.finished_at = Some(now.to_owned());
             // A task that finishes green is no longer in a failed state.
             task.failed_at = None;
+        }
+        Transition::ExternalDone => {
+            // No fresh commit — keep whatever the task already had (often `None`,
+            // since the work was declared complete externally rather than landed).
+            task.finished_at = Some(now.to_owned());
+            task.failed_at = None;
+            // Clear any stale block reason: the task is done, not blocked.
+            task.reason = None;
         }
         Transition::Block { reason } => {
             task.reason = Some(reason.clone());
@@ -283,6 +307,39 @@ mod tests {
             .unwrap();
         // Revive clears the failure stamp so it only ever reflects an open failure.
         assert_eq!(revived.failed_at, None);
+    }
+
+    #[tokio::test]
+    async fn external_done_lands_from_any_live_state_without_a_commit() {
+        let db = db().await;
+        // A running task, no commit yet — the issue was closed on GitHub.
+        let mut t = Task::seed("auth", "wf", "Auth", "spec", vec![], vec![], None);
+        t.status = Status::Running;
+        create_task(&db, &t).await.unwrap();
+
+        let (done, ev) = transition_task(&db, "auth", Transition::ExternalDone, "issue-sync")
+            .await
+            .unwrap();
+        assert_eq!(done.status, Status::Done);
+        // No fresh commit was invented...
+        assert_eq!(done.commit, None);
+        // ...but it is stamped finished and carries no open failure.
+        assert!(done.finished_at.is_some());
+        assert_eq!(done.failed_at, None);
+        assert_eq!(ev.from, "running");
+        assert_eq!(ev.to, "done");
+    }
+
+    #[tokio::test]
+    async fn external_done_is_rejected_from_a_terminal_state() {
+        let db = db().await;
+        let mut t = Task::seed("auth", "wf", "Auth", "spec", vec![], vec![], None);
+        t.status = Status::Done;
+        create_task(&db, &t).await.unwrap();
+        let err = transition_task(&db, "auth", Transition::ExternalDone, "issue-sync")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::IllegalTransition { .. }));
     }
 
     #[tokio::test]

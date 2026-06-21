@@ -63,18 +63,33 @@ pub struct EngineConfig {
     /// The default effort forwarded to the agent CLI; `None` lets the CLI use its
     /// own default. A task's / workflow's effort wins over this.
     pub agent_effort: Option<String>,
-    /// Extra CLI flags forwarded per agent tool to bypass that CLI's own
-    /// interactive gates (folder-trust, per-tool approval) in a headless run.
-    /// Keyed by tool id (`claude`, `codex`, …); a tool with no entry gets none.
-    /// Defaults `claude` → `--dangerously-skip-permissions` so a fresh, never-
-    /// trusted worktree runs unattended. Each CLI has its own flag, so this is a
-    /// map, not a single hard-coded flag.
+    /// Extra CLI flags forwarded per agent tool so a headless run never stalls on
+    /// an interactive approval gate. Keyed by tool id (`claude`, `codex`, …); a
+    /// tool with no entry gets none.
+    ///
+    /// Defaults `claude` → `--permission-mode auto`: a classifier auto-approves
+    /// each action instead of prompting, so the agent does the work and never
+    /// hangs. NOT `--dangerously-skip-permissions` — in claude v2.1.x that always
+    /// shows the non-headless-answerable "Bypass Permissions mode … Yes, I accept"
+    /// consent screen (which `bypassPermissionsModeAccepted` does not suppress),
+    /// parking the agent `launch_blocked`. `auto` mode has no such screen.
     pub permission_flags: HashMap<String, Vec<String>>,
+    /// Pre-seed Claude Code's per-folder trust flag (`hasTrustDialogAccepted`) in
+    /// `~/.claude.json` before launching a `claude` agent, so a headless run in a
+    /// never-trusted worktree doesn't freeze on the interactive *"Yes, I trust
+    /// this folder"* dialog (a gate distinct from the per-tool allow-list). On by
+    /// default; a task can override it. Only ever touches the launch dir's own
+    /// `projects.<path>` entry, never the global bypass-mode flag.
+    pub auto_trust_agent_folder: bool,
     /// A running task whose agent is gone and whose heartbeat is older than this
     /// is reclaimed to `ready` on the next tick.
     pub stale_after_secs: u64,
     /// How often the supervisor loop ticks.
     pub tick_secs: u64,
+    /// Reverse issue→task sync cadence: run the GitHub issue-state poll every
+    /// Nth tick, so a coarse cadence keeps the extra `gh` calls cheap. `0`
+    /// disables the reverse poll entirely; `1` runs it every tick.
+    pub issue_sync_every_n_ticks: u64,
 }
 
 /// The subset of `lazybones.yaml` the scheduler reads; every key optional.
@@ -93,8 +108,10 @@ struct File {
     agent_model: Option<String>,
     agent_effort: Option<String>,
     permission_flags: Option<HashMap<String, Vec<String>>>,
+    auto_trust_agent_folder: Option<bool>,
     stale_after_secs: Option<u64>,
     tick_secs: Option<u64>,
+    issue_sync_every_n_ticks: Option<u64>,
 }
 
 impl EngineConfig {
@@ -130,8 +147,18 @@ impl EngineConfig {
             agent_model: env_opt("LAZYBONES_AGENT_MODEL", file.agent_model),
             agent_effort: env_opt("LAZYBONES_AGENT_EFFORT", file.agent_effort),
             permission_flags: permission_flags(file.permission_flags),
+            auto_trust_agent_folder: env_bool(
+                "LAZYBONES_AUTO_TRUST_AGENT_FOLDER",
+                file.auto_trust_agent_folder,
+                true,
+            ),
             stale_after_secs: env_num("LAZYBONES_STALE_AFTER_SECS", file.stale_after_secs, 300),
             tick_secs: env_num("LAZYBONES_TICK_SECS", file.tick_secs, 2),
+            issue_sync_every_n_ticks: env_num(
+                "LAZYBONES_ISSUE_SYNC_EVERY_N_TICKS",
+                file.issue_sync_every_n_ticks,
+                30,
+            ),
         })
     }
 }
@@ -158,7 +185,7 @@ fn permission_flags(file: Option<HashMap<String, Vec<String>>>) -> HashMap<Strin
     file.unwrap_or_else(|| {
         HashMap::from([(
             "claude".to_owned(),
-            vec!["--dangerously-skip-permissions".to_owned()],
+            vec!["--permission-mode".to_owned(), "auto".to_owned()],
         )])
     })
 }
@@ -223,6 +250,18 @@ mod tests {
         assert!(cfg.worktrees);
         assert_eq!(cfg.merge, MergeMode::FastForward);
         assert_eq!(cfg.gate.len(), 2);
+        // Folder-trust auto-seeding is on by default so a fresh worktree never
+        // freezes on the trust dialog without the operator opting in.
+        assert!(cfg.auto_trust_agent_folder);
+    }
+
+    #[test]
+    fn auto_trust_agent_folder_file_can_disable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lazybones.yaml");
+        std::fs::write(&path, "auto_trust_agent_folder: false\n").unwrap();
+        let cfg = EngineConfig::load(&path).unwrap();
+        assert!(!cfg.auto_trust_agent_folder);
     }
 
     #[test]
@@ -251,11 +290,13 @@ mod tests {
     }
 
     #[test]
-    fn permission_flags_default_skips_claude_gates() {
+    fn permission_flags_default_uses_claude_auto_mode() {
         let cfg = EngineConfig::load(Path::new("/no/such/lazybones-engine-test.yaml")).unwrap();
+        // `--permission-mode auto`: classifier auto-approves, never the
+        // non-headless-answerable bypass-mode consent screen.
         assert_eq!(
             cfg.permission_flags.get("claude").map(Vec::as_slice),
-            Some(&["--dangerously-skip-permissions".to_owned()][..])
+            Some(&["--permission-mode".to_owned(), "auto".to_owned()][..])
         );
         // No mapping for other tools by default.
         assert!(!cfg.permission_flags.contains_key("codex"));

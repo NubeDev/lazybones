@@ -8,11 +8,13 @@
 mod control;
 mod events;
 mod spawn;
+mod trust;
 
 pub use control::HcomAgent;
 pub(crate) use control::DAEMON_SENDER;
 pub use events::HcomEvent;
 pub use spawn::AgentLaunch;
+pub use trust::seed_claude_folder_trust;
 
 use std::path::PathBuf;
 

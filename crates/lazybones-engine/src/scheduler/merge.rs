@@ -136,8 +136,10 @@ mod tests {
             agent_model: None,
             agent_effort: None,
             permission_flags: std::collections::HashMap::new(),
+            auto_trust_agent_folder: true,
             stale_after_secs: 300,
             tick_secs: 2,
+            issue_sync_every_n_ticks: 0,
         }
     }
 
@@ -165,6 +167,7 @@ mod tests {
             effort: None,
             gate: vec![],
             merge: MergeMode::FastForward,
+            auto_trust_agent_folder: true,
         };
         // No remote configured, so the push step fails — assert the merge itself
         // landed by checking base before the push error.
@@ -205,6 +208,7 @@ mod tests {
             effort: None,
             gate: vec![],
             merge: MergeMode::Merge,
+            auto_trust_agent_folder: true,
         };
         // No remote, so push is skipped; the merge itself must succeed.
         land(&task, &eff, &cfg).await.unwrap();
@@ -225,6 +229,7 @@ mod tests {
             effort: None,
             gate: vec![],
             merge,
+            auto_trust_agent_folder: true,
         }
     }
 

@@ -198,6 +198,25 @@ export function listGhPrs(
   });
 }
 
+/** `POST /gh/prs` — open a new pull request; returns its url. */
+export function createGhPr(
+  dir: string,
+  args: { title: string; body?: string; head: string; base: string; draft?: boolean },
+): Promise<{ url: string }> {
+  return request<{ url: string }>("/gh/prs", {
+    method: "POST",
+    auth: true,
+    body: {
+      dir,
+      title: args.title,
+      body: args.body ?? "",
+      head: args.head,
+      base: args.base,
+      draft: args.draft ?? false,
+    },
+  });
+}
+
 /** `GET /gh/prs/:number?dir=` — view one pull request. */
 export function getGhPr(
   dir: string,

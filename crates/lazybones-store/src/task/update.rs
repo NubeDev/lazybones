@@ -33,12 +33,20 @@ pub struct TaskEdit {
     pub effort: Option<String>,
     /// New worktree provisioning intent for the loop's next claim.
     pub worktree_mode: WorktreeMode,
+    /// Per-task folder-trust auto-seeding override. Outer `Option` is *edit
+    /// presence* (`None` = leave unchanged); inner is the value (`Some(None)`
+    /// reverts to inheriting the global default, `Some(Some(b))` pins on/off).
+    pub auto_trust_agent_folder: Option<Option<bool>>,
     /// The hands-off auto-retry policy. The outer `Option` is *edit presence*
     /// (`None` = leave the policy unchanged); the inner is the value
     /// (`Some(None)` clears it / turns auto-retry off, `Some(Some(s))` sets it).
     pub auto_retry: Option<Option<RetryStrategy>>,
     /// New auto-retry cap; `None` leaves it unchanged.
     pub max_retries: Option<u32>,
+    /// Close-on-done policy for the linked issue. `None` = leave unchanged;
+    /// `Some(b)` pins it. (The issue *link* itself is managed by the dedicated
+    /// create/link/unlink actions, not this authoring edit.)
+    pub issue_close_on_done: Option<bool>,
 }
 
 /// Overwrite the seed fields of `task:<id>`, preserving status and claim state.
@@ -67,11 +75,17 @@ pub async fn update_task(db: &Surreal<Db>, id: &str, edit: TaskEdit) -> Result<T
     to_write.effort = edit.effort;
     to_write.worktree_mode = edit.worktree_mode;
     // Policy edits are presence-gated: only overwrite when the caller supplied one.
+    if let Some(auto_trust) = edit.auto_trust_agent_folder {
+        to_write.auto_trust_agent_folder = auto_trust;
+    }
     if let Some(auto_retry) = edit.auto_retry {
         to_write.auto_retry = auto_retry;
     }
     if let Some(max_retries) = edit.max_retries {
         to_write.max_retries = max_retries;
+    }
+    if let Some(close_on_done) = edit.issue_close_on_done {
+        to_write.issue_close_on_done = close_on_done;
     }
 
     let written: Option<TaskRow> = db

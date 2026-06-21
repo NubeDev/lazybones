@@ -14,7 +14,7 @@ use crate::hcom::Hcom;
 
 use super::block::block;
 use super::effective::EffectiveGit;
-use super::{gate, merge, worktree};
+use super::{gate, issue, merge, worktree};
 
 /// The actor recorded on transitions this module drives.
 const ACTOR: &str = "scheduler:finish";
@@ -112,6 +112,10 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
                     .await
                 {
                     Ok(_) => {
+                        // Close-on-done (task → issue): best-effort, never blocks
+                        // or reverts the task. `task` already carries the linkage
+                        // fields (they're not touched by the Done transition).
+                        issue::close_on_done(store, &lazybones_gh::Gh::new(), task).await;
                         if let Err(e) = worktree::teardown(task, eff, cfg).await {
                             tracing::warn!(task = %task.id, "teardown failed: {e}");
                         }

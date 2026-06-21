@@ -109,8 +109,10 @@ fn engine_cfg(repo: &Path) -> EngineConfig {
         agent_model: None,
         agent_effort: None,
         permission_flags: std::collections::HashMap::new(),
+        auto_trust_agent_folder: true,
         stale_after_secs: 300,
         tick_secs: 1,
+        issue_sync_every_n_ticks: 0,
     }
 }
 

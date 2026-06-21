@@ -34,6 +34,12 @@ pub async fn upsert_task(db: &Surreal<Db>, task: &Task) -> Result<Task> {
         to_write.branch = prev.branch;
         to_write.commit = prev.commit;
         to_write.reason = prev.reason;
+        // Issue linkage is runtime state set by the create/link/unlink actions
+        // and the reverse-sync poll — not an authored seed field — so a
+        // re-import (which carries no issue fields) must not clear it.
+        to_write.issue_url = prev.issue_url;
+        to_write.issue_close_on_done = prev.issue_close_on_done;
+        to_write.issue_synced_state = prev.issue_synced_state;
     }
 
     let written: Option<TaskRow> = db

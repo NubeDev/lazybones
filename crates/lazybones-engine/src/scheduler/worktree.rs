@@ -100,7 +100,7 @@ pub async fn provision(
                     anyhow::bail!("git worktree add for {} failed: {}", task.id, out.stderr);
                 }
             }
-            bootstrap_permissions(repo, &path, &eff.tool);
+            bootstrap_permissions(repo, &path, &eff.tool, eff.auto_trust_agent_folder);
             Ok(Provisioned {
                 worktree: path_str,
                 branch,
@@ -127,7 +127,7 @@ pub async fn provision(
             if !out.ok {
                 anyhow::bail!("git checkout -B {branch} in reused tree for {} failed: {}", task.id, out.stderr);
             }
-            bootstrap_permissions(repo, &reused, &eff.tool);
+            bootstrap_permissions(repo, &reused, &eff.tool, eff.auto_trust_agent_folder);
             Ok(Provisioned {
                 worktree: path,
                 branch,
@@ -145,7 +145,7 @@ pub async fn provision(
             // Branch mode runs in the main checkout, so the worktree *is* the repo:
             // the "repo already has settings" guard makes this a no-op when the repo
             // commits its own posture, and a one-time create otherwise.
-            bootstrap_permissions(repo, repo, &eff.tool);
+            bootstrap_permissions(repo, repo, &eff.tool, eff.auto_trust_agent_folder);
             Ok(Provisioned {
                 worktree: repo.to_string_lossy().into_owned(),
                 branch,
@@ -154,21 +154,28 @@ pub async fn provision(
     }
 }
 
-/// Write a scoped Claude Code allow-list into a fresh worktree so a headless
-/// agent runs without stalling on per-tool approval prompts (docs/issues/01).
+/// Clear the two interactive gates a headless `claude` hits in a fresh worktree:
+///
+/// 1. **Per-tool approval** — write a scoped allow-list into the worktree's
+///    `.claude/settings.json` (docs/issues/01). Skipped when the **target repo**
+///    already commits one (a repo that owns its posture is never overwritten).
+/// 2. **Folder-trust** — pre-seed `hasTrustDialogAccepted` for the worktree path in
+///    `~/.claude.json` so the launch doesn't freeze on the *"Yes, I trust this
+///    folder"* dialog. A distinct gate the allow-list does **not** cover; gated on
+///    `auto_trust` (the operator-tunable `auto_trust_agent_folder`).
 ///
 /// Only for the `claude` tool — other CLIs (codex, gemini, opencode) have their
-/// own gate model and are bootstrapped through `permission_flags`, not this file.
-/// Skipped entirely when the **target repo** already commits a
-/// `.claude/settings.json`, so a repo that owns its posture is never overwritten.
-/// Best-effort: a write failure is logged, not fatal — the agent can still run if
+/// own gate model and are bootstrapped through `permission_flags`. Best-effort:
+/// a write failure is logged, not fatal — the agent can still run if
 /// `permission_flags` or a pre-trusted environment covers the gate.
-///
-/// Repo-scoped by construction: it touches only `<worktree>/.claude/settings.json`
-/// and never the global `~/.claude.json` bypass-mode flag.
-fn bootstrap_permissions(repo: &Path, worktree: &Path, tool: &str) {
+fn bootstrap_permissions(repo: &Path, worktree: &Path, tool: &str, auto_trust: bool) {
     if tool != "claude" {
         return;
+    }
+    // Pre-trust the launch dir (folder-trust gate) before anything else, so even a
+    // repo that commits its own allow-list still clears the trust dialog.
+    if auto_trust {
+        crate::hcom::seed_claude_folder_trust(worktree);
     }
     // Respect a repo that commits its own posture — don't clobber it.
     if repo.join(".claude/settings.json").exists() {
@@ -258,8 +265,10 @@ mod tests {
             agent_model: None,
             agent_effort: None,
             permission_flags: std::collections::HashMap::new(),
+            auto_trust_agent_folder: true,
             stale_after_secs: 300,
             tick_secs: 2,
+            issue_sync_every_n_ticks: 0,
         }
     }
 
@@ -275,6 +284,7 @@ mod tests {
             effort: None,
             gate: vec![],
             merge: crate::config::MergeMode::FastForward,
+            auto_trust_agent_folder: true,
         }
     }
 

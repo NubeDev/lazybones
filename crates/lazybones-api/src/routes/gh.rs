@@ -590,6 +590,60 @@ pub async fn gh_prs(
     Ok(Json(prs.into_iter().map(Into::into).collect()))
 }
 
+/// Body for opening a pull request.
+#[derive(Debug, Deserialize)]
+pub struct CreatePrBody {
+    #[serde(default = "dot")]
+    pub dir: String,
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+    /// Source branch (the PR's head). Must already be pushed.
+    pub head: String,
+    /// Target branch (the PR's base).
+    pub base: String,
+    /// Open as a draft.
+    #[serde(default)]
+    pub draft: bool,
+}
+
+/// What we report after opening a pull request.
+#[derive(Debug, Serialize)]
+pub struct PrCreated {
+    /// URL of the new PR (as `gh pr create` prints).
+    pub url: String,
+}
+
+/// `POST /gh/prs` — open a new pull request. Requires `Author`.
+pub async fn gh_create_pr(
+    State(_): State<AppState>,
+    session: Session,
+    Json(body): Json<CreatePrBody>,
+) -> ApiResult<Json<PrCreated>> {
+    session.require(Capability::Author, "gh:pr:create", &body.dir)?;
+    if body.title.trim().is_empty() {
+        return Err(crate::error::ApiError::bad_request(
+            "pull request title must not be empty",
+        ));
+    }
+    if body.head.trim().is_empty() || body.base.trim().is_empty() {
+        return Err(crate::error::ApiError::bad_request(
+            "head and base branches are required",
+        ));
+    }
+    let url = Gh::new()
+        .pr_create(
+            &body.dir,
+            &body.title,
+            &body.body,
+            &body.head,
+            &body.base,
+            body.draft,
+        )
+        .await?;
+    Ok(Json(PrCreated { url }))
+}
+
 /// `GET /gh/prs/:number?dir=` — view one pull request. Requires `Read`.
 pub async fn gh_pr_view(
     State(_): State<AppState>,

@@ -7,6 +7,7 @@ mod follow_up;
 mod gate;
 mod git;
 mod hcom_tail;
+pub mod issue;
 mod merge;
 mod prompt;
 mod reclaim;

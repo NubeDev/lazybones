@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileText, ServerCrash } from "lucide-react";
+import { ListTree, ServerCrash, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,12 +10,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ApiError } from "@/lib/api/client";
-import { useTaskHcomLog, useTaskTranscript } from "@/lib/hooks/use-hcom-log";
+import { useTaskHcomLog, useLiveTranscript } from "@/lib/hooks/use-hcom-log";
+import { useTask } from "@/lib/hooks/use-tasks";
 import { HcomLogRow } from "./hcom-log-row";
+import { TranscriptView } from "./transcript-view";
 
-/** Per-task drill-in: this task's full hcom trace (`GET /tasks/:id/hcom`) plus a
- *  "Load full transcript" affordance that fetches the deep
- *  `GET /tasks/:id/transcript` view on demand. */
+/** Per-task drill-in. Defaults to the **Activity** view — the agent's live
+ *  narration stream (polled while it runs), which reads like Claude Code's
+ *  "what I'm doing" feed. A secondary **Trace** view exposes the raw hcom event
+ *  spine (message/status/life) for debugging. */
 export function HcomTaskTrace({
   taskId,
   trigger,
@@ -24,85 +27,124 @@ export function HcomTaskTrace({
   trigger: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [wantTranscript, setWantTranscript] = useState(false);
+  const [view, setView] = useState<"activity" | "trace">("activity");
 
-  const { data: trace, isLoading, error } = useTaskHcomLog(open ? taskId : null);
-  const transcript = useTaskTranscript(taskId, open && wantTranscript);
+  const { data: task } = useTask(open ? taskId : null);
+  const live = task?.status === "running";
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) setWantTranscript(false);
-      }}
-    >
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent title={taskId} description="hcom trace" className="max-w-3xl">
-        <div className="mb-3 flex justify-end">
+      <DialogContent title={taskId} description="agent activity" className="max-w-3xl">
+        <div className="mb-3 flex items-center gap-1">
           <Button
             size="sm"
-            variant="secondary"
-            onClick={() => setWantTranscript(true)}
-            disabled={wantTranscript && transcript.isFetching}
+            variant={view === "activity" ? "secondary" : "ghost"}
+            onClick={() => setView("activity")}
           >
-            <FileText />
-            {wantTranscript && transcript.isFetching
-              ? "Loading…"
-              : "Load full transcript"}
+            <Sparkles />
+            Activity
+            {live && (
+              <span className="ml-1 size-1.5 animate-pulse rounded-full bg-status-running" />
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant={view === "trace" ? "secondary" : "ghost"}
+            onClick={() => setView("trace")}
+          >
+            <ListTree />
+            Trace
           </Button>
         </div>
 
-        {error ? (
-          <EmptyState
-            icon={ServerCrash}
-            title="Can't load trace"
-            description={
-              error instanceof ApiError ? error.message : "Unexpected error"
-            }
-          />
-        ) : isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-7 w-full" />
-            ))}
-          </div>
-        ) : !trace || trace.length === 0 ? (
-          <EmptyState
-            icon={FileText}
-            title="No trace yet"
-            description="This task hasn't produced any hcom events."
-          />
+        {view === "activity" ? (
+          <ActivityPane taskId={open ? taskId : null} live={!!live} />
         ) : (
-          <ScrollArea className="max-h-[45vh] rounded-md border border-border">
-            <ul className="divide-y divide-border px-3">
-              {trace.map((e, i) => (
-                <HcomLogRow key={`${e.hcom_id}-${i}`} entry={e} showTask={false} />
-              ))}
-            </ul>
-          </ScrollArea>
-        )}
-
-        {wantTranscript && (
-          <div className="mt-3 border-t border-border pt-3">
-            {transcript.error ? (
-              <p className="text-xs text-status-blocked">
-                {transcript.error instanceof ApiError
-                  ? transcript.error.message
-                  : "Transcript unavailable (agent may be past hcom's retention)."}
-              </p>
-            ) : transcript.isFetching ? (
-              <Skeleton className="h-32 w-full" />
-            ) : transcript.data !== undefined ? (
-              <ScrollArea className="max-h-[40vh] rounded-md border border-border bg-surface-2">
-                <pre className="whitespace-pre-wrap break-words p-3 font-mono text-[11px] text-foreground">
-                  {JSON.stringify(transcript.data, null, 2)}
-                </pre>
-              </ScrollArea>
-            ) : null}
-          </div>
+          <TracePane taskId={open ? taskId : null} />
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The live narration feed: the agent's reasoning stream, polled while running. */
+function ActivityPane({ taskId, live }: { taskId: string | null; live: boolean }) {
+  const { data, isLoading, error, isFetching } = useLiveTranscript(taskId, live);
+
+  if (error) {
+    return (
+      <EmptyState
+        icon={ServerCrash}
+        title="No live activity"
+        description={
+          error instanceof ApiError
+            ? error.message
+            : "The agent's transcript isn't available (it may be past hcom's retention)."
+        }
+      />
+    );
+  }
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-8 w-full" />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {live && (
+        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="size-1.5 animate-pulse rounded-full bg-status-running" />
+          {isFetching ? "Updating…" : "Live — updates as the agent works"}
+        </p>
+      )}
+      <TranscriptView data={data} />
+    </div>
+  );
+}
+
+/** The raw hcom event spine — message/status/life rows, for debugging. */
+function TracePane({ taskId }: { taskId: string | null }) {
+  const { data: trace, isLoading, error } = useTaskHcomLog(taskId);
+
+  if (error) {
+    return (
+      <EmptyState
+        icon={ServerCrash}
+        title="Can't load trace"
+        description={error instanceof ApiError ? error.message : "Unexpected error"}
+      />
+    );
+  }
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-7 w-full" />
+        ))}
+      </div>
+    );
+  }
+  if (!trace || trace.length === 0) {
+    return (
+      <EmptyState
+        icon={ListTree}
+        title="No trace yet"
+        description="This task hasn't produced any hcom events."
+      />
+    );
+  }
+  return (
+    <ScrollArea className="max-h-[45vh] rounded-md border border-border">
+      <ul className="divide-y divide-border px-3">
+        {trace.map((e, i) => (
+          <HcomLogRow key={`${e.hcom_id}-${i}`} entry={e} showTask={false} />
+        ))}
+      </ul>
+    </ScrollArea>
   );
 }

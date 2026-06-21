@@ -347,7 +347,11 @@ export function WorkflowDetail({
           </div>
 
           <TabsContent value="plan">
-            <PlanGraphView tasks={runTasks} onSelect={setSelectedId} />
+            <PlanGraphView
+              tasks={runTasks}
+              defaults={wf.workspace}
+              onSelect={setSelectedId}
+            />
           </TabsContent>
 
           <TabsContent value="tasks">

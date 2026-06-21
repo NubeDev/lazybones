@@ -51,6 +51,25 @@ pub enum ApiError {
     Internal(String),
 }
 
+/// Map an engine [`IssueError`](lazybones_engine::IssueError) onto an HTTP
+/// status: a standalone task or a bad link is the caller's fault (`400`); a
+/// missing task / unlinked task is `404`; an unavailable `gh` is upstream
+/// (`502`); a store failure reuses the store mapping.
+impl From<lazybones_engine::IssueError> for ApiError {
+    fn from(e: lazybones_engine::IssueError) -> Self {
+        use lazybones_engine::IssueError as E;
+        match e {
+            E::Standalone(_) | E::BadLink(_) => ApiError::BadRequest(e.to_string()),
+            E::TaskNotFound(_) | E::NotLinked(_) => ApiError::NotFound,
+            // `gh` missing / unauthenticated is an actionable env problem ("run
+            // `gh auth login`") — surface the message verbatim as a `400`.
+            E::Auth(_) => ApiError::BadRequest(e.to_string()),
+            E::Gh(g) => ApiError::Gh(g),
+            E::Store(s) => ApiError::Store(s),
+        }
+    }
+}
+
 impl ApiError {
     /// A `400 Bad Request` with a human-readable reason.
     pub fn bad_request(msg: impl Into<String>) -> Self {

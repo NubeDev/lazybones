@@ -3,9 +3,22 @@
 //! The domain [`Task`](lazybones_store::Task) already derives serde, so it *is*
 //! the task DTO — these are the small request bodies the mutating routes accept.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use lazybones_store::{MergeMode, Run, Task, WorktreeMode};
+
+/// Deserialize an `Option<Option<T>>` so the three PATCH states are distinct:
+/// **field absent** → `None` (leave unchanged), **`null`** → `Some(None)` (clear /
+/// revert to inherit), **value** → `Some(Some(v))` (set). Pair with
+/// `#[serde(default, deserialize_with = "double_option")]`; without it serde
+/// collapses absent and `null` to the same `None`.
+fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
+}
 
 /// `POST /tasks/:id/claim` body: where the agent will work.
 #[derive(Debug, Deserialize)]
@@ -93,6 +106,21 @@ pub struct CancelBody {
     pub reason: Option<String>,
 }
 
+/// `POST /tasks/:id/issue/link` body: an existing issue to attach, by URL or
+/// `#number` (or a bare number).
+#[derive(Debug, Deserialize)]
+pub struct LinkIssueBody {
+    /// The issue to link: a full URL, `#number`, or bare number.
+    pub link: String,
+}
+
+/// `PUT /tasks/:id/issue/close-on-done` body: toggle close-on-done.
+#[derive(Debug, Deserialize)]
+pub struct CloseOnDoneBody {
+    /// Whether reaching `done` should close the linked issue.
+    pub enabled: bool,
+}
+
 /// `POST /tasks` body: a new task to author (status starts `Pending`).
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskBody {
@@ -143,6 +171,11 @@ pub struct UpdateTaskBody {
     /// New worktree provisioning intent; defaults to `new`.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
+    /// Per-task folder-trust auto-seeding override (tri-state PATCH): field
+    /// **absent** leaves it unchanged, **`null`** reverts to inheriting the global
+    /// `auto_trust_agent_folder`, a **bool** pins it on/off for this task.
+    #[serde(default, deserialize_with = "double_option")]
+    pub auto_trust_agent_folder: Option<Option<bool>>,
 }
 
 /// `POST /templates` body: a reusable task recipe to author.

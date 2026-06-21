@@ -29,12 +29,23 @@ agent_tool: claude                        # [LAZYBONES_AGENT_TOOL] claude | code
 # Without these a fresh, never-trusted worktree freezes on the tool's trust/approval
 # prompt. Keyed by tool id; a tool with no entry gets none. Setting this map (even to
 # {}) REPLACES the default below wholesale, so re-list any tool you still want covered.
-permission_flags:                          # default when omitted: claude -> --dangerously-skip-permissions
-  # claude skip flag intentionally DISABLED: --dangerously-skip-permissions triggers a
-  # one-time GLOBAL bypass-mode acceptance prompt (~/.claude.json), which we won't enable.
-  # Instead, headless claude relies on a repo-scoped .claude/settings.json allow-list
-  # (committed in the target repo) plus pre-trusted worktree paths. Empty list = no flag.
-  claude: []
+permission_flags:                          # forwarded verbatim to the claude CLI
+  # `--permission-mode auto`: a classifier auto-approves each action instead of
+  # prompting — so a headless agent NEVER hangs on an approval gate AND still does
+  # the work. Verified (claude v2.1.185) to clear every wall that parked agents
+  # before: destructive Bash like `git stash`, writes into the protected `.claude/`
+  # dir, and per-tool approval — all "Allowed by auto mode classifier", no prompt.
+  #
+  # Why NOT `--dangerously-skip-permissions`: in v2.1.x it ALWAYS shows the
+  # interactive "Bypass Permissions mode … Yes, I accept" consent screen, which a
+  # headless agent can't answer (it parks `launch_blocked`). `bypassPermissionsModeAccepted`
+  # does NOT suppress it (claude-code#52501). `auto` mode has no such consent screen.
+  #
+  # Belt-and-suspenders still underneath: worktree `.claude/settings.json` allow-list,
+  # folder-trust seeding (`auto_trust_agent_folder`), and CLAUDE_CODE_DISABLE_AUTO_MEMORY.
+  claude:
+    - --permission-mode
+    - auto
 
 # --- the brain: lazybonesd REST + embedded SurrealDB ---
 api:

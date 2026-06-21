@@ -2186,11 +2186,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "lazybones-gh",
  "lazybones-store",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
 ]

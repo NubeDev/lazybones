@@ -133,3 +133,106 @@ Notes:
 - Closing the linked issue on GitHub drives the task to `done` within a few ticks; reopening revives it.
 - Standalone (run-less) tasks reject issue actions with a clear error.
 - Existing task rows without the new fields load unchanged.
+
+---
+
+# SCOPE — Per-task "Files edited" + git diff (Copilot/Codex-style)
+
+Show, for a single task, the files that task touched and the unified diff for each —
+the same "Files changed" surface VSCode Copilot and Codex render, but scoped to one
+task's work rather than the whole workflow. This is a **UI + thin-wiring** delivery:
+the backend already exists.
+
+## Goal
+
+Open a task and see a VSCode-style file tree of what *that task* changed
+(`M`/`A`/`D`/`U` tags) on the left, and a content/diff viewer on the right that
+toggles between the file and its unified diff. Reuses the workflow-level "Files" tab
+verbatim, re-pointed at the task's own checkout and base.
+
+## What we reuse (no new backend)
+
+The entire git plumbing already ships and is already exposed over HTTP:
+
+- [`lazybones-gh::Gh`](crates/lazybones-gh/src/lib.rs) provides
+  `tree(dir, base) -> (entries, path→ChangeKind)`, `diff(dir, base, rel) -> String`
+  (three-dot `base...` merge-base diff, or `HEAD` for uncommitted), and
+  `read_file(dir, rel)`. `ChangeKind` already collapses git's porcelain/`--name-status`
+  letters to the `M`/`A`/`D`/`U` tags the tree decorates with.
+- The API already surfaces these as **read-only** routes in
+  [crates/lazybones-api/src/routes/files.rs](crates/lazybones-api/src/routes/files.rs):
+  `GET /files/tree?dir=&base=`, `GET /files/read?dir=&rel=`, `GET /files/diff?dir=&base=&rel=`.
+  Each takes a `dir` (any repo path) and is `Capability::Read`-gated with a `rel`
+  escape guard.
+- The UI already renders this exactly Copilot-style in
+  [ui/src/features/workflows/workflow-files.tsx](ui/src/features/workflows/workflow-files.tsx)
+  (tree + viewer + [diff-view.tsx](ui/src/features/workflows/diff-view.tsx)), driven by
+  [ui/src/lib/hooks/use-files.ts](ui/src/lib/hooks/use-files.ts) — parameterised purely
+  by `dir` and `base`.
+
+So **no new Rust, no new routes, no new git calls.** The only reason this isn't already
+done at the task level is that the existing surface is wired to the *workflow's* `dir`,
+not a task's.
+
+## What a task already carries
+
+A `Task` ([crates/lazybones-store/src/task/model.rs](crates/lazybones-store/src/task/model.rs))
+already has `worktree: Option<String>` (its isolated checkout dir) and
+`branch: Option<String>`. That's the `dir` and the diff target the `/files/*` routes
+need:
+
+- `WorktreeMode::Worktree` → `dir = task.worktree` (the task's own isolated checkout),
+  `base` = the workflow/run base branch → `diff` shows precisely what *this task*
+  changed via the merge-base.
+- `WorktreeMode::Branch` (no worktree) → the task shares the main checkout; `dir` is the
+  run's repo and `base` is the run base. The diff is branch-vs-base, i.e. the task's
+  commits on its `branch` (less precisely isolated, but correct — flagged below).
+- A task with **no `worktree` and no claim yet** has nothing to show → empty state
+  ("this task hasn't started / made no changes"), mirroring the existing
+  "no repository configured" state.
+
+## Behaviour
+
+Add a **"Files" (or "Changes") tab/panel to the task detail view**, reusing
+`WorkflowFiles` as-is:
+
+- Resolve the task's `dir` and `base` (rules above), then render
+  `<WorkflowFiles dir={taskDir} base={taskBase} />`. Because the component is already
+  pure in `(dir, base)`, no changes to it, to the hooks, or to the API are required —
+  this is a wiring + a small `dir`/`base` resolver and an empty-state branch.
+- Optionally surface a compact **changed-files count / list** inline on the task card
+  (reuse `useFileTree(dir, base)` and count entries with a non-null `status`), the way
+  Copilot shows "N files changed" before you expand — cheap, same hook.
+
+## The one wrinkle to settle
+
+Per-task isolation is only exact under `WorktreeMode::Worktree`. Under
+`WorktreeMode::Branch`, several tasks share one checkout/branch, so `base...` shows the
+*branch's* cumulative changes, not one task's slice. v1 accepts this (it matches how the
+workflow-level view already behaves) and labels the panel honestly ("changes on this
+task's branch"); a future refinement could scope by the task's own commit range
+(`<first-task-commit>^...<branch-head>`) if/when tasks record their commit boundaries.
+
+## Out of scope (v1)
+
+- Editing files from the panel (read-only, same as the workflow Files tab).
+- Per-task commit-range slicing under shared-branch mode (see wrinkle).
+- Inline review comments / suggestions on the diff (Copilot's review layer).
+- Live refresh on every agent write (the existing hooks' refetch cadence is reused).
+
+## Files touched
+
+- Task detail UI (e.g. the task panel under
+  [ui/src/features/workflows/](ui/src/features/workflows/)) — add a "Files" tab that
+  resolves the task's `dir`/`base` and renders the existing `WorkflowFiles`.
+- A small `dir`/`base` resolver from a task (worktree vs branch mode) + empty-state — UI only.
+- (Optional) task card: a "N files changed" badge via the existing `useFileTree` hook.
+- **No backend changes** — `lazybones-gh`, `/files/*` routes, and `use-files.ts` are reused unchanged.
+
+## Acceptance
+
+- Opening a worktree-mode task shows a VSCode-style tree of the files it changed, tagged `M`/`A`/`D`/`U`.
+- Selecting a file toggles between its content and a unified diff vs the task's base.
+- A task that hasn't started (no worktree/claim) shows a clear empty state, not an error.
+- Branch-mode tasks show the branch-vs-base diff, labelled as such.
+- No new API routes or git plumbing are added; the workflow-level Files view is untouched.

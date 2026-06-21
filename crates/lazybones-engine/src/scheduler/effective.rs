@@ -61,6 +61,10 @@ pub struct EffectiveGit {
     /// workspace, else the global `EngineConfig.merge`. Lets one repo pin strict
     /// `fast-forward` while a concurrent workflow uses `merge`.
     pub merge: MergeMode,
+    /// Whether to pre-seed Claude Code's folder-trust flag for this task's
+    /// worktree before spawning. Resolved task ?? global; lets one task opt out of
+    /// the (default-on) auto-trust without disabling it for the whole daemon.
+    pub auto_trust_agent_folder: bool,
 }
 
 /// Map the storable workspace merge mode onto the engine's config enum (the two
@@ -95,6 +99,10 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
             gate: cfg.gate.clone(),
             // Standalone: no workspace merge; the global default is the contract.
             merge: cfg.merge,
+            // task ?? global. No workspace layer — it's a per-task safety knob.
+            auto_trust_agent_folder: task
+                .auto_trust_agent_folder
+                .unwrap_or(cfg.auto_trust_agent_folder),
         },
         Some(run) => {
             let ws = &run.workspace;
@@ -128,6 +136,10 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
                 gate: ws.gate.clone().unwrap_or_else(|| cfg.gate.clone()),
                 // workspace ?? global merge strategy.
                 merge: ws.merge.map_or(cfg.merge, map_merge),
+                // task ?? global. No workspace layer — it's a per-task safety knob.
+                auto_trust_agent_folder: task
+                    .auto_trust_agent_folder
+                    .unwrap_or(cfg.auto_trust_agent_folder),
             }
         }
     }
@@ -154,8 +166,10 @@ mod tests {
             agent_model: None,
             agent_effort: None,
             permission_flags: std::collections::HashMap::new(),
+            auto_trust_agent_folder: true,
             stale_after_secs: 300,
             tick_secs: 2,
+            issue_sync_every_n_ticks: 0,
         }
     }
 
@@ -263,6 +277,34 @@ mod tests {
         assert_eq!(eff.tool, "codex"); // task wins
         assert_eq!(eff.model, None); // nothing set anywhere
         assert_eq!(eff.effort.as_deref(), Some("global-effort")); // global fills in
+    }
+
+    #[test]
+    fn auto_trust_resolves_task_then_global() {
+        // Global on by default.
+        let cfg = cfg();
+        let bare = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+        assert!(resolve(&bare, None, &cfg).auto_trust_agent_folder);
+
+        // A task can opt out without touching the global.
+        let mut off = Task::seed("t", "r", "T", "s", vec![], vec![], None);
+        off.auto_trust_agent_folder = Some(false);
+        assert!(!resolve(&off, None, &cfg).auto_trust_agent_folder);
+
+        // The same override holds inside a workflow run (no workspace layer).
+        let run = run_with(Workspace {
+            repo: "/repo/abc".into(),
+            base_branch: None,
+            branch_prefix: None,
+            worktree_mode: WorktreeMode::New,
+            tool: None,
+            model: None,
+            effort: None,
+            gate: None,
+            merge: None,
+        });
+        assert!(!resolve(&off, Some(&run), &cfg).auto_trust_agent_folder);
+        assert!(resolve(&bare, Some(&run), &cfg).auto_trust_agent_folder);
     }
 
     #[test]

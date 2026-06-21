@@ -7,8 +7,10 @@ import {
   ChevronDown,
   AlertTriangle,
   MessageSquare,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -26,6 +28,9 @@ import {
   useGhPrs,
   useGhPrComments,
   useGhMentionable,
+  useGhLocalBranches,
+  useGhRepo,
+  useCreateGhPr,
   useMergeGhPr,
   useCloseGhPr,
   useCommentGhPr,
@@ -52,6 +57,7 @@ export function WorkflowPrs({ dir }: { dir: string }) {
   const users = mentionable ?? [];
   const merge = useMergeGhPr();
   const close = useCloseGhPr();
+  const [composing, setComposing] = useState(false);
 
   // Not logged in → a clear prompt, not a confusing error.
   if (auth.data && !auth.data.authenticated) {
@@ -83,7 +89,21 @@ export function WorkflowPrs({ dir }: { dir: string }) {
             </button>
           ))}
         </div>
+        <Button size="sm" onClick={() => setComposing((v) => !v)}>
+          <Plus /> New PR
+        </Button>
       </div>
+
+      {composing && (
+        <NewPrForm
+          dir={dir}
+          users={users}
+          onDone={() => {
+            setComposing(false);
+            setFilter("open");
+          }}
+        />
+      )}
 
       {merge.error && (
         <p className="rounded-md border border-status-blocked/40 bg-status-blocked/10 px-3 py-2 text-xs text-status-blocked">
@@ -130,6 +150,158 @@ export function WorkflowPrs({ dir }: { dir: string }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/** Inline composer for opening a new PR. Head defaults to the current branch,
+ *  base to the repo's default branch; both pick from the repo's local branches.
+ *  The head branch must already be pushed — `gh` (and so the API) errors clearly
+ *  if it isn't, and that surfaces inline. */
+function NewPrForm({
+  dir,
+  users,
+  onDone,
+}: {
+  dir: string;
+  users: string[];
+  onDone: () => void;
+}) {
+  const { data: branches } = useGhLocalBranches(dir);
+  const { data: repo } = useGhRepo(dir);
+  const create = useCreateGhPr();
+  const defaultBase = repo?.default_branch ?? "master";
+  // The branch lacking an upstream and most ahead is a good "what I'm working
+  // on" default; fall back to the first local branch.
+  const defaultHead = branches?.[0]?.name ?? "";
+
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [head, setHead] = useState<string | null>(null);
+  const [base, setBase] = useState<string | null>(null);
+  const [draft, setDraft] = useState(false);
+
+  const headVal = head ?? defaultHead;
+  const baseVal = base ?? defaultBase;
+  const names = branches?.map((b) => b.name) ?? [];
+  // Include the default base even if it's not a local branch (it lives on the
+  // remote), so the selector always offers a sane target.
+  const baseNames = names.includes(defaultBase) ? names : [defaultBase, ...names];
+
+  function submit() {
+    const t = title.trim();
+    if (!t || !headVal || !baseVal || headVal === baseVal) return;
+    create.mutate(
+      { dir, title: t, body: body.trim(), head: headVal, base: baseVal, draft },
+      {
+        onSuccess: () => {
+          setTitle("");
+          setBody("");
+          onDone();
+        },
+      },
+    );
+  }
+
+  const sameBranch = !!headVal && headVal === baseVal;
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-surface-2/40 p-3">
+      <Input
+        value={title}
+        autoFocus
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Pull request title"
+      />
+      <div className="flex items-center gap-2">
+        <BranchSelect
+          label="from"
+          value={headVal}
+          options={names}
+          onChange={setHead}
+        />
+        <span className="text-xs text-muted-foreground">→</span>
+        <BranchSelect
+          label="into"
+          value={baseVal}
+          options={baseNames}
+          onChange={setBase}
+        />
+        <label className="ml-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={draft}
+            onChange={(e) => setDraft(e.target.checked)}
+          />
+          Draft
+        </label>
+      </div>
+      <MentionTextarea
+        value={body}
+        onChange={setBody}
+        users={users}
+        placeholder="Description (optional) — type @ to mention"
+        rows={3}
+      />
+      {sameBranch && (
+        <p className="text-[11px] text-status-blocked">
+          Head and base must be different branches.
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          onClick={submit}
+          disabled={
+            !title.trim() || !headVal || sameBranch || create.isPending
+          }
+        >
+          Create PR
+        </Button>
+      </div>
+      {create.error && (
+        <p className="text-[11px] text-status-blocked">
+          {create.error instanceof ApiError
+            ? create.error.message
+            : "Could not open the pull request."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A labelled native branch picker, kept compact to sit on the head→base row. */
+function BranchSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  // The current value may not be in `options` yet (e.g. the remote default
+  // base); include it so the <select> can display it.
+  const opts = options.includes(value) ? options : [value, ...options];
+  return (
+    <label className="flex items-center gap-1 text-xs text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="max-w-[12rem] truncate rounded border border-border bg-surface px-1.5 py-1 font-mono text-[11px] text-foreground"
+      >
+        {opts.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

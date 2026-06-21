@@ -113,10 +113,18 @@ pub async fn chat_turn(
     if config.session_mode == SessionMode::PerTurn || !session_live {
         // Spawn a fresh session for this conversation. The management agent has no
         // worktree — it works purely through REST — so it runs in a dedicated
-        // scratch dir we own, bootstrapped with a Claude allow-list so a headless
-        // `claude` doesn't stall on the folder-trust dialog (the same gate the
-        // scheduler clears for task agents via the worktree `.claude/settings.json`).
+        // scratch dir we own, bootstrapped with a Claude allow-list (clears the
+        // per-tool approval gate). The folder-trust dialog is a *separate* gate the
+        // allow-list does NOT cover, so for `claude` we also pre-seed the scratch
+        // dir's `hasTrustDialogAccepted` in `~/.claude.json` — without it a headless
+        // `claude` freezes on *"Yes, I trust this folder"* and is reaped
+        // `launch_blocked`. The bypass flag is filtered out (it drags in its own
+        // consent screen), so trust-seeding is the only thing keeping the agent
+        // unblocked on a fresh host.
         let dir = prepare_agent_dir()?;
+        if config.tool == "claude" {
+            crate::hcom::seed_claude_folder_trust(&dir);
+        }
         hcom.spawn(&config.tool, conversation_id, &dir, &system_prompt, launch)
             .await
             .inspect_err(|e| {
@@ -358,9 +366,10 @@ fn is_bypass_flag(flag: &str) -> bool {
 }
 
 /// The Claude allow-list written into the management agent's scratch dir so a
-/// headless `claude` trusts the folder and skips the interactive trust dialog
-/// (mirrors the scheduler's worktree bootstrap). Without it the agent is reaped
-/// `launch_blocked: screen settled before readiness` and never replies.
+/// headless `claude` clears the per-tool **approval** gate (mirrors the scheduler's
+/// worktree bootstrap). This is distinct from the folder-**trust** gate, which the
+/// caller clears separately via [`crate::hcom::seed_claude_folder_trust`]. Without
+/// both, the agent is reaped `launch_blocked: screen settled before readiness`.
 const CLAUDE_SETTINGS_BOOTSTRAP: &str = r#"{
   "permissions": {
     "allow": ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Skill", "Task", "TodoWrite", "NotebookEdit"]
@@ -369,9 +378,10 @@ const CLAUDE_SETTINGS_BOOTSTRAP: &str = r#"{
 "#;
 
 /// Provision (idempotently) the scratch directory the management agent runs in:
-/// `<cwd>/.lazy/agent`, with a bootstrapped `.claude/settings.json`. The agent
-/// needs no repo — it works purely through REST — so a stable owned dir keeps the
-/// daemon's working tree clean and clears the folder-trust gate once.
+/// `<cwd>/.lazy/agent`, with a bootstrapped `.claude/settings.json` (the per-tool
+/// approval allow-list). The agent needs no repo — it works purely through REST —
+/// so a stable owned dir keeps the daemon's working tree clean. The folder-trust
+/// gate is cleared by the caller via `seed_claude_folder_trust`, not here.
 ///
 /// # Errors
 /// Returns an error if the directory or settings file cannot be created.

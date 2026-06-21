@@ -13,20 +13,36 @@ use crate::hcom::Hcom;
 
 use super::block::block;
 use super::effective::{self, EffectiveGit};
-use super::{finish, hcom_tail, prompt, reclaim, worktree};
+use super::{finish, hcom_tail, issue, prompt, reclaim, worktree};
 
 /// The actor recorded on transitions the tick drives.
 const ACTOR: &str = "scheduler:tick";
 
 /// Run one full pass. Best-effort throughout: a single task's failure is logged
 /// and never aborts the pass.
-pub async fn tick(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
+///
+/// `tick_count` is the monotonic pass counter the supervisor loop threads in; it
+/// gates the coarse-cadence reverse issue→task sync (every Nth tick).
+pub async fn tick(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig, tick_count: u64) {
     reclaim::reconcile(store, hcom, cfg).await;
     promote(store).await;
     claim_and_spawn(store, hcom, cfg).await;
     // TAIL: drain hcom's raw event stream into the durable hcom log. Best-effort,
     // self-contained, holds no await on agent work (docs/hcom-logs-scope.md).
     hcom_tail::tail_hcom(store, hcom).await;
+    // REVERSE ISSUE SYNC: pull linked GitHub issues' state back onto tasks. Runs
+    // after the tail so it never blocks claim/spawn, and only every Nth tick so
+    // the extra `gh` calls stay cheap (`0` disables it). Best-effort.
+    if reverse_sync_due(cfg.issue_sync_every_n_ticks, tick_count) {
+        issue::reverse_sync(store, &lazybones_gh::Gh::new()).await;
+    }
+}
+
+/// Whether the reverse issue-sync should run on this tick. `every == 0` disables
+/// it; otherwise it runs once every `every` ticks (and on the very first tick so
+/// a fresh daemon syncs promptly rather than waiting a full window).
+fn reverse_sync_due(every: u64, tick_count: u64) -> bool {
+    every != 0 && tick_count.is_multiple_of(every)
 }
 
 /// PROMOTE: every `pending` task whose deps are all `done` → `ready`, except

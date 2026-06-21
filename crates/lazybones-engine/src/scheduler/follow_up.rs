@@ -42,28 +42,44 @@ pub async fn file_if_actionable(store: &StoreHandle, task: &Task, reason: &str, 
 fn classify(reason: &str) -> Option<(&'static str, String, String)> {
     let lower = reason.to_lowercase();
 
-    // A headless Claude parked on the one-time bypass-permissions consent screen:
-    // hcom reaps it as `launch_blocked: screen settled before readiness`, which
-    // surfaces here as a spawn failure. The fix is one-time and operator-only, so
-    // retrying forever is futile.
+    // A headless Claude parked on an interactive startup gate — either the
+    // one-time *Bypass Permissions* consent screen or the per-folder *trust*
+    // dialog. Either way hcom reaps it as `launch_blocked: screen settled before
+    // readiness`, surfacing here as a spawn failure. Both fixes are host-side; a
+    // bare retry just re-hits the same wall.
     if lower.contains("screen settled")
         || lower.contains("launch_blocked")
         || lower.contains("bypass permissions")
+        || lower.contains("trust this folder")
+        || lower.contains("trust dialog")
         || lower.contains("permission prompt")
+        || lower.contains("memory-note")
+        || lower.contains(".claude/")
         || lower.contains("consent")
     {
         return Some((
             "consent",
-            "Agent stuck on a permission/consent prompt".to_owned(),
+            "Agent stuck on a permission/trust prompt".to_owned(),
             format!(
-                "A headless agent could not start because it parked on an interactive \
-                 prompt nobody can answer (likely Claude Code's one-time *Bypass \
-                 Permissions* consent screen).\n\n**Block reason:** {reason}\n\n\
-                 **Fix (one-time, on the host running lazybonesd):** accept bypass mode \
-                 once — run `claude` interactively and choose *Yes, I accept*, or set \
-                 `bypassPermissionsModeAccepted: true` in `~/.claude.json`. After that, \
-                 headless agents launch unattended. Then resolve this follow-up and \
-                 retry the task."
+                "A headless agent parked on an interactive prompt nobody can answer — \
+                 Claude Code's one-time *Bypass Permissions* consent screen, its \
+                 per-folder *\"Yes, I trust this folder\"* trust dialog, or a write \
+                 into the protected `.claude/` directory (e.g. an auto-memory note).\n\n\
+                 **Block reason:** {reason}\n\n\
+                 **Auto-memory / `.claude/` write (the usual mid-run cause):** lazybones \
+                 spawns agents with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so they don't \
+                 try to write the host's memory (a protected-path write no allow-list \
+                 can pre-approve). If you see this, the daemon predates that fix — \
+                 update and restart it; no host change is needed.\n\n\
+                 **Folder trust (fresh worktree):** lazybones auto-seeds the launch \
+                 dir's trust flag, controlled by `auto_trust_agent_folder` (on by \
+                 default; settable per task). If off, turn it back on — or set \
+                 `\"hasTrustDialogAccepted\": true` for the dir under `projects` in \
+                 `~/.claude.json`.\n\n\
+                 **Bypass-permissions consent (one-time per host):** run `claude` \
+                 interactively and choose *Yes, I accept*, or set \
+                 `bypassPermissionsModeAccepted: true` in `~/.claude.json`.\n\n\
+                 After the relevant fix, resolve this follow-up and retry the task."
             ),
         ));
     }
@@ -127,6 +143,15 @@ mod tests {
         let (kind, _, _) =
             classify("agent spawn failed: launch blocked: screen settled before readiness").unwrap();
         assert_eq!(kind, "consent");
+    }
+
+    #[test]
+    fn protected_memory_write_classifies_as_consent() {
+        // The mid-run block: an agent parked on a `.claude/` memory-note write.
+        let (kind, _, detail) =
+            classify("blocked on prompt: Do you want to create memory-note.md?").unwrap();
+        assert_eq!(kind, "consent");
+        assert!(detail.contains("CLAUDE_CODE_DISABLE_AUTO_MEMORY"));
     }
 
     #[test]

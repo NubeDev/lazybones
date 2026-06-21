@@ -8,6 +8,7 @@ import {
   commentGhPr,
   createGhBranch,
   createGhIssue,
+  createGhPr,
   deleteGhBranch,
   getGhAuth,
   getGhRepo,
@@ -217,6 +218,32 @@ export function useGhPrs(dir: string | null, state: PrStateFilter = "open") {
     queryFn: ({ signal }) => listGhPrs(dir!, state, signal),
     enabled: !!dir,
     retry: false,
+  });
+}
+
+/** Open a new PR, then refresh that dir's PR lists. */
+export function useCreateGhPr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      dir,
+      title,
+      body,
+      head,
+      base,
+      draft,
+    }: {
+      dir: string;
+      title: string;
+      body?: string;
+      head: string;
+      base: string;
+      draft?: boolean;
+    }) => createGhPr(dir, { title, body, head, base, draft }),
+    onSuccess: (_res, { dir }) => {
+      qc.invalidateQueries({ queryKey: ["gh-prs", dir] });
+      invalidateBranchState(qc, dir);
+    },
   });
 }
 

@@ -131,3 +131,20 @@ export function useTaskTranscript(taskId: string | null, enabled: boolean) {
     retry: false,
   });
 }
+
+/** The agent's live transcript narration — the Claude-Code-style "what I'm doing"
+ *  reasoning stream. Polls while `live` (the task is running) so the activity feed
+ *  shows the agent's prose as it works, not just coarse tool ticks. Re-runs hcom
+ *  each poll (the transcript isn't stored), so it always reflects the latest step.
+ *  Stops polling once `live` is false (task finished/blocked); the last fetch
+ *  remains for review. */
+export function useLiveTranscript(taskId: string | null, live: boolean) {
+  return useQuery({
+    queryKey: ["hcom", "transcript", "live", taskId],
+    queryFn: ({ signal }) => getTaskTranscript(taskId!, signal),
+    enabled: !!taskId,
+    // Poll only while the agent is active; a finished task keeps its final fetch.
+    refetchInterval: live ? 2500 : false,
+    retry: false,
+  });
+}

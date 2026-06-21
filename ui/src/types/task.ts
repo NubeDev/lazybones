@@ -17,6 +17,10 @@ export type WorktreeMode = "new" | "reuse" | "branch";
  *  a manual strategy-retry and the hands-off auto-retry loop. */
 export type RetryStrategy = "long_term" | "quick";
 
+/** Mirror of `lazybones_store::IssueSyncState` — the last-known state of a task's
+ *  linked GitHub issue (lowercase wire form). `null` on the task = never synced. */
+export type IssueSyncState = "open" | "closed";
+
 export const STATUSES: Status[] = [
   "pending",
   "ready",
@@ -70,4 +74,12 @@ export interface Task {
   max_retries: number;
   /** How many auto-retries have been spent (reset on a clean retry / done). */
   retry_count: number;
+  /** Linked GitHub issue URL; `null` = unlinked. Read-only for now (managed via
+   *  the `/tasks/:id/issue` routes; no UI write surface yet). */
+  issue_url: string | null;
+  /** Whether reaching `done` closes the linked issue (default `false`). */
+  issue_close_on_done: boolean;
+  /** Last-synced state of the linked issue; `null` until first sync. Drives the
+   *  reverse issue→task poll's change detection. */
+  issue_synced_state: IssueSyncState | null;
 }

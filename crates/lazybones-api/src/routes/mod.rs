@@ -27,6 +27,7 @@ mod guard;
 mod hcom_log;
 mod health;
 mod heartbeat;
+mod issue;
 mod list;
 mod management_agent;
 mod preferences;
@@ -105,6 +106,17 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/tasks/:id/chat",
             get(chat::get_chat).post(chat::post_chat),
+        )
+        // GitHub issue linkage: create from the task, link an existing one, or
+        // unlink; plus the close-on-done toggle. Backend-first (no UI yet).
+        .route(
+            "/tasks/:id/issue",
+            post(issue::create_issue).delete(issue::unlink_issue),
+        )
+        .route("/tasks/:id/issue/link", post(issue::link_issue))
+        .route(
+            "/tasks/:id/issue/close-on-done",
+            put(issue::set_close_on_done),
         )
         // The fabric's record: one agent's raw hcom log + its deep transcript.
         .route("/tasks/:id/hcom", get(hcom_log::task_hcom_log))
@@ -256,7 +268,7 @@ pub fn router(state: AppState) -> Router {
             "/gh/issues/:number/comments",
             get(gh::gh_issue_comments).post(gh::gh_comment_issue),
         )
-        .route("/gh/prs", get(gh::gh_prs))
+        .route("/gh/prs", get(gh::gh_prs).post(gh::gh_create_pr))
         .route("/gh/prs/:number", get(gh::gh_pr_view))
         .route("/gh/prs/:number/merge", post(gh::gh_merge_pr))
         .route("/gh/prs/:number/close", post(gh::gh_close_pr))
