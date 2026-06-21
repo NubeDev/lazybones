@@ -489,6 +489,19 @@ fn default_session_mode() -> String {
     "per_conversation".to_owned()
 }
 
+/// `PUT /settings/preferences` body: the single global user-preferences record.
+/// Every field is optional; an omitted field clears that preference (reverts to
+/// the default — follow-browser timezone, system theme).
+#[derive(Debug, Default, Deserialize)]
+pub struct PreferencesBody {
+    /// IANA timezone name, or `None`/empty to follow the browser.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// `"light" | "dark" | "system"`, or `None` for system.
+    #[serde(default)]
+    pub theme: Option<String>,
+}
+
 /// `POST /agent/chat` body: one operator turn for the Lazybones Agent.
 #[derive(Debug, Deserialize)]
 pub struct AgentChatBody {

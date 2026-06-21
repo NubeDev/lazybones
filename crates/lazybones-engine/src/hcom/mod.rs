@@ -10,6 +10,7 @@ mod events;
 mod spawn;
 
 pub use control::HcomAgent;
+pub(crate) use control::DAEMON_SENDER;
 pub use events::HcomEvent;
 pub use spawn::AgentLaunch;
 

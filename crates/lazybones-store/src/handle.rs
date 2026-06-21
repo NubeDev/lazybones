@@ -26,6 +26,7 @@ use crate::management_agent::{
     get_management_agent, get_management_agent_resolved, get_management_agent_scoped,
     put_management_agent, put_management_agent_scoped,
 };
+use crate::preferences::{Preferences, get_preferences, put_preferences};
 use crate::skill::{
     Skill, create_skill, delete_skill, get_skill, list_skills, seed_default_skills, update_skill,
 };
@@ -413,6 +414,22 @@ impl StoreHandle {
         scope: &ManagementAgentScope,
     ) -> Result<bool> {
         delete_management_agent_scoped(&self.db, scope).await
+    }
+
+    /// Read the single global user-preferences record, or `None` if unset.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_preferences(&self) -> Result<Option<Preferences>> {
+        get_preferences(&self.db).await
+    }
+
+    /// Write the single global user-preferences record, returning it as stored.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn put_preferences(&self, prefs: &Preferences) -> Result<Preferences> {
+        put_preferences(&self.db, prefs).await
     }
 
     /// Open a new management-agent conversation, optionally snapshotting the

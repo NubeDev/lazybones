@@ -647,3 +647,32 @@ pub async fn gh_close_pr(
     gh.pr_close(&q.dir, number).await?;
     Ok(Json(gh.pr_view(&q.dir, number).await?.into()))
 }
+
+/// `GET /gh/prs/:number/comments?dir=` — list a PR's comments. Requires `Read`.
+pub async fn gh_pr_comments(
+    State(_): State<AppState>,
+    session: Session,
+    Path(number): Path<u64>,
+    Query(q): Query<DirQuery>,
+) -> ApiResult<Json<Vec<CommentDto>>> {
+    session.require(Capability::Read, "gh:pr:comments", &q.dir)?;
+    let comments = Gh::new().pr_comments(&q.dir, number).await?;
+    Ok(Json(comments.into_iter().map(Into::into).collect()))
+}
+
+/// `POST /gh/prs/:number/comments` — add a comment to a PR. Requires `Author`.
+pub async fn gh_comment_pr(
+    State(_): State<AppState>,
+    session: Session,
+    Path(number): Path<u64>,
+    Json(body): Json<CommentBody>,
+) -> ApiResult<Json<CommentCreated>> {
+    session.require(Capability::Author, "gh:pr:comment", &body.dir)?;
+    if body.body.trim().is_empty() {
+        return Err(crate::error::ApiError::bad_request(
+            "comment body must not be empty",
+        ));
+    }
+    let url = Gh::new().pr_comment(&body.dir, number, &body.body).await?;
+    Ok(Json(CommentCreated { url }))
+}

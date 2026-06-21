@@ -5,6 +5,7 @@ import {
   closeGhIssue,
   closeGhPr,
   commentGhIssue,
+  commentGhPr,
   createGhBranch,
   createGhIssue,
   deleteGhBranch,
@@ -15,6 +16,7 @@ import {
   listGhIssues,
   listGhLocalBranches,
   listGhMentionable,
+  listGhPrComments,
   listGhPrs,
   listGhWorktrees,
   mergeGhPr,
@@ -248,5 +250,26 @@ export function useCloseGhPr() {
       closeGhPr(dir, number),
     onSuccess: (_res, { dir }) =>
       qc.invalidateQueries({ queryKey: ["gh-prs", dir] }),
+  });
+}
+
+/** Comments on one PR. Skipped until `number` is set (panel collapsed). */
+export function useGhPrComments(dir: string, number: number | null) {
+  return useQuery({
+    queryKey: ["gh-pr-comments", dir, number],
+    queryFn: ({ signal }) => listGhPrComments(dir, number!, signal),
+    enabled: number != null,
+    retry: false,
+  });
+}
+
+/** Add a comment to a PR, then refresh that PR's comment thread. */
+export function useCommentGhPr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dir, number, body }: { dir: string; number: number; body: string }) =>
+      commentGhPr(dir, number, body),
+    onSuccess: (_res, { dir, number }) =>
+      qc.invalidateQueries({ queryKey: ["gh-pr-comments", dir, number] }),
   });
 }

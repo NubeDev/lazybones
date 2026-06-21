@@ -14,7 +14,7 @@ use lazybones_store::{
     AgentRole, ManagementAgentConfig, ManagementAgentScope, SessionMode, Skill, StoreHandle,
 };
 
-use crate::hcom::{AgentLaunch, Hcom};
+use crate::hcom::{AgentLaunch, DAEMON_SENDER, Hcom};
 
 use super::prompt;
 
@@ -127,13 +127,26 @@ pub async fn chat_turn(
         hcom.send(conversation_id, user_text).await?;
     }
 
-    // Wait for the agent's reply on the conversation thread.
+    // Wait for the agent's reply on the conversation thread. Exclude the daemon's
+    // own messages: delivering a follow-up turn via `--from lazybones` posts that
+    // message onto the thread as `instance = 'ext_lazybones'`, and without this
+    // filter the wait would return immediately with the operator's own words
+    // echoed back as the "reply" instead of blocking for the agent's actual reply.
+    // The sender is the top-level `instance` column in hcom's `events_v` view
+    // (not a `data.$.from` JSON field).
+    let ext_sender = format!("ext_{DAEMON_SENDER}");
     let sql = format!(
-        "type = 'message' AND json_extract(data, '$.thread') = '{conversation_id}'"
+        "type = 'message' \
+         AND json_extract(data, '$.thread') = '{conversation_id}' \
+         AND instance != '{ext_sender}'"
     );
     let events = hcom.wait(&sql, REPLY_TIMEOUT).await.unwrap_or_default();
 
+    // Belt-and-suspenders: skip any event still attributed to the daemon sender.
     let reply = events.iter().rev().find_map(|e| {
+        if e.instance == ext_sender || e.instance == DAEMON_SENDER {
+            return None;
+        }
         e.data
             .get("text")
             .and_then(|t| t.as_str())

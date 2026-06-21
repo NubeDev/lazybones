@@ -19,6 +19,7 @@ mod hcom_log;
 mod init_schema;
 mod run;
 mod management_agent;
+mod preferences;
 mod secret;
 mod skill;
 mod task;
@@ -38,6 +39,7 @@ pub use hcom_log::{HcomLogEntry, HcomLogFilter, NewHcomLogEntry};
 pub use management_agent::{
     ManagementAgentConfig, ManagementAgentScope, PermissionProfile, SessionMode,
 };
+pub use preferences::Preferences;
 pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};
 pub use skill::{Skill, SkillAction, SkillParam, seed_default_skills};

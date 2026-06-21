@@ -14,11 +14,8 @@ import {
   loopToken,
   setLoopToken,
 } from "@/lib/api/config";
-import {
-  isDesktop,
-  getTimezone,
-  setTimezone,
-} from "@/lib/utils/platform";
+import { isDesktop, getTimezone } from "@/lib/utils/platform";
+import { usePreferences, useUpdatePreferences } from "@/lib/hooks/use-preferences";
 
 /** The IANA timezone names for the picker. `Intl.supportedValuesOf` is the
  *  canonical source; fall back to a small set on the rare engine without it. */
@@ -143,13 +140,11 @@ function TimezoneOption({
 export function SettingsPage() {
   const [base, setBase] = useState(apiBase());
   const [token, setToken] = useState(loopToken());
-  const [tz, setTz] = useState(getTimezone() ?? "");
   const [saved, setSaved] = useState(false);
 
   function save() {
     setApiBase(base.trim());
     setLoopToken(token.trim());
-    setTimezone(tz);
     setSaved(true);
     // Repoint all in-flight queries cleanly.
     setTimeout(() => window.location.reload(), 400);
@@ -235,40 +230,67 @@ export function SettingsPage() {
             </TabsContent>
 
             <TabsContent value="timezone" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Clock className="size-4 text-accent" /> Display timezone
-                  </CardTitle>
-                  <CardDescription>
-                    How all dates &amp; times are shown across the app.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Field
-                    label="Display timezone"
-                    hint={`"Follow browser" uses this device's zone (${browserZone()}).`}
-                  >
-                    <TimezonePicker value={tz} onChange={setTz} />
-                  </Field>
-                  <Separator />
-                  <div className="flex items-center justify-end gap-3">
-                    {saved && (
-                      <span className="inline-flex items-center gap-1 text-xs text-status-done">
-                        <Check className="size-3.5" /> Saved — reloading
-                      </span>
-                    )}
-                    <Button onClick={save} size="sm">
-                      Save
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+              <PreferencesCard />
             </TabsContent>
           </Tabs>
         </div>
       </div>
     </div>
+  );
+}
+
+/** Display-preferences (timezone) backed by `GET/PUT /settings/preferences`, so
+ *  the choice follows the operator across browsers. The saved value is mirrored
+ *  into localStorage by the hook, so the synchronous date formatters pick it up
+ *  without a reload. */
+function PreferencesCard() {
+  const prefs = usePreferences();
+  const update = useUpdatePreferences();
+  // Seed the draft from the server once loaded; fall back to the localStorage
+  // mirror so the picker is populated before the first fetch resolves.
+  const [tz, setTz] = useState<string | null>(null);
+  const draftTz = tz ?? prefs.data?.timezone ?? getTimezone() ?? "";
+
+  function save() {
+    update.mutate({ timezone: draftTz });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="size-4 text-accent" /> Display timezone
+        </CardTitle>
+        <CardDescription>
+          How all dates &amp; times are shown across the app. Saved to the daemon, so
+          it follows you across browsers.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Field
+          label="Display timezone"
+          hint={`"Follow browser" uses this device's zone (${browserZone()}).`}
+        >
+          <TimezonePicker value={draftTz} onChange={setTz} />
+        </Field>
+        <Separator />
+        <div className="flex items-center justify-end gap-3">
+          {update.isError && (
+            <span className="text-xs text-status-failed">
+              {(update.error as Error).message}
+            </span>
+          )}
+          {update.isSuccess && !update.isPending && (
+            <span className="inline-flex items-center gap-1 text-xs text-status-done">
+              <Check className="size-3.5" /> Saved
+            </span>
+          )}
+          <Button onClick={save} size="sm" disabled={update.isPending}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

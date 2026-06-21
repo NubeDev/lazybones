@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/lib/theme/theme-provider";
 import { QueryProvider } from "./query-provider";
 import { useRouter, ViewRenderer } from "./router";
 import { useLiveStream } from "@/lib/hooks/use-live-stream";
+import { usePreferences } from "@/lib/hooks/use-preferences";
 import {
   AgentContextProvider,
   useAgentContext,
@@ -33,6 +34,9 @@ function Shell() {
   const { setView } = useAgentContext();
   const [agentOpen, setAgentOpen] = useState(false);
   useLiveStream();
+  // Load the operator's saved preferences (mirrors the timezone into
+  // localStorage so the synchronous date formatters use it app-wide).
+  usePreferences();
 
   // Keep the agent grounded in which page the operator is on (scope §7).
   useEffect(() => {

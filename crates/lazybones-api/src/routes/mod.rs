@@ -29,6 +29,7 @@ mod health;
 mod heartbeat;
 mod list;
 mod management_agent;
+mod preferences;
 mod promote;
 mod ready;
 mod runs;
@@ -154,6 +155,12 @@ pub fn router(state: AppState) -> Router {
             get(management_agent::get_workflow_management_agent)
                 .put(management_agent::put_workflow_management_agent)
                 .delete(management_agent::delete_workflow_management_agent),
+        )
+        // User preferences: operator UI choices (timezone, theme) that follow
+        // the operator across browsers, rather than living in localStorage.
+        .route(
+            "/settings/preferences",
+            get(preferences::get_preferences).put(preferences::put_preferences),
         )
         .route("/agent/chat", post(agent_chat::post_agent_chat))
         .route(

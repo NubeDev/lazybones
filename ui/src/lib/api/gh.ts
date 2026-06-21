@@ -228,3 +228,28 @@ export function closeGhPr(dir: string, number: number): Promise<GhPullRequest> {
     auth: true,
   });
 }
+
+/** `GET /gh/prs/:number/comments?dir=` — list a PR's comments. */
+export function listGhPrComments(
+  dir: string,
+  number: number,
+  signal?: AbortSignal,
+): Promise<GhComment[]> {
+  return request<GhComment[]>(`/gh/prs/${number}/comments${dirq(dir)}`, {
+    auth: true,
+    signal,
+  });
+}
+
+/** `POST /gh/prs/:number/comments` — add a comment to a PR; returns its url. */
+export function commentGhPr(
+  dir: string,
+  number: number,
+  body: string,
+): Promise<{ url: string }> {
+  return request<{ url: string }>(`/gh/prs/${number}/comments`, {
+    method: "POST",
+    auth: true,
+    body: { dir, body },
+  });
+}

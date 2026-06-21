@@ -8,6 +8,12 @@ use serde::Deserialize;
 
 use super::Hcom;
 
+/// The external sender identity the daemon posts under (`hcom send --from`). The
+/// daemon is not an hcom participant (it never runs `hcom start`); this lets it
+/// deliver operator/follow-up messages to running agents anyway. Also used by the
+/// management runner to filter the daemon's own messages out of the reply wait.
+pub(crate) const DAEMON_SENDER: &str = "lazybones";
+
 /// One live agent as reported by `hcom list --json` — the fields reclaim reads.
 //
 // `name` is the graceful-stop handle the cancel API will use; kept on the type
@@ -62,15 +68,28 @@ impl Hcom {
     /// task id, so a message here reaches a *running* agent live. Wired by `POST
     /// /tasks/:id/chat` via [`crate::send_to_agent`].
     ///
+    /// `--from <DAEMON_SENDER>` gives the message an external sender identity, so
+    /// the daemon can post without itself being an hcom participant (it never runs
+    /// `hcom start`). Without it hcom errors `identity not found, run 'hcom start'
+    /// first` and a follow-up turn / chat steer fails.
+    ///
     /// # Errors
     /// Returns an error if hcom cannot be launched or exits non-zero.
     pub async fn send(&self, thread: &str, text: &str) -> anyhow::Result<()> {
+        // Target the agent(s) by tag prefix `@<thread>-`: the scheduler and the
+        // management runner both spawn with `--tag <thread>` (the task/conversation
+        // id), so agents are named `<thread>-xxxx`. `@all` is NOT a valid hcom
+        // target (it errors "non-existent agent @all"); the tag prefix reaches
+        // exactly the agent(s) for this thread.
+        let target = format!("@{thread}-");
         let out = self
             .command()
             .arg("send")
-            .arg("@all")
+            .arg(&target)
             .arg("--thread")
             .arg(thread)
+            .arg("--from")
+            .arg(DAEMON_SENDER)
             // `--` ends flag parsing so a message starting with `-` is not read as
             // a flag (the agent prompt uses the same `-- <text>` form).
             .arg("--")

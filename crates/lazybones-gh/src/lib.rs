@@ -551,6 +551,38 @@ impl Gh {
             .await
             .map(|_| ())
     }
+
+    /// List the comments on a pull request, oldest first.
+    pub async fn pr_comments(
+        &self,
+        dir: impl AsRef<Path>,
+        number: u64,
+    ) -> Result<Vec<Comment>, GhError> {
+        let view: issue::CommentsView = self
+            .run_json(
+                dir,
+                [
+                    "pr".to_string(),
+                    "view".to_string(),
+                    number.to_string(),
+                    "--json".to_string(),
+                    "comments".to_string(),
+                ],
+            )
+            .await?;
+        Ok(view.comments)
+    }
+
+    /// Add a comment to a pull request; returns the new comment's URL.
+    pub async fn pr_comment(
+        &self,
+        dir: impl AsRef<Path>,
+        number: u64,
+        body: &str,
+    ) -> Result<String, GhError> {
+        self.run(dir, ["pr", "comment", &number.to_string(), "--body", body])
+            .await
+    }
 }
 
 /// Spawn `bin <args...>` in `dir`, capture stdout (trailing newlines trimmed),

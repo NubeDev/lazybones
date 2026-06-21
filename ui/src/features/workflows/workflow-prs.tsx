@@ -6,6 +6,7 @@ import {
   ExternalLink,
   ChevronDown,
   AlertTriangle,
+  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -23,9 +24,13 @@ import { ApiError } from "@/lib/api/client";
 import {
   useGhAuth,
   useGhPrs,
+  useGhPrComments,
+  useGhMentionable,
   useMergeGhPr,
   useCloseGhPr,
+  useCommentGhPr,
 } from "@/lib/hooks/use-gh";
+import { MentionTextarea } from "./mention-textarea";
 import type { GhPullRequest, MergeMethod, PrStateFilter } from "@/types/gh";
 
 const FILTERS: PrStateFilter[] = ["open", "closed", "merged", "all"];
@@ -43,6 +48,8 @@ export function WorkflowPrs({ dir }: { dir: string }) {
   const [filter, setFilter] = useState<PrStateFilter>("open");
   const auth = useGhAuth();
   const { data: prs, isLoading, error } = useGhPrs(dir, filter);
+  const { data: mentionable } = useGhMentionable(dir);
+  const users = mentionable ?? [];
   const merge = useMergeGhPr();
   const close = useCloseGhPr();
 
@@ -110,7 +117,9 @@ export function WorkflowPrs({ dir }: { dir: string }) {
         {prs?.map((pr) => (
           <PrRow
             key={pr.number}
+            dir={dir}
             pr={pr}
+            users={users}
             mergePending={merge.isPending}
             closePending={close.isPending}
             onMerge={(method) =>
@@ -125,13 +134,17 @@ export function WorkflowPrs({ dir }: { dir: string }) {
 }
 
 function PrRow({
+  dir,
   pr,
+  users,
   mergePending,
   closePending,
   onMerge,
   onClose,
 }: {
+  dir: string;
   pr: GhPullRequest;
+  users: string[];
   mergePending: boolean;
   closePending: boolean;
   onMerge: (method: MergeMethod) => void;
@@ -140,6 +153,7 @@ function PrRow({
   const state = pr.state.toUpperCase();
   const open = state === "OPEN";
   const merged = state === "MERGED";
+  const [expanded, setExpanded] = useState(false);
   // GitHub only computes mergeability for open PRs; treat anything but a clear
   // CONFLICTING as merge-able so we don't block on an UNKNOWN that's still
   // resolving server-side.
@@ -157,7 +171,8 @@ function PrRow({
       : "text-muted-foreground";
 
   return (
-    <li className="flex items-start gap-3 px-3 py-2.5">
+    <li className="px-3 py-2.5">
+      <div className="flex items-start gap-3">
       <Icon className={`mt-0.5 size-4 shrink-0 ${iconColor}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -217,6 +232,14 @@ function PrRow({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setExpanded((v) => !v)}
+          title="Comments"
+        >
+          <MessageSquare className="size-3.5" /> Comments
+        </Button>
         <a
           href={pr.url}
           target="_blank"
@@ -267,6 +290,94 @@ function PrRow({
           </>
         )}
       </div>
+      </div>
+
+      {expanded && (
+        <PrComments dir={dir} number={pr.number} users={users} />
+      )}
     </li>
+  );
+}
+
+function PrComments({
+  dir,
+  number,
+  users,
+}: {
+  dir: string;
+  number: number;
+  users: string[];
+}) {
+  const { data: comments, isLoading, error } = useGhPrComments(dir, number);
+  const comment = useCommentGhPr();
+  const [draft, setDraft] = useState("");
+
+  function submit() {
+    const b = draft.trim();
+    if (!b) return;
+    comment.mutate(
+      { dir, number, body: b },
+      { onSuccess: () => setDraft("") },
+    );
+  }
+
+  return (
+    <div className="ml-7 mt-3 space-y-3 border-l border-border pl-3">
+      {isLoading && <Skeleton className="h-10 w-full" />}
+
+      {error && (
+        <p className="text-xs text-status-blocked">
+          {error instanceof ApiError ? error.message : "Can't load comments."}
+        </p>
+      )}
+
+      {comments && comments.length === 0 && !isLoading && (
+        <p className="text-xs text-muted-foreground">No comments yet.</p>
+      )}
+
+      {comments?.map((c, i) => (
+        <div key={c.url || i} className="space-y-1">
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {c.author ?? "unknown"}
+            </span>
+            {c.created_at && (
+              <Tooltip label={fullTime(c.created_at)} side="bottom">
+                <span>{shortTime(c.created_at)}</span>
+              </Tooltip>
+            )}
+          </div>
+          <p className="whitespace-pre-wrap text-sm text-foreground/90">
+            {c.body}
+          </p>
+        </div>
+      ))}
+
+      <div className="space-y-2">
+        <MentionTextarea
+          value={draft}
+          onChange={setDraft}
+          users={users}
+          placeholder="Add a comment… type @ to mention"
+          rows={2}
+        />
+        <div className="flex items-center justify-end gap-2">
+          {comment.error && (
+            <span className="text-[11px] text-status-blocked">
+              {comment.error instanceof ApiError
+                ? comment.error.message
+                : "Could not comment."}
+            </span>
+          )}
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={!draft.trim() || comment.isPending}
+          >
+            Comment
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
