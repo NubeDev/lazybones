@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, History, Plus, Send, MessagesSquare, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Markdown } from "@/components/ui/markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { relativeTime } from "@/lib/utils/platform";
 import { cn } from "@/lib/utils/cn";
@@ -227,11 +228,16 @@ function Bubble({ role, text, at }: { role: AgentRole; text: string; at: string 
     <div className={cn("flex flex-col gap-0.5", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
-          "max-w-[85%] whitespace-pre-wrap rounded-lg px-2.5 py-1.5 text-xs leading-snug",
-          isUser ? "bg-primary text-primary-foreground" : "bg-muted text-foreground",
+          "max-w-[85%] min-w-0 rounded-lg px-2.5 py-1.5 text-xs leading-snug",
+          isUser
+            ? "whitespace-pre-wrap bg-primary text-primary-foreground"
+            : "bg-muted text-foreground",
         )}
       >
-        {text}
+        {/* Operator turns are plain text; the agent's replies are markdown
+            (lists, tables, fenced code for JSON/text/etc.) via the shared
+            Markdown renderer, which escapes raw HTML so this stays XSS-safe. */}
+        {isUser ? text : <Markdown className="text-xs leading-snug">{text}</Markdown>}
       </div>
       <span className="px-1 text-[10px] text-muted-foreground/70">
         {isUser ? "you" : "agent"} · {relativeTime(at)}
