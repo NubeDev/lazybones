@@ -11,7 +11,7 @@
 #   make fmt            cargo fmt
 #   make clean          cargo clean + remove the runtime dir (.lazy: DB + worktrees)
 #   make wipe           delete ONLY the runtime dir (.lazy) — keep the cargo target
-#   make kill           free the API port / reap an orphaned daemon
+#   make kill           free BOTH dev ports (api + ui) / reap orphaned daemon + vite
 #   make install-hcom   check the hcom engine is installed; install the loop script if present
 #   make secrets-init   scaffold a gitignored .env from .env.example (agent CLI keys the daemon reads)
 #   make ui             install deps + build the web dashboard bundle (ui/dist)
@@ -43,6 +43,11 @@ export LAZYBONES_CONFIG := $(CONFIG)
 BIND ?= 127.0.0.1:46787
 HOST := $(word 1,$(subst :, ,$(BIND)))
 PORT := $(word 2,$(subst :, ,$(BIND)))
+
+# The dashboard's Vite dev server port (server.port in ui/vite.config). `make dev`
+# and `make ui-dev` print this; `make kill` frees it so a leaked Vite never wedges
+# the next boot. Override together with the vite config if you change it.
+UI_PORT ?= 51840
 
 # The loop authenticates with this bearer token (config key `loop_token`, default
 # `lazybones-loop`). Used by the demo's authenticated calls.
@@ -120,7 +125,7 @@ dev: import ui-install
 		sleep 0.1; \
 	done; \
 	echo "lazybonesd ready → http://$(BIND)  (log: /tmp/lazybones-dev.log)"; \
-	echo "--- starting dashboard (browser) → http://localhost:51840 ---"; \
+	echo "--- starting dashboard (browser) → http://localhost:$(UI_PORT) ---"; \
 	cd $(UI_DIR) && $(NPM) run dev
 
 # Backend-only quickstart: seed the queue, then serve in the foreground (no UI).
@@ -180,21 +185,36 @@ wipe: kill
 	rm -rf $(RUNTIME_DIR)
 	@echo "wiped runtime dir $(RUNTIME_DIR) (cargo target kept)"
 
-# Free the API port and reap an orphaned daemon left by a crashed run. fuser is
-# absent on some boxes, so we also drive the kill off pkill. The pkill pattern leads
-# with a bracket class (`[l]azybonesd`) so the pattern STRING has no `lazybonesd`
-# substring and pkill never matches its own shell. SIGTERM first (let the embedded
-# store close cleanly), then poll pgrep and escalate stragglers to SIGKILL.
+# Free BOTH dev ports and reap whatever a crashed run left behind — the daemon AND
+# the dashboard's Vite dev server. `make dev`'s trap only reaps the daemon, so a
+# hard-killed dev session leaks Vite holding the UI port; the next `make dev` then
+# dies with "Port $(UI_PORT) is already in use". This target kills both, no matter what.
+#
+# Each service is freed two ways so one absent tool can't leave a straggler:
+#   - fuser frees anything bound to the port (absent on some boxes — hence the ||true);
+#   - pkill matches the process by an identifying string.
+# The pkill patterns lead with a bracket class (`[l]azybonesd`, `[v]ite`) so the
+# pattern STRING contains no literal match for itself and pkill never kills its own
+# shell. The vite pattern is anchored to this repo's path so we never touch an
+# unrelated vite elsewhere on the box. SIGTERM first (let the embedded store close
+# cleanly), then poll and escalate stragglers to SIGKILL.
+VITE_PAT := $(CURDIR)/$(UI_DIR)/node_modules/.bin/[v]ite
 kill:
 	-@fuser -TERM -k $(PORT)/tcp 2>/dev/null || true
+	-@fuser -TERM -k $(UI_PORT)/tcp 2>/dev/null || true
 	-@pkill -TERM -f '[l]azybonesd' 2>/dev/null || true
+	-@pkill -TERM -f '$(VITE_PAT)' 2>/dev/null || true
 	@i=0; \
-	while pgrep -f '[l]azybonesd' >/dev/null 2>&1; do \
+	while pgrep -f '[l]azybonesd' >/dev/null 2>&1 || pgrep -f '$(VITE_PAT)' >/dev/null 2>&1; do \
 		i=$$((i+1)); \
-		if [ $$i -ge 80 ]; then pkill -KILL -f '[l]azybonesd' 2>/dev/null || true; break; fi; \
+		if [ $$i -ge 80 ]; then \
+			pkill -KILL -f '[l]azybonesd' 2>/dev/null || true; \
+			pkill -KILL -f '$(VITE_PAT)' 2>/dev/null || true; \
+			break; \
+		fi; \
 		sleep 0.1; \
 	done
-	@echo "freed port $(PORT) and killed any orphaned $(BIN)"
+	@echo "freed ports $(PORT) (api) + $(UI_PORT) (ui) and killed any orphaned $(BIN)/vite"
 
 # Make the hcom orchestration loop available.
 #
@@ -269,7 +289,7 @@ ui-install:
 # Run the dashboard in the browser (Vite dev server on :51840). Point it at a
 # running daemon in Settings (default http://$(BIND)). Ctrl-C stops it.
 ui-dev: ui-install
-	@echo "dashboard (browser) → http://localhost:51840   (daemon: http://$(BIND))"
+	@echo "dashboard (browser) → http://localhost:$(UI_PORT)   (daemon: http://$(BIND))"
 	cd $(UI_DIR) && $(NPM) run dev
 
 # Run the dashboard as a native desktop window (Tauri runs Vite under the hood).
