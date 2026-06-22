@@ -2,9 +2,11 @@
 
 use std::path::Path;
 
+use std::sync::Arc;
+
 use lazybones_api::{AppState, router};
 use lazybones_engine::EngineConfig;
-use lazybones_store::{StoreEngine, StoreHandle, sync_seeds};
+use lazybones_store::{FileBlobStore, StoreEngine, StoreHandle, sync_seeds};
 
 use crate::configure::Config;
 use crate::workfile::parse_workfile;
@@ -52,7 +54,10 @@ pub async fn serve(config: Config, engine: EngineConfig) -> anyhow::Result<()> {
         config.run.clone(),
         base_url,
         config.loop_token.clone(),
-    );
+    )
+    // Asset bytes live in a content-addressed file blob store under the data dir
+    // (swappable for S3/bucket behind the `BlobStore` trait).
+    .with_assets(Arc::new(FileBlobStore::new(config.data_dir.clone())));
     let app = router(state);
 
     // The loop is the daemon: if lazybonesd is up, the queue is being drained.

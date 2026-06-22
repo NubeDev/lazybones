@@ -5,7 +5,134 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use lazybones_store::{MergeMode, Run, Task, WorktreeMode};
+use lazybones_store::{BrandColors, BrandFonts, DocKind, MergeMode, Run, Task, WorktreeMode};
+
+/// `?project=` filter shared by the document-writer list endpoints. A no-op seam
+/// today (everything is unscoped); the field is here so projects land with no
+/// route change.
+#[derive(Debug, Default, Deserialize)]
+pub struct ProjectQuery {
+    /// Restrict the listing to one project scope; all scopes when omitted.
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+/// `POST /documents` body: a new document (or reusable `reference` page).
+#[derive(Debug, Deserialize)]
+pub struct CreateDocumentBody {
+    /// The unique document id; `409` if it is already taken.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+    /// `document` (default) or `reference` (a reusable page merged into others).
+    #[serde(default)]
+    pub kind: DocKind,
+    /// The brand profile to render with; `None` falls back to the default.
+    #[serde(default)]
+    pub branding_id: Option<String>,
+    /// The markdown body.
+    #[serde(default)]
+    pub body: String,
+    /// Optional project scope; always `None` today.
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+/// `PUT /documents/:id` body: overwrite the authored fields. The id comes from the
+/// path; `created_at` and the `repo` linkage are preserved server-side.
+#[derive(Debug, Deserialize)]
+pub struct UpdateDocumentBody {
+    /// New title.
+    pub title: String,
+    /// New kind.
+    #[serde(default)]
+    pub kind: DocKind,
+    /// New branding id (or `None` to clear).
+    #[serde(default)]
+    pub branding_id: Option<String>,
+    /// New markdown body.
+    #[serde(default)]
+    pub body: String,
+}
+
+/// `PUT /documents/:id/repo` body: set the GitHub publishing target. The
+/// `branch`/`*_url` linkage fields are not set here — they are filled as the
+/// `gh/*` actions run.
+#[derive(Debug, Deserialize)]
+pub struct SetDocRepoBody {
+    /// Absolute path to the local git checkout.
+    pub repo: String,
+    /// Base branch to fork from; `None` inherits the default.
+    #[serde(default)]
+    pub base_branch: Option<String>,
+    /// Branch-name prefix; `None` inherits the default.
+    #[serde(default)]
+    pub branch_prefix: Option<String>,
+    /// Where in the repo the rendered doc is committed, e.g. `docs/<id>.md`.
+    pub output_path: String,
+}
+
+/// `POST /branding` body: a new brand profile.
+#[derive(Debug, Deserialize)]
+pub struct CreateBrandingBody {
+    /// The unique branding id; `409` if it is already taken.
+    pub id: String,
+    /// Human name shown in the picker.
+    pub name: String,
+    /// Optional project scope; always `None` today.
+    #[serde(default)]
+    pub project: Option<String>,
+    /// The asset id of the brand's logo, if set.
+    #[serde(default)]
+    pub logo_asset_id: Option<String>,
+    /// The brand color palette.
+    #[serde(default)]
+    pub colors: BrandColors,
+    /// The brand typography.
+    #[serde(default)]
+    pub fonts: BrandFonts,
+    /// Header text rendered on branded output.
+    #[serde(default)]
+    pub header_text: String,
+    /// Footer text rendered on branded output.
+    #[serde(default)]
+    pub footer_text: String,
+}
+
+/// `PUT /branding/:id` body: overwrite a brand profile. The id comes from the
+/// path; `created_at` is preserved server-side.
+#[derive(Debug, Deserialize)]
+pub struct UpdateBrandingBody {
+    /// New human name.
+    pub name: String,
+    /// New logo asset id (or `None` to clear).
+    #[serde(default)]
+    pub logo_asset_id: Option<String>,
+    /// New color palette.
+    #[serde(default)]
+    pub colors: BrandColors,
+    /// New typography.
+    #[serde(default)]
+    pub fonts: BrandFonts,
+    /// New header text.
+    #[serde(default)]
+    pub header_text: String,
+    /// New footer text.
+    #[serde(default)]
+    pub footer_text: String,
+}
+
+/// `POST /documents/:id/sources` JSON body for a **link** source. (A **file**
+/// source is uploaded as a raw body with `Content-Type`/`X-Filename` headers, like
+/// an asset; only links arrive as JSON.)
+#[derive(Debug, Deserialize)]
+pub struct LinkSourceBody {
+    /// The URL the author references.
+    pub url: String,
+    /// Human title / label.
+    #[serde(default)]
+    pub title: String,
+}
 
 /// Deserialize an `Option<Option<T>>` so the three PATCH states are distinct:
 /// **field absent** → `None` (leave unchanged), **`null`** → `Some(None)` (clear /

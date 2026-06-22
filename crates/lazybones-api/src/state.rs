@@ -9,13 +9,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use lazybones_auth::{ManagementProfile, ScopedSession};
-use lazybones_store::StoreHandle;
+use lazybones_store::{BlobStore, FileBlobStore, StoreHandle};
+
+/// The content-addressed byte store for asset payloads, behind the
+/// [`BlobStore`](lazybones_store::BlobStore) trait so the backend (files today,
+/// S3/bucket later) is swappable without touching routes. Shared (`Arc`) so the
+/// cloneable [`AppState`] stays cheap to clone.
+pub type AssetStore = Arc<dyn BlobStore>;
 
 /// Shared state injected into every handler.
 #[derive(Clone)]
 pub struct AppState {
     /// The durable store boundary.
     pub store: StoreHandle,
+    /// The blob store holding asset bytes (logos/images) outside the relational
+    /// rows. Constructed in `serve.rs` from `config.data_dir`.
+    pub assets: AssetStore,
     /// The run label this server serves (groups history).
     pub run: String,
     /// The externally-reachable base URL of this REST API (e.g.
@@ -44,11 +53,23 @@ impl AppState {
         tokens.insert(loop_token.into(), ScopedSession::for_loop("loop"));
         Self {
             store,
+            // Default to a file blob store under the OS temp dir; `serve.rs` swaps
+            // in the data-dir-rooted store via [`with_assets`](Self::with_assets).
+            assets: Arc::new(FileBlobStore::new(std::env::temp_dir().join("lazybones-assets"))),
             run: run.into(),
             base_url: base_url.into(),
             mint_counter: Arc::new(AtomicU64::new(0)),
             tokens: Arc::new(RwLock::new(tokens)),
         }
+    }
+
+    /// Swap in the asset blob store (builder style). Called by `serve.rs` to root
+    /// the store at the daemon's `data_dir`; tests use it to isolate blob bytes in
+    /// a tempdir.
+    #[must_use]
+    pub fn with_assets(mut self, assets: AssetStore) -> Self {
+        self.assets = assets;
+        self
     }
 
     /// Mint and register a scoped management-agent token for a conversation,
