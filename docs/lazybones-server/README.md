@@ -10,7 +10,8 @@
 > Companion specs: the org hierarchy and roles in [projects.md](projects.md);
 > access control in [authz.md](authz.md); the sync contract in
 > [sync-model.md](sync-model.md); the edge-side changes in
-> [edge-changes.md](edge-changes.md).
+> [edge-changes.md](edge-changes.md). The phase-1 team graph that has **landed
+> as code** is summarized in [projects-pr.md](projects-pr.md).
 >
 > **A peer review revised key decisions** — read
 > [review-resolutions.md](review-resolutions.md) first. Most important: phase 1 is
