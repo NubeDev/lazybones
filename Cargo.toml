@@ -9,6 +9,7 @@ members = [
     "crates/lazybones-engine",
     "crates/lazybones-gh",
     "crates/lazybones-cli",
+    "crates/lazybones-render",
 ]
 
 [workspace.package]
@@ -23,6 +24,20 @@ lazybones-auth = { version = "0.1.0", path = "crates/lazybones-auth" }
 lazybones-api = { version = "0.1.0", path = "crates/lazybones-api" }
 lazybones-engine = { version = "0.1.0", path = "crates/lazybones-engine" }
 lazybones-gh = { version = "0.1.0", path = "crates/lazybones-gh" }
+lazybones-render = { version = "0.1.0", path = "crates/lazybones-render" }
+
+# Typst PDF rendering (pure Rust, no external binary). Pinned to EXACT versions:
+# Phase 3a is a de-risk spike — the Typst API churns between releases, so the
+# whole workspace tracks one proven version set. typst-assets supplies embedded
+# fonts for the offline `World` impl; comemo backs Typst's incremental cache.
+typst = "=0.15.0"
+typst-pdf = "=0.15.0"
+typst-assets = { version = "=0.15.0", features = ["fonts"] }
+# `PagedDocument` (the paged layout output `typst::compile` produces and
+# `typst_pdf::pdf` consumes) lives in this crate and is NOT re-exported by
+# `typst`, so it is a direct dependency. Same exact pin as the rest of the set.
+typst-layout = "=0.15.0"
+comemo = "=0.5.1"
 
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "query"] }
