@@ -22,12 +22,16 @@ mod hcom_log;
 mod init_schema;
 mod run;
 mod management_agent;
+mod org;
 mod preferences;
+mod project;
 mod secret;
 mod skill;
 mod source;
 mod task;
+mod team;
 mod template;
+mod user;
 mod workfile;
 
 pub use agent::{AgentCatalog, AgentCatalogEdit, seed_default_agents};
@@ -46,7 +50,9 @@ pub use hcom_log::{HcomLogEntry, HcomLogFilter, NewHcomLogEntry};
 pub use management_agent::{
     ManagementAgentConfig, ManagementAgentScope, PermissionProfile, SessionMode,
 };
+pub use org::Org;
 pub use preferences::Preferences;
+pub use project::{Project, ProjectStatus};
 pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};
 pub use skill::{Skill, SkillAction, SkillParam, seed_default_skills};
@@ -55,5 +61,7 @@ pub use task::{
     DEFAULT_MAX_RETRIES, IssueSyncState, RetryStrategy, Status, Task, TaskEdit, Transition,
     WorktreeMode, issue_number_from_url,
 };
+pub use team::{MemberRole, Membership, Team};
 pub use template::{Template, instantiate};
+pub use user::User;
 pub use workfile::{SeedTask, deps_with_reuse, sync_seeds};
