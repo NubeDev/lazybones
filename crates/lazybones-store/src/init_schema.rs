@@ -75,7 +75,23 @@ DEFINE INDEX IF NOT EXISTS source_document ON source FIELDS document;\n\
 DEFINE TABLE IF NOT EXISTS source_chunk SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS source ON source_chunk TYPE option<string>;\n\
 DEFINE FIELD IF NOT EXISTS vector ON source_chunk TYPE option<array<float>>;\n\
-DEFINE INDEX IF NOT EXISTS source_chunk_vector ON source_chunk FIELDS vector HNSW DIMENSION 1536 DIST COSINE;";
+DEFINE INDEX IF NOT EXISTS source_chunk_vector ON source_chunk FIELDS vector HNSW DIMENSION 1536 DIST COSINE;\n\
+DEFINE TABLE IF NOT EXISTS org     SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS team    SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS user    SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS is_admin ON user TYPE bool;\n\
+DEFINE TABLE IF NOT EXISTS project SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS status  ON project TYPE string;\n\
+DEFINE TABLE IF NOT EXISTS edge    SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS member_of TYPE RELATION SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS role ON member_of TYPE string;\n\
+DEFINE INDEX IF NOT EXISTS member_of_unique ON member_of FIELDS in, out UNIQUE;\n\
+DEFINE TABLE IF NOT EXISTS under TYPE RELATION SCHEMALESS;\n\
+DEFINE INDEX IF NOT EXISTS under_unique ON under FIELDS in, out UNIQUE;\n\
+DEFINE INDEX IF NOT EXISTS under_out ON under FIELDS out;\n\
+DEFINE TABLE IF NOT EXISTS scoped_to TYPE RELATION SCHEMALESS;\n\
+DEFINE INDEX IF NOT EXISTS scoped_to_in_unique ON scoped_to FIELDS in UNIQUE;\n\
+DEFINE INDEX IF NOT EXISTS scoped_to_edge ON scoped_to FIELDS out;";
 
 /// Apply the schema on the bootstrapped connection.
 ///

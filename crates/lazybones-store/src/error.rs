@@ -109,4 +109,36 @@ pub enum StoreError {
     /// A source id was referenced that does not exist in the store.
     #[error("source not found: {0}")]
     SourceNotFound(String),
+
+    /// An org id was referenced that does not exist in the store.
+    #[error("org not found: {0}")]
+    OrgNotFound(String),
+
+    /// An org was created with an id that is already taken.
+    #[error("org already exists: {0}")]
+    OrgExists(String),
+
+    /// A team id was referenced that does not exist in the store.
+    #[error("team not found: {0}")]
+    TeamNotFound(String),
+
+    /// A team was created with an id that is already taken.
+    #[error("team already exists: {0}")]
+    TeamExists(String),
+
+    /// A user id was referenced that does not exist in the store.
+    #[error("user not found: {0}")]
+    UserNotFound(String),
+
+    /// A user was created with an id that is already taken.
+    #[error("user already exists: {0}")]
+    UserExists(String),
+
+    /// A project id was referenced that does not exist in the store.
+    #[error("project not found: {0}")]
+    ProjectNotFound(String),
+
+    /// A project was created with an id that is already taken.
+    #[error("project already exists: {0}")]
+    ProjectExists(String),
 }
