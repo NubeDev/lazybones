@@ -13,6 +13,9 @@ lazybones-store = { workspace = true }
 lazybones-auth = { workspace = true }
 lazybones-engine = { workspace = true }
 lazybones-gh = { workspace = true }
+# Pure markdown→Typst (PDF) + markdown→HTML rendering for the document export
+# route. Assembly (resolving references + fetching image bytes) stays in the API.
+lazybones-render = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

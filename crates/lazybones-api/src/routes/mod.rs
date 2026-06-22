@@ -9,12 +9,18 @@ mod agent_catalog;
 mod agent_chat;
 mod agent_test;
 mod agents;
+mod assets;
 mod block;
+mod branding;
 mod cancel;
 mod chat;
 mod claim;
 mod create;
 mod delete;
+mod document_gh;
+mod document_render;
+mod document_sources;
+mod documents;
 mod done;
 mod engine;
 mod files;
@@ -142,6 +148,70 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/templates/:id/attachments/:thing_kind/:thing_id",
             delete(template_attachments::detach_from_template),
+        )
+        // Documents: authored, branded markdown documents (+ reusable reference
+        // pages). Reads open; mutations + GitHub publishing guarded by `Document`.
+        .route(
+            "/documents",
+            get(documents::list_documents).post(documents::create_document),
+        )
+        .route(
+            "/documents/:id",
+            get(documents::get_document)
+                .put(documents::update_document)
+                .delete(documents::delete_document),
+        )
+        // Reusable reference pages merged into a document's rendered output, over
+        // the generic attachment seam (`thing_kind="reference"`).
+        .route(
+            "/documents/:id/references",
+            get(documents::list_references).post(documents::add_reference),
+        )
+        .route(
+            "/documents/:id/references/:ref_id",
+            delete(documents::remove_reference),
+        )
+        // Render: assembled HTML preview + PDF export.
+        .route("/documents/:id/render", get(document_render::render_document))
+        .route("/documents/:id/export.pdf", get(document_render::export_pdf))
+        // Sources: a document's uploads / context material (links + files), behind
+        // the doc and never rendered. Files ride the blob store + sha256 dedup.
+        .route(
+            "/documents/:id/sources",
+            get(document_sources::list_sources).post(document_sources::add_source),
+        )
+        .route(
+            "/documents/:id/sources/:sid",
+            delete(document_sources::remove_source),
+        )
+        // GitHub publishing: set a repo target, then branch → commit → PR/issue
+        // (or one-call publish). All guarded by `Document`.
+        .route("/documents/:id/repo", put(document_gh::set_repo))
+        .route("/documents/:id/gh/branch", post(document_gh::create_branch))
+        .route("/documents/:id/gh/commit", post(document_gh::commit))
+        .route("/documents/:id/gh/pr", post(document_gh::create_pr))
+        .route("/documents/:id/gh/issue", post(document_gh::create_issue))
+        .route("/documents/:id/publish", post(document_gh::publish))
+        // Assets: the content-addressed file server (logos, images). Reads open
+        // (the logo/image source); mutations guarded by `Document`.
+        .route(
+            "/assets",
+            get(assets::list_assets).post(assets::create_asset),
+        )
+        .route(
+            "/assets/:id",
+            get(assets::get_asset).delete(assets::delete_asset),
+        )
+        // Branding: the standalone, app-wide brand-profile catalogue.
+        .route(
+            "/branding",
+            get(branding::list_branding).post(branding::create_branding),
+        )
+        .route(
+            "/branding/:id",
+            get(branding::get_branding)
+                .put(branding::update_branding)
+                .delete(branding::delete_branding),
         )
         // Skills: reusable blocks of agent instructions (global, stateless).
         .route(

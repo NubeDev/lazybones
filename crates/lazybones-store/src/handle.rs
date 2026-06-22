@@ -20,7 +20,18 @@ use crate::agent_chat::{
     append_agent_message, append_confirm_request, create_agent_conversation,
     get_agent_conversation, list_agent_conversations,
 };
+use crate::asset::{Asset, create_asset, delete_asset, get_asset, list_assets};
 use crate::attachment::{Attachment, attach, detach, list_attachments};
+use crate::branding::{
+    Branding, create_branding, delete_branding, get_branding, list_branding, seed_default_branding,
+    update_branding,
+};
+use crate::document::{
+    Document, create_document, delete_document, get_document, list_documents, update_document,
+};
+use crate::source::{
+    Source, create_source, delete_source, get_source, list_sources, update_source,
+};
 use crate::management_agent::{
     ManagementAgentConfig, ManagementAgentScope, delete_management_agent_scoped,
     get_management_agent, get_management_agent_resolved, get_management_agent_scoped,
@@ -701,6 +712,177 @@ impl StoreHandle {
     /// parsed or a write fails.
     pub async fn seed_default_skills(&self, now: &str) -> Result<usize> {
         seed_default_skills(&self.db, now).await
+    }
+
+    /// Create a brand profile, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_branding(&self, branding: &Branding) -> Result<Branding> {
+        create_branding(&self.db, branding).await
+    }
+
+    /// Read a single brand profile by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_branding(&self, id: &str) -> Result<Option<Branding>> {
+        get_branding(&self.db, id).await
+    }
+
+    /// List brand profiles, optionally narrowed by project scope.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_branding(&self, project: Option<&str>) -> Result<Vec<Branding>> {
+        list_branding(&self.db, project).await
+    }
+
+    /// Edit an existing brand profile, preserving its `created_at`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no brand with that id exists
+    /// or the write fails.
+    pub async fn update_branding(&self, branding: &Branding) -> Result<Branding> {
+        update_branding(&self.db, branding).await
+    }
+
+    /// Delete a brand profile by id. Returns whether one existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_branding(&self, id: &str) -> Result<bool> {
+        delete_branding(&self.db, id).await
+    }
+
+    /// Seed the neutral default brand, never clobbering existing ids. Returns how
+    /// many brands were newly created.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if a write fails.
+    pub async fn seed_default_branding(&self, now: &str) -> Result<usize> {
+        seed_default_branding(&self.db, now).await
+    }
+
+    /// Create an asset's metadata, content-addressed: identical bytes (same
+    /// sha256 + project) dedup to the existing asset rather than creating a copy.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read or write fails.
+    pub async fn create_asset(&self, asset: &Asset) -> Result<Asset> {
+        create_asset(&self.db, asset).await
+    }
+
+    /// Read a single asset's metadata by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_asset(&self, id: &str) -> Result<Option<Asset>> {
+        get_asset(&self.db, id).await
+    }
+
+    /// List asset metadata, optionally narrowed by project scope.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_assets(&self, project: Option<&str>) -> Result<Vec<Asset>> {
+        list_assets(&self.db, project).await
+    }
+
+    /// Delete an asset's metadata row by id. Returns whether one existed. The
+    /// backing blob bytes are deleted separately (they may be shared).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_asset(&self, id: &str) -> Result<bool> {
+        delete_asset(&self.db, id).await
+    }
+
+    /// Create a document, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_document(&self, document: &Document) -> Result<Document> {
+        create_document(&self.db, document).await
+    }
+
+    /// Read a single document by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_document(&self, id: &str) -> Result<Option<Document>> {
+        get_document(&self.db, id).await
+    }
+
+    /// List documents, optionally narrowed by project scope.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_documents(&self, project: Option<&str>) -> Result<Vec<Document>> {
+        list_documents(&self.db, project).await
+    }
+
+    /// Edit an existing document, preserving its `created_at`. Carries the full
+    /// [`DocRepo`](crate::DocRepo) target + GitHub linkage.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no document with that id
+    /// exists or the write fails.
+    pub async fn update_document(&self, document: &Document) -> Result<Document> {
+        update_document(&self.db, document).await
+    }
+
+    /// Delete a document by id. Returns whether one existed. Does not cascade to
+    /// its attached references or sources (they carry no hard FK).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_document(&self, id: &str) -> Result<bool> {
+        delete_document(&self.db, id).await
+    }
+
+    /// Create a source (a document's upload / context item).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn create_source(&self, source: &Source) -> Result<Source> {
+        create_source(&self.db, source).await
+    }
+
+    /// Read a single source by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_source(&self, id: &str) -> Result<Option<Source>> {
+        get_source(&self.db, id).await
+    }
+
+    /// List the sources behind a document, newest first.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_sources(&self, document: &str) -> Result<Vec<Source>> {
+        list_sources(&self.db, document).await
+    }
+
+    /// Edit an existing source (e.g. back-fill extracted text), preserving its
+    /// `created_at`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no source with that id
+    /// exists or the write fails.
+    pub async fn update_source(&self, source: &Source) -> Result<Source> {
+        update_source(&self.db, source).await
+    }
+
+    /// Delete a source by id. Returns whether one existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_source(&self, id: &str) -> Result<bool> {
+        delete_source(&self.db, id).await
     }
 
     /// Attach a polymorphic thing `(thing_kind, thing_id)` to an owner

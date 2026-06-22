@@ -41,6 +41,11 @@ pub enum Capability {
     Secret,
     /// Create, edit, or delete task records directly (author the queue in the DB; loop only).
     Author,
+    /// Author documents, assets, branding, and publish a document to GitHub
+    /// (branch/commit/PR/issue). Distinct from [`Author`](Self::Author) (which
+    /// means "edit task records"): a document/asset/branding mutation — and
+    /// publishing a document — is a *document* action, not a queue action.
+    Document,
 }
 
 impl Capability {
@@ -57,6 +62,7 @@ impl Capability {
             Capability::Read,
             Capability::Secret,
             Capability::Author,
+            Capability::Document,
         ]
     }
 
@@ -65,9 +71,10 @@ impl Capability {
     /// surface an operator uses, so its grant is a strict subset of the loop's:
     ///
     /// - `ReadOnly`        → `[Read]`: explain state, never mutate.
-    /// - `Author`          → `[Read, Author]`: + create/edit workflows, tasks,
-    ///   templates, skills, attachments.
-    /// - `AuthorAndManage` → `[Read, Author, Block]`: + *propose* lifecycle
+    /// - `Author`          → `[Read, Author, Document]`: + create/edit workflows,
+    ///   tasks, templates, skills, attachments, and documents/assets/branding (incl.
+    ///   publishing a document to GitHub).
+    /// - `AuthorAndManage` → `[Read, Author, Document, Block]`: + *propose* lifecycle
     ///   actions. The `Block` grant here is a convenience for reading blocker
     ///   state, **not** a licence to silently start/stop/retry: gated actions are
     ///   emitted as confirm requests and issued by the UI under the operator's
@@ -80,10 +87,15 @@ impl Capability {
     pub fn management_grant(profile: ManagementProfile) -> &'static [Capability] {
         match profile {
             ManagementProfile::ReadOnly => &[Capability::Read],
-            ManagementProfile::Author => &[Capability::Read, Capability::Author],
-            ManagementProfile::AuthorAndManage => {
-                &[Capability::Read, Capability::Author, Capability::Block]
+            ManagementProfile::Author => {
+                &[Capability::Read, Capability::Author, Capability::Document]
             }
+            ManagementProfile::AuthorAndManage => &[
+                Capability::Read,
+                Capability::Author,
+                Capability::Document,
+                Capability::Block,
+            ],
         }
     }
 
@@ -115,6 +127,8 @@ mod tests {
             &[Capability::Read]
         );
         assert!(has(ManagementProfile::Author, Capability::Author));
+        assert!(has(ManagementProfile::Author, Capability::Document));
+        assert!(has(ManagementProfile::AuthorAndManage, Capability::Document));
         assert!(has(ManagementProfile::AuthorAndManage, Capability::Block));
     }
 

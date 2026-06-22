@@ -1,0 +1,22 @@
+[package]
+name = "lazybones-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Exact-pinned via the workspace table — see the root Cargo.toml for why Phase 3a
+# locks the Typst version set.
+typst = { workspace = true }
+typst-pdf = { workspace = true }
+typst-assets = { workspace = true }
+typst-layout = { workspace = true }
+comemo = { workspace = true }
+# Markdown → Typst markup (the main Phase 3b risk) and markdown → HTML preview
+# (the `html` feature provides the preview writer).
+pulldown-cmark = { workspace = true, features = ["html"] }
+thiserror = { workspace = true }

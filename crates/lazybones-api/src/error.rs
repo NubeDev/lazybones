@@ -8,7 +8,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use lazybones_auth::AuthError;
-use lazybones_store::StoreError;
+use lazybones_store::{AssetError, StoreError};
 use serde_json::json;
 
 /// An error surfaced from a route handler.
@@ -35,6 +35,16 @@ pub enum ApiError {
     /// us, in a tool we shell out to.
     #[error(transparent)]
     Gh(#[from] lazybones_gh::GhError),
+
+    /// A blob-store (asset bytes) failure: a missing blob is `404`, an IO error
+    /// is `500` (mapped below), mirroring the `StoreError` story.
+    #[error(transparent)]
+    Asset(#[from] AssetError),
+
+    /// A document failed to render to PDF (Typst compile/export error). Ours to
+    /// own — surfaced as `500`.
+    #[error(transparent)]
+    Render(#[from] lazybones_render::RenderError),
 
     /// The request is well-formed but semantically rejected (e.g. trying to
     /// remove the main worktree). `400`.
@@ -92,7 +102,11 @@ impl IntoResponse for ApiError {
                 | StoreError::TemplateNotFound(_)
                 | StoreError::SkillNotFound(_)
                 | StoreError::RunNotFound(_)
-                | StoreError::AgentNotFound(_),
+                | StoreError::AgentNotFound(_)
+                | StoreError::DocumentNotFound(_)
+                | StoreError::AssetNotFound(_)
+                | StoreError::BrandingNotFound(_)
+                | StoreError::SourceNotFound(_),
             ) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Store(StoreError::IllegalTransition { .. }) => {
                 (StatusCode::CONFLICT, self.to_string())
@@ -102,10 +116,17 @@ impl IntoResponse for ApiError {
                 | StoreError::TemplateExists(_)
                 | StoreError::SkillExists(_)
                 | StoreError::RunExists(_)
-                | StoreError::AgentExists(_),
+                | StoreError::AgentExists(_)
+                | StoreError::DocumentExists(_)
+                | StoreError::BrandingExists(_),
             ) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
+            // Asset bytes: a missing blob is the caller's fault (`404`); an IO
+            // failure is ours (`500`).
+            ApiError::Asset(AssetError::NotFound(_)) => (StatusCode::NOT_FOUND, self.to_string()),
+            ApiError::Asset(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            ApiError::Render(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),

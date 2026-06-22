@@ -85,4 +85,28 @@ pub enum StoreError {
     /// Sealing or opening a secret failed (bad master key, corrupt blob, …).
     #[error("secret error: {0}")]
     Secret(String),
+
+    /// A document id was referenced that does not exist in the store.
+    #[error("document not found: {0}")]
+    DocumentNotFound(String),
+
+    /// A document was created with an id that is already taken.
+    #[error("document already exists: {0}")]
+    DocumentExists(String),
+
+    /// An asset id was referenced that does not exist in the store.
+    #[error("asset not found: {0}")]
+    AssetNotFound(String),
+
+    /// A branding profile id was referenced that does not exist in the store.
+    #[error("branding not found: {0}")]
+    BrandingNotFound(String),
+
+    /// A branding profile was created with an id that is already taken.
+    #[error("branding already exists: {0}")]
+    BrandingExists(String),
+
+    /// A source id was referenced that does not exist in the store.
+    #[error("source not found: {0}")]
+    SourceNotFound(String),
 }
