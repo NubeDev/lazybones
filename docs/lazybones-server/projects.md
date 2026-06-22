@@ -137,13 +137,17 @@ lazybones/{org}/{team}/{project}/channel/{kind}/{chanId}/msg/*     # project-sco
    manager/member on the `member_of` edge.
 4. **One role-gated UI** reusing `ui/`, not a second frontend.
 
-## Open questions
+## Open questions — RESOLVED
 
-- Does a **project target one repo or many**? (Leans many — a project is an
-  org/ownership noun; the repo is a technical target carried as project config or a
-  `repo:*` tag.) Distinct from the existing repo/worktree concept.
-- Can a **workflow be assigned to more than one member** (co-run), or strictly one
-  edge? (Leans one, to keep `scoped_to` single-cardinality; collaboration happens
-  at the project/channel level, not by multi-homing a workflow.)
-- **Project-level roles** (a per-project lead) — needed, or is team-manager
-  granularity enough for v1? (Leans team-level for v1.)
+All three are closed in [projects-decisions.md](projects-decisions.md) (phase-1
+decision record); summarized here, see that file for the rationale and the schema.
+
+- **Project targets one repo or many** → **many.** A project is an org/ownership
+  noun; repos ride as project config or a `repo:*` tag, with no project→repo edge.
+  Distinct from the existing repo/worktree concept.
+- **Workflow co-run vs single edge** → **single edge.** `scoped_to` stays
+  single-cardinality (D2); collaboration happens at the project/channel level, not by
+  multi-homing a workflow. Moving work between edges is the D3 reassignment handoff.
+- **Project-level roles** → **team-level for v1.** Admin is a global flag on `user`;
+  manager/member live on `member_of.role`. A per-project lead can be added later
+  without disturbing the team graph.

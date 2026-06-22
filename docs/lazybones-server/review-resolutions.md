@@ -107,14 +107,20 @@ The `(task, hcom_id)` dedup is hcom-specific; team chat dedups on its own ULID.
   `scoped_to` is cloud-written. So no field is written by both planes.
 - **Project** stays, framed as *the containment root `under`/authz traversal
   needs* — not a domain noun overlapping Run/template. Single-cardinality
-  `scoped_to` (no co-run, single repo) is an explicit **routing-model open
-  question**, not a minor detail.
+  `scoped_to` (no co-run, single repo) was an explicit **routing-model open
+  question** — now **resolved** in [projects-decisions.md](projects-decisions.md):
+  single edge per workflow (no co-run), and a project spans **many** repos (carried
+  as config / `repo:*` tag, not a single-repo binding).
 
 ## Phase-1 blockers (must be closed before code)
 
 1. D1 transport decision ratified (remote SurrealDB + outbox; no Zenoh).
-2. D2 `scoped_to` → edge identity (decides the routing key shape).
-3. D4 id namespacing (decides record-id schema, not just wire).
+2. D2 `scoped_to` → edge identity (decides the routing key shape). **Closed** —
+   schema pinned in [projects-decisions.md](projects-decisions.md) §2 (`scoped_to`
+   relation, single-cardinality guard).
+3. D4 id namespacing (decides record-id schema, not just wire). **Closed** —
+   `{org}/{edge}` prefix rule and scope pinned in
+   [projects-decisions.md](projects-decisions.md) §3.
 4. D3 reassignment handshake defined before any cancel/reassign path.
 5. D5 authz enforcement locus (B, or pooled remote sessions).
 6. D7 retention policy sketched (can land in phase 2, but named now).
