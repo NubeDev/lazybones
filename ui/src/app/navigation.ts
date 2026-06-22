@@ -6,6 +6,8 @@ import {
   FileText,
   Sparkles,
   Workflow,
+  BookOpen,
+  Palette,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -17,6 +19,8 @@ export type View =
   | "workflows"
   | "tasks"
   | "runs"
+  | "documents"
+  | "branding"
   | "settings";
 
 export interface NavItem {
@@ -31,6 +35,8 @@ export const NAV_ITEMS: NavItem[] = [
   { view: "skills", label: "Skills", icon: Sparkles },
   { view: "workflows", label: "Workflows", icon: Workflow },
   { view: "tasks", label: "Tasks", icon: ListTodo },
+  { view: "documents", label: "Documents", icon: BookOpen },
+  { view: "branding", label: "Branding", icon: Palette },
   { view: "runs", label: "Run history", icon: History },
   { view: "settings", label: "Settings", icon: Settings },
 ];
