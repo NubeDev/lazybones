@@ -38,6 +38,14 @@ case "$1" in
     echo '{"id":1,"ts":"2026-01-01T00:00:00Z","type":"message","instance":"testagent","data":{"text":"DONE","thread":"x"}}'
     ;;
   *)
+    # A launch: mimic a real agent editing its worktree so the engine's auto-commit
+    # has work to commit (a no-op task is now correctly blocked). Parse `--dir`.
+    dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--dir" ]; then dir="$2"; break; fi
+      shift
+    done
+    if [ -n "$dir" ]; then echo "agent work $$" >> "$dir/agent-work.txt"; fi
     echo "Names: testagent"
     ;;
 esac
@@ -55,15 +63,28 @@ exit 0
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// A git repo with one commit and a local bare remote `origin` (so push works).
 /// Returns the work repo path.
 fn init_repo_with_remote(root: &Path, name: &str) -> std::path::PathBuf {
     let bare = root.join(format!("{name}.git"));
-    Command::new("git").args(["init", "--bare"]).arg(&bare).output().unwrap();
+    Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare)
+        .output()
+        .unwrap();
 
     let repo = root.join(name);
     std::fs::create_dir_all(&repo).unwrap();
@@ -126,7 +147,11 @@ fn loop_post(path: &str, body: Value) -> Request<Body> {
 }
 
 fn get(path: &str) -> Request<Body> {
-    Request::builder().method("GET").uri(path).body(Body::empty()).unwrap()
+    Request::builder()
+        .method("GET")
+        .uri(path)
+        .body(Body::empty())
+        .unwrap()
 }
 
 async fn status_of(store: &StoreHandle, id: &str) -> Status {
@@ -154,7 +179,12 @@ async fn three_workflows_run_concurrently_with_reuse() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     // 1. Two reusable templates.
     for (id, title) in [("code-review", "Code review"), ("open-pr", "Open a PR")] {
@@ -171,7 +201,10 @@ async fn three_workflows_run_concurrently_with_reuse() {
     // Duplicate template id → 409.
     let (s, _) = send(
         &app,
-        loop_post("/templates", json!({ "id": "open-pr", "title": "dupe", "spec_template": "x" })),
+        loop_post(
+            "/templates",
+            json!({ "id": "open-pr", "title": "dupe", "spec_template": "x" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::CONFLICT);
@@ -187,9 +220,18 @@ async fn three_workflows_run_concurrently_with_reuse() {
             }),
         )
     };
-    assert_eq!(send(&app, mk_workflow("wf-1", &repo_abc, "new")).await.0, StatusCode::OK);
-    assert_eq!(send(&app, mk_workflow("wf-2", &repo_abc, "reuse")).await.0, StatusCode::OK);
-    assert_eq!(send(&app, mk_workflow("wf-3", &repo_xyz, "new")).await.0, StatusCode::OK);
+    assert_eq!(
+        send(&app, mk_workflow("wf-1", &repo_abc, "new")).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(&app, mk_workflow("wf-2", &repo_abc, "reuse")).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(&app, mk_workflow("wf-3", &repo_xyz, "new")).await.0,
+        StatusCode::OK
+    );
 
     // 3. Tasks. wf-1 has a from-template task whose tree wf-2 will reuse. It
     //    overrides the workspace `new` mode to `branch` so its recorded worktree
@@ -246,27 +288,63 @@ async fn three_workflows_run_concurrently_with_reuse() {
 
     // 4. Start wf-1 and wf-3 first; drive ticks so wf-1's `wf1-api` claims and
     //    records its worktree (which wf-2's reuse task depends on existing).
-    assert_eq!(send(&app, loop_post("/workflows/wf-1/start", json!(null))).await.0, StatusCode::OK);
-    assert_eq!(send(&app, loop_post("/workflows/wf-3/start", json!(null))).await.0, StatusCode::OK);
+    assert_eq!(
+        send(&app, loop_post("/workflows/wf-1/start", json!(null)))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(&app, loop_post("/workflows/wf-3/start", json!(null)))
+            .await
+            .0,
+        StatusCode::OK
+    );
 
     engine.tick().await;
-    assert!(wait_for(&store, "wf1-api", Status::Done).await, "wf1-api should finish");
-    assert!(wait_for(&store, "wf3-build", Status::Done).await, "wf3-build should finish");
+    assert!(
+        wait_for(&store, "wf1-api", Status::Done).await,
+        "wf1-api should finish"
+    );
+    assert!(
+        wait_for(&store, "wf3-build", Status::Done).await,
+        "wf3-build should finish"
+    );
 
     // wf-1's task recorded a worktree under repo abc — the tree wf-2 will reuse.
-    let wf1_worktree = store.get_task("wf1-api").await.unwrap().unwrap().worktree.unwrap();
+    let wf1_worktree = store
+        .get_task("wf1-api")
+        .await
+        .unwrap()
+        .unwrap()
+        .worktree
+        .unwrap();
     assert!(
         wf1_worktree.contains("abc") && Path::new(&wf1_worktree).is_dir(),
         "wf1-api worktree is a real dir under abc: {wf1_worktree}"
     );
 
     // 5. Now start wf-2; its reuse task resolves wf-1's worktree on claim.
-    assert_eq!(send(&app, loop_post("/workflows/wf-2/start", json!(null))).await.0, StatusCode::OK);
+    assert_eq!(
+        send(&app, loop_post("/workflows/wf-2/start", json!(null)))
+            .await
+            .0,
+        StatusCode::OK
+    );
     engine.tick().await;
-    assert!(wait_for(&store, "wf2-ui", Status::Done).await, "wf2-ui should finish");
+    assert!(
+        wait_for(&store, "wf2-ui", Status::Done).await,
+        "wf2-ui should finish"
+    );
 
     // The reuse task resolved wf-1's worktree path exactly.
-    let wf2_worktree = store.get_task("wf2-ui").await.unwrap().unwrap().worktree.unwrap();
+    let wf2_worktree = store
+        .get_task("wf2-ui")
+        .await
+        .unwrap()
+        .unwrap()
+        .worktree
+        .unwrap();
     assert_eq!(wf2_worktree, wf1_worktree, "wf-2 reused wf-1's worktree");
 
     // 6. All three workflows are `done`, proving concurrent progress (none
@@ -292,7 +370,12 @@ async fn reuse_from_missing_target_blocks_with_reason() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     // One workflow, reuse-by-default, with a single task pointing `reuse_from` at
     // a task id that does not exist anywhere — so it can never have a worktree.
@@ -327,7 +410,9 @@ async fn reuse_from_missing_target_blocks_with_reason() {
 
     let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(&repo), &hcom_bin);
     assert_eq!(
-        send(&app, loop_post("/workflows/wf-r/start", json!(null))).await.0,
+        send(&app, loop_post("/workflows/wf-r/start", json!(null)))
+            .await
+            .0,
         StatusCode::OK
     );
 
@@ -348,7 +433,10 @@ async fn reuse_from_missing_target_blocks_with_reason() {
 
     // The workflow surfaces as needs-attention (a blocked task), not done.
     let (_, detail) = send(&app, get("/workflows/wf-r")).await;
-    assert_eq!(detail["state"], "needs-attention", "blocked task → needs-attention");
+    assert_eq!(
+        detail["state"], "needs-attention",
+        "blocked task → needs-attention"
+    );
 }
 
 /// `GET /workflows/:id/tasks` is scoped to the workflow's `run_id`: it returns
@@ -359,7 +447,12 @@ async fn workflow_tasks_endpoint_is_scoped_to_its_run_id() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let mk_workflow = |id: &str| {
         loop_post(
@@ -384,7 +477,10 @@ async fn workflow_tasks_endpoint_is_scoped_to_its_run_id() {
     }
     let (s, _) = send(
         &app,
-        loop_post("/tasks", json!({ "id": "loose", "title": "loose", "spec": "x" })),
+        loop_post(
+            "/tasks",
+            json!({ "id": "loose", "title": "loose", "spec": "x" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "create standalone task");
@@ -406,8 +502,12 @@ async fn workflow_tasks_endpoint_is_scoped_to_its_run_id() {
 
     // wf-b sees only b1.
     let (_, body) = send(&app, get("/workflows/wf-b/tasks")).await;
-    let ids: Vec<&str> =
-        body.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, vec!["b1"], "wf-b sees only its own task");
 
     // Unknown workflow → 404, not an empty list masquerading as "no tasks".
@@ -423,11 +523,19 @@ async fn retry_revives_a_blocked_task_and_rejects_a_done_one() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let (s, _) = send(
         &app,
-        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+        loop_post(
+            "/workflows",
+            json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -436,13 +544,20 @@ async fn retry_revives_a_blocked_task_and_rejects_a_done_one() {
     for tid in ["stuck", "finished"] {
         let (s, _) = send(
             &app,
-            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+            loop_post(
+                "/workflows/wf/tasks",
+                json!({ "id": tid, "title": tid, "spec": "x" }),
+            ),
         )
         .await;
         assert_eq!(s, StatusCode::OK);
     }
     // Block `stuck`, and drive `finished` to done directly in the store.
-    let (s, _) = send(&app, loop_post("/tasks/stuck/block", json!({ "reason": "boom" }))).await;
+    let (s, _) = send(
+        &app,
+        loop_post("/tasks/stuck/block", json!({ "reason": "boom" })),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(status_of(&store, "stuck").await, Status::Blocked);
     drive_to_done(&store, "finished").await;
@@ -473,17 +588,28 @@ async fn guided_retry_revives_in_place_with_guidance() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let (s, _) = send(
         &app,
-        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+        loop_post(
+            "/workflows",
+            json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     let (s, _) = send(
         &app,
-        loop_post("/workflows/wf/tasks", json!({ "id": "stuck", "title": "stuck", "spec": "x" })),
+        loop_post(
+            "/workflows/wf/tasks",
+            json!({ "id": "stuck", "title": "stuck", "spec": "x" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -491,7 +617,11 @@ async fn guided_retry_revives_in_place_with_guidance() {
     // Drive it into `blocked` carrying a worktree + a reason (the gate-red shape).
     drive_to_blocked(&store, "stuck", "gate failed: 3 tests red").await;
     let before = store.get_task("stuck").await.unwrap().unwrap();
-    assert_eq!(before.worktree.as_deref(), Some("/wt"), "has a worktree to keep");
+    assert_eq!(
+        before.worktree.as_deref(),
+        Some("/wt"),
+        "has a worktree to keep"
+    );
 
     // Guided retry with the long-term strategy.
     let (s, body) = send(
@@ -511,7 +641,10 @@ async fn guided_retry_revives_in_place_with_guidance() {
     assert_eq!(msgs.len(), 1, "one guidance message: {chat}");
     assert_eq!(msgs[0]["role"], "user");
     let text = msgs[0]["text"].as_str().unwrap();
-    assert!(text.contains("gate failed: 3 tests red"), "names the reason: {text}");
+    assert!(
+        text.contains("gate failed: 3 tests red"),
+        "names the reason: {text}"
+    );
     assert!(text.contains("root cause"), "long-term guidance: {text}");
 }
 
@@ -521,7 +654,12 @@ async fn auto_retry_policy_is_settable_and_clearable() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let (s, _) = send(
         &app,
@@ -536,7 +674,12 @@ async fn auto_retry_policy_is_settable_and_clearable() {
     assert_eq!(t.max_retries, 2);
 
     // Turn it on (quick, cap 3).
-    let (s, body) = loop_put(&app, "/tasks/t/auto-retry", json!({ "strategy": "quick", "max_retries": 3 })).await;
+    let (s, body) = loop_put(
+        &app,
+        "/tasks/t/auto-retry",
+        json!({ "strategy": "quick", "max_retries": 3 }),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK, "{body}");
     assert_eq!(body["auto_retry"], "quick");
     assert_eq!(body["max_retries"], 3);
@@ -548,7 +691,12 @@ async fn auto_retry_policy_is_settable_and_clearable() {
     assert_eq!(body["max_retries"], 3, "cap left unchanged when omitted");
 
     // Unknown task → 404.
-    let (s, _) = loop_put(&app, "/tasks/ghost/auto-retry", json!({ "strategy": "quick" })).await;
+    let (s, _) = loop_put(
+        &app,
+        "/tasks/ghost/auto-retry",
+        json!({ "strategy": "quick" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
@@ -560,11 +708,19 @@ async fn resume_resets_only_blocked_tasks() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let (s, _) = send(
         &app,
-        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+        loop_post(
+            "/workflows",
+            json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -573,13 +729,20 @@ async fn resume_resets_only_blocked_tasks() {
     for tid in ["blocked-1", "blocked-2", "done-1", "pending-1"] {
         let (s, _) = send(
             &app,
-            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+            loop_post(
+                "/workflows/wf/tasks",
+                json!({ "id": tid, "title": tid, "spec": "x" }),
+            ),
         )
         .await;
         assert_eq!(s, StatusCode::OK);
     }
     for tid in ["blocked-1", "blocked-2"] {
-        let (s, _) = send(&app, loop_post(&format!("/tasks/{tid}/block"), json!({ "reason": "boom" }))).await;
+        let (s, _) = send(
+            &app,
+            loop_post(&format!("/tasks/{tid}/block"), json!({ "reason": "boom" })),
+        )
+        .await;
         assert_eq!(s, StatusCode::OK);
     }
     drive_to_done(&store, "done-1").await;
@@ -592,10 +755,17 @@ async fn resume_resets_only_blocked_tasks() {
     assert_eq!(status_of(&store, "blocked-1").await, Status::Pending);
     assert_eq!(status_of(&store, "blocked-2").await, Status::Pending);
     // Done and pending tasks are left exactly as they were.
-    assert_eq!(status_of(&store, "done-1").await, Status::Done, "done untouched");
+    assert_eq!(
+        status_of(&store, "done-1").await,
+        Status::Done,
+        "done untouched"
+    );
     assert_eq!(status_of(&store, "pending-1").await, Status::Pending);
     // With the blocked tasks reset, the workflow is no longer needs-attention.
-    assert_ne!(body["state"], "needs-attention", "no blocked tasks remain: {body}");
+    assert_ne!(
+        body["state"], "needs-attention",
+        "no blocked tasks remain: {body}"
+    );
 
     // Unknown workflow → 404.
     let (s, _) = send(&app, loop_post("/workflows/ghost/resume", json!(null))).await;
@@ -614,18 +784,29 @@ async fn stop_pauses_and_blocks_revive_until_resume() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let (s, _) = send(
         &app,
-        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+        loop_post(
+            "/workflows",
+            json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     for tid in ["running-1", "blocked-1"] {
         let (s, _) = send(
             &app,
-            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+            loop_post(
+                "/workflows/wf/tasks",
+                json!({ "id": tid, "title": tid, "spec": "x" }),
+            ),
         )
         .await;
         assert_eq!(s, StatusCode::OK);
@@ -639,31 +820,68 @@ async fn stop_pauses_and_blocks_revive_until_resume() {
     assert_eq!(s, StatusCode::OK, "stop → 200: {body}");
     assert_eq!(body["state"], "stopped", "a stopped run derives `stopped`");
     // The running task was reclaimed to ready (work kept), NOT blocked or reset.
-    assert_eq!(status_of(&store, "running-1").await, Status::Ready, "running reclaimed to ready");
+    assert_eq!(
+        status_of(&store, "running-1").await,
+        Status::Ready,
+        "running reclaimed to ready"
+    );
     let reclaimed = store.get_task("running-1").await.unwrap().unwrap();
-    assert_eq!(reclaimed.worktree.as_deref(), Some("/wt"), "worktree kept on stop");
+    assert_eq!(
+        reclaimed.worktree.as_deref(),
+        Some("/wt"),
+        "worktree kept on stop"
+    );
     // The blocked task is left blocked.
     assert_eq!(status_of(&store, "blocked-1").await, Status::Blocked);
 
     // While stopped, the revive verbs (retry/chat) refuse with 409.
     let (s, _) = send(&app, loop_post("/tasks/blocked-1/retry", json!(null))).await;
     assert_eq!(s, StatusCode::CONFLICT, "retry refused while stopped");
-    let (s, _) = send(&app, loop_post("/tasks/blocked-1/retry", json!({ "strategy": "quick" }))).await;
-    assert_eq!(s, StatusCode::CONFLICT, "guided retry refused while stopped");
+    let (s, _) = send(
+        &app,
+        loop_post("/tasks/blocked-1/retry", json!({ "strategy": "quick" })),
+    )
+    .await;
+    assert_eq!(
+        s,
+        StatusCode::CONFLICT,
+        "guided retry refused while stopped"
+    );
     // Setting the auto-retry policy is durable config, not a revive — it is
     // allowed while stopped and takes effect on resume.
-    let (s, _) = loop_put(&app, "/tasks/blocked-1/auto-retry", json!({ "strategy": "quick" })).await;
-    assert_eq!(s, StatusCode::OK, "auto-retry policy can be set while stopped");
-    let (s, _) = send(&app, loop_post("/tasks/blocked-1/chat", json!({ "text": "fix it" }))).await;
+    let (s, _) = loop_put(
+        &app,
+        "/tasks/blocked-1/auto-retry",
+        json!({ "strategy": "quick" }),
+    )
+    .await;
+    assert_eq!(
+        s,
+        StatusCode::OK,
+        "auto-retry policy can be set while stopped"
+    );
+    let (s, _) = send(
+        &app,
+        loop_post("/tasks/blocked-1/chat", json!({ "text": "fix it" })),
+    )
+    .await;
     assert_eq!(s, StatusCode::CONFLICT, "chat-revive refused while stopped");
     // The blocked task did not move — the guard truly blocked the revive.
-    assert_eq!(status_of(&store, "blocked-1").await, Status::Blocked, "no revive happened");
+    assert_eq!(
+        status_of(&store, "blocked-1").await,
+        Status::Blocked,
+        "no revive happened"
+    );
 
     // Resume → lifecycle active again; resume also resets the blocked task.
     let (s, body) = send(&app, loop_post("/workflows/wf/resume", json!(null))).await;
     assert_eq!(s, StatusCode::OK, "resume → 200: {body}");
     assert_ne!(body["state"], "stopped", "resume un-pauses the run: {body}");
-    assert_eq!(status_of(&store, "blocked-1").await, Status::Pending, "resume reset the blocked task");
+    assert_eq!(
+        status_of(&store, "blocked-1").await,
+        Status::Pending,
+        "resume reset the blocked task"
+    );
 
     // With the run active, revive verbs work again: block a task, then retry it.
     // (`blocked-1` was reset to pending by resume, so it can be re-driven.)
@@ -681,18 +899,29 @@ async fn stop_reset_pauses_and_resets_unfinished() {
     let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
         .await
         .unwrap();
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let (s, _) = send(
         &app,
-        loop_post("/workflows", json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } })),
+        loop_post(
+            "/workflows",
+            json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     for tid in ["running-1", "blocked-1", "done-1"] {
         let (s, _) = send(
             &app,
-            loop_post("/workflows/wf/tasks", json!({ "id": tid, "title": tid, "spec": "x" })),
+            loop_post(
+                "/workflows/wf/tasks",
+                json!({ "id": tid, "title": tid, "spec": "x" }),
+            ),
         )
         .await;
         assert_eq!(s, StatusCode::OK);
@@ -703,10 +932,21 @@ async fn stop_reset_pauses_and_resets_unfinished() {
 
     let (s, body) = send(&app, loop_post("/workflows/wf/stop-reset", json!(null))).await;
     assert_eq!(s, StatusCode::OK, "stop-reset → 200: {body}");
-    assert_eq!(body["state"], "stopped", "stop-reset leaves the run paused, not terminal");
+    assert_eq!(
+        body["state"], "stopped",
+        "stop-reset leaves the run paused, not terminal"
+    );
     // Unfinished tasks reset to pending; the done task is kept.
-    assert_eq!(status_of(&store, "running-1").await, Status::Pending, "running reset");
-    assert_eq!(status_of(&store, "blocked-1").await, Status::Pending, "blocked reset");
+    assert_eq!(
+        status_of(&store, "running-1").await,
+        Status::Pending,
+        "running reset"
+    );
+    assert_eq!(
+        status_of(&store, "blocked-1").await,
+        Status::Pending,
+        "blocked reset"
+    );
     assert_eq!(status_of(&store, "done-1").await, Status::Done, "done kept");
     // The reset cleared the in-flight task's worktree (a clean reset, not reclaim).
     assert_eq!(
@@ -725,11 +965,18 @@ async fn stop_reset_pauses_and_resets_unfinished() {
 /// the engine — a test-only shortcut for an in-flight task.
 async fn drive_to_running(store: &StoreHandle, id: &str) {
     use lazybones_store::Transition;
-    store.transition(id, Transition::Ready, "test").await.unwrap();
+    store
+        .transition(id, Transition::Ready, "test")
+        .await
+        .unwrap();
     store
         .transition(
             id,
-            Transition::Claim { session: "s".into(), worktree: "/wt".into(), branch: "b".into() },
+            Transition::Claim {
+                session: "s".into(),
+                worktree: "/wt".into(),
+                branch: "b".into(),
+            },
             "test",
         )
         .await
@@ -742,9 +989,15 @@ async fn drive_to_done(store: &StoreHandle, id: &str) {
     use lazybones_store::Transition;
     for t in [
         Transition::Ready,
-        Transition::Claim { session: "s".into(), worktree: "/wt".into(), branch: "b".into() },
+        Transition::Claim {
+            session: "s".into(),
+            worktree: "/wt".into(),
+            branch: "b".into(),
+        },
         Transition::Gate,
-        Transition::Done { commit: "abc123".into() },
+        Transition::Done {
+            commit: "abc123".into(),
+        },
     ] {
         store.transition(id, t, "test").await.unwrap();
     }
@@ -755,17 +1008,30 @@ async fn drive_to_done(store: &StoreHandle, id: &str) {
 /// a real tree to keep.
 async fn drive_to_blocked(store: &StoreHandle, id: &str, reason: &str) {
     use lazybones_store::Transition;
-    store.transition(id, Transition::Ready, "test").await.unwrap();
+    store
+        .transition(id, Transition::Ready, "test")
+        .await
+        .unwrap();
     store
         .transition(
             id,
-            Transition::Claim { session: "s".into(), worktree: "/wt".into(), branch: "b".into() },
+            Transition::Claim {
+                session: "s".into(),
+                worktree: "/wt".into(),
+                branch: "b".into(),
+            },
             "test",
         )
         .await
         .unwrap();
     store
-        .transition(id, Transition::Block { reason: reason.into() }, "test")
+        .transition(
+            id,
+            Transition::Block {
+                reason: reason.into(),
+            },
+            "test",
+        )
         .await
         .unwrap();
 }
@@ -780,4 +1046,227 @@ async fn loop_put(app: &Router, path: &str, body: Value) -> (StatusCode, Value) 
         .body(Body::from(body.to_string()))
         .unwrap();
     send(app, req).await
+}
+
+/// A restart with no body is a TRUE HARD RESET: it resets every task (done ones
+/// included) back to `pending`, tears down their worktrees, and deletes their
+/// branch locally AND on the remote — so the next run starts from a clean base.
+#[tokio::test]
+async fn restart_hard_reset_clears_tasks_worktrees_and_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo_with_remote(tmp.path(), "repo");
+
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
+
+    let (s, _) = send(
+        &app,
+        loop_post(
+            "/workflows",
+            json!({ "id": "wf", "title": "wf", "workspace": { "repo": repo.to_str().unwrap() } }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Two done tasks, each with a REAL worktree + branch pushed to origin — the
+    // shape a finished isolated run leaves behind.
+    let mut branches = vec![];
+    for tid in ["t1", "t2"] {
+        let (s, _) = send(
+            &app,
+            loop_post(
+                "/workflows/wf/tasks",
+                json!({ "id": tid, "title": tid, "spec": "x" }),
+            ),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+
+        let branch = format!("lazy/{tid}");
+        let wt = repo.join(".lazy/wt").join(tid);
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                wt.to_str().unwrap(),
+                "-b",
+                &branch,
+                "main",
+            ],
+        );
+        std::fs::write(wt.join(format!("{tid}.txt")), "work").unwrap();
+        git(&wt, &["add", "."]);
+        git(&wt, &["commit", "-m", "work"]);
+        git(&wt, &["push", "origin", &branch]);
+        drive_to_done_with(&store, tid, wt.to_str().unwrap(), &branch).await;
+        branches.push((branch, wt));
+    }
+
+    // The run was started (so the auto-start-prevention is meaningfully tested:
+    // started_at is set, and the restart must clear it).
+    store.mark_run_started("wf", "2026-02-02T00:00:00Z").await.unwrap();
+    assert!(store.get_run("wf").await.unwrap().unwrap().started_at.is_some());
+
+    // Sanity: remote has both branches before the reset.
+    for (branch, _) in &branches {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["ls-remote", "origin", &format!("refs/heads/{branch}")])
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+            "{branch} on remote pre-reset"
+        );
+    }
+
+    // Hard reset (empty body → soft:false).
+    let (s, body) = send(&app, loop_post("/workflows/wf/restart", json!(null))).await;
+    assert_eq!(s, StatusCode::OK, "restart → 200: {body}");
+    // Must NOT auto-start: the run un-activates (started_at cleared) so it derives
+    // back to `draft` and waits for an explicit Start — not re-run on the next tick.
+    assert_eq!(body["state"], "draft", "restart does not auto-start: {body}");
+    assert!(
+        store.get_run("wf").await.unwrap().unwrap().started_at.is_none(),
+        "restart clears started_at so the scheduler skips the run until Start"
+    );
+
+    // Every task — done included — is back to pending with no worktree.
+    for tid in ["t1", "t2"] {
+        assert_eq!(
+            status_of(&store, tid).await,
+            Status::Pending,
+            "{tid} reset to pending"
+        );
+        assert_eq!(
+            store.get_task(tid).await.unwrap().unwrap().worktree,
+            None,
+            "{tid} worktree cleared"
+        );
+    }
+
+    // Branches gone locally AND on the remote → a re-run starts clean.
+    for (branch, wt) in &branches {
+        assert!(!wt.exists(), "worktree dir {} removed", wt.display());
+        let local = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ])
+            .output()
+            .unwrap();
+        assert!(!local.status.success(), "local branch {branch} deleted");
+        let remote = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["ls-remote", "origin", &format!("refs/heads/{branch}")])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&remote.stdout).trim().is_empty(),
+            "remote branch {branch} deleted on hard reset"
+        );
+    }
+}
+
+/// A `soft` restart keeps done tasks and their worktrees/branches — the
+/// resume-style escape hatch (only the unfinished part is redone).
+#[tokio::test]
+async fn restart_soft_keeps_done_tasks_and_worktrees() {
+    let store = StoreHandle::open(&StoreEngine::Memory, "lazybones", "test", "key")
+        .await
+        .unwrap();
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
+
+    let (s, _) = send(
+        &app,
+        loop_post(
+            "/workflows",
+            json!({ "id": "wf", "title": "wf", "workspace": { "repo": "/tmp/repo" } }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    for tid in ["blocked-1", "done-1"] {
+        let (s, _) = send(
+            &app,
+            loop_post(
+                "/workflows/wf/tasks",
+                json!({ "id": tid, "title": tid, "spec": "x" }),
+            ),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+    }
+    drive_to_blocked(&store, "blocked-1", "boom").await;
+    drive_to_done(&store, "done-1").await;
+
+    let (s, body) = send(
+        &app,
+        loop_post("/workflows/wf/restart", json!({ "soft": true })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "soft restart → 200: {body}");
+    // Unfinished part reset; done task kept (resume semantics).
+    assert_eq!(
+        status_of(&store, "blocked-1").await,
+        Status::Pending,
+        "blocked reset"
+    );
+    assert_eq!(
+        status_of(&store, "done-1").await,
+        Status::Done,
+        "done kept on soft restart"
+    );
+    // The done task's worktree is left in place for reuse.
+    assert_eq!(
+        store
+            .get_task("done-1")
+            .await
+            .unwrap()
+            .unwrap()
+            .worktree
+            .as_deref(),
+        Some("/wt"),
+        "soft restart keeps the worktree"
+    );
+}
+
+/// Drive `id` to `done` carrying a REAL worktree path + branch (vs `drive_to_done`'s
+/// placeholder `/wt`/`b`), so the restart's git teardown has something real to act on.
+async fn drive_to_done_with(store: &StoreHandle, id: &str, worktree: &str, branch: &str) {
+    use lazybones_store::Transition;
+    for t in [
+        Transition::Ready,
+        Transition::Claim {
+            session: "s".into(),
+            worktree: worktree.into(),
+            branch: branch.into(),
+        },
+        Transition::Gate,
+        Transition::Done {
+            commit: "abc123".into(),
+        },
+    ] {
+        store.transition(id, t, "test").await.unwrap();
+    }
 }

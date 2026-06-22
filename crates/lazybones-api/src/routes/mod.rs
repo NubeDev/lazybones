@@ -18,9 +18,9 @@ mod delete;
 mod done;
 mod engine;
 mod files;
+mod follow_ups;
 mod fs_list;
 mod gate;
-mod follow_ups;
 mod get;
 mod gh;
 mod guard;
@@ -100,13 +100,13 @@ pub fn router(state: AppState) -> Router {
         // (no strategy → reset to pending). The next tick picks it back up.
         .route("/tasks/:id/retry", post(tasks_retry::retry_task))
         // Set/clear a task's hands-off auto-retry policy (strategy + cap).
-        .route("/tasks/:id/auto-retry", put(tasks_retry_policy::set_auto_retry))
+        .route(
+            "/tasks/:id/auto-retry",
+            put(tasks_retry_policy::set_auto_retry),
+        )
         // Chat with the task's agent: read the conversation + post a message
         // (live-steer a running task, or revive a blocked one to workshop it).
-        .route(
-            "/tasks/:id/chat",
-            get(chat::get_chat).post(chat::post_chat),
-        )
+        .route("/tasks/:id/chat", get(chat::get_chat).post(chat::post_chat))
         // GitHub issue linkage: create from the task, link an existing one, or
         // unlink; plus the close-on-done toggle. Backend-first (no UI yet).
         .route(
@@ -159,8 +159,7 @@ pub fn router(state: AppState) -> Router {
         // never starts or runs anything (docs/agent/lazybones-agent-scope.md).
         .route(
             "/settings/management-agent",
-            get(management_agent::get_management_agent)
-                .put(management_agent::put_management_agent),
+            get(management_agent::get_management_agent).put(management_agent::put_management_agent),
         )
         // Per-workflow config overrides (resolution is override ?? global).
         .route(
@@ -176,10 +175,7 @@ pub fn router(state: AppState) -> Router {
             get(preferences::get_preferences).put(preferences::put_preferences),
         )
         .route("/agent/chat", post(agent_chat::post_agent_chat))
-        .route(
-            "/agent/chat/:conversation",
-            get(agent_chat::get_agent_chat),
-        )
+        .route("/agent/chat/:conversation", get(agent_chat::get_agent_chat))
         .route(
             "/agent/chat/:conversation/stream",
             get(agent_chat::agent_chat_stream),
@@ -206,10 +202,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/workflows/:id/tasks",
-            get(workflows_tasks::list_workflow_tasks)
-                .post(workflows_add_task::add_workflow_task),
+            get(workflows_tasks::list_workflow_tasks).post(workflows_add_task::add_workflow_task),
         )
-        .route("/workflows/:id/start", post(workflows_start::start_workflow))
+        .route(
+            "/workflows/:id/start",
+            post(workflows_start::start_workflow),
+        )
         // Stop (pause): lifecycle → stopped; reclaim running tasks to ready, keep
         // all work. The scheduler then promotes/claims nothing for this run.
         .route("/workflows/:id/stop", post(workflows_stop::stop_workflow))
@@ -219,10 +217,16 @@ pub fn router(state: AppState) -> Router {
             "/workflows/:id/stop-reset",
             post(workflows_stop_reset::stop_reset_workflow),
         )
-        .route("/workflows/:id/restart", post(workflows_restart::restart_workflow))
+        .route(
+            "/workflows/:id/restart",
+            post(workflows_restart::restart_workflow),
+        )
         // Resume (un-pause): lifecycle → active + reset blocked tasks → pending, so
         // the scheduler continues from where it left off.
-        .route("/workflows/:id/resume", post(workflows_resume::resume_workflow))
+        .route(
+            "/workflows/:id/resume",
+            post(workflows_resume::resume_workflow),
+        )
         .route("/runs/:id", get(runs::run_history))
         // The fabric's record for a whole run: the raw hcom log of every agent.
         .route("/runs/:id/hcom", get(hcom_log::run_hcom_log))
@@ -257,10 +261,7 @@ pub fn router(state: AppState) -> Router {
             get(gh::gh_worktrees).delete(gh::gh_remove_worktree),
         )
         .route("/gh/worktrees/prune", post(gh::gh_prune_worktrees))
-        .route(
-            "/gh/issues",
-            get(gh::gh_issues).post(gh::gh_create_issue),
-        )
+        .route("/gh/issues", get(gh::gh_issues).post(gh::gh_create_issue))
         .route("/gh/mentionable", get(gh::gh_mentionable))
         .route("/gh/issues/:number", get(gh::gh_issue_view))
         .route("/gh/issues/:number/close", post(gh::gh_close_issue))

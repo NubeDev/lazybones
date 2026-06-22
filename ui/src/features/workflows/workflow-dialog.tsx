@@ -27,6 +27,7 @@ const EMPTY: WorkspaceDraft = {
   tool: null,
   model: null,
   effort: null,
+  auto_pr: false,
 };
 
 /** Create a workflow: id, title, and a workspace block (repo + git config).
@@ -201,6 +202,22 @@ export function WorkflowDialog({
               onEffortChange={(e) => setWs((prev) => ({ ...prev, effort: e }))}
               labels={{ agent: "Default agent", agentHint: "blank = inherit global default" }}
             />
+
+            <label className="flex cursor-pointer items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={ws.auto_pr ?? false}
+                onChange={(e) => setWs((prev) => ({ ...prev, auto_pr: e.target.checked }))}
+              />
+              <span>
+                <b className="font-medium">Auto-create PR when done</b>
+                <span className="block text-muted-foreground">
+                  When every task finishes, the default agent writes a summary and opens
+                  a GitHub PR for this workflow's branch. Best with Shared mode.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
 

@@ -124,11 +124,37 @@ pub async fn provision(
                 let add: Vec<&str> = if exists {
                     vec!["worktree", "add", &path_str, &branch]
                 } else {
-                    vec!["worktree", "add", &path_str, "-b", &branch, &eff.base_branch]
+                    vec![
+                        "worktree",
+                        "add",
+                        &path_str,
+                        "-b",
+                        &branch,
+                        &eff.base_branch,
+                    ]
                 };
                 let out = git(repo, &add).await?;
                 if !out.ok {
                     anyhow::bail!("git worktree add for {} failed: {}", task.id, out.stderr);
+                }
+            } else {
+                // A leftover/reused tree must be on OUR branch, or the agent commits
+                // (and the later push) target the wrong ref — the "src refspec does
+                // not match any" failure when a stale tree sat on `main`/base instead
+                // of `<prefix><key>`. Force it onto the expected branch: create or
+                // reset the branch at the tree's HEAD and check it out there. A
+                // no-op when it's already correct.
+                let head = match git(&path, &["rev-parse", "HEAD"]).await {
+                    Ok(o) if o.ok => o.stdout,
+                    _ => eff.base_branch.clone(),
+                };
+                let out = git(&path, &["checkout", "-B", &branch, &head]).await?;
+                if !out.ok {
+                    anyhow::bail!(
+                        "git checkout -B {branch} in reused tree for {} failed: {}",
+                        task.id,
+                        out.stderr
+                    );
                 }
             }
             bootstrap_permissions(repo, &path, &eff.tool, eff.auto_trust_agent_folder);
@@ -142,10 +168,15 @@ pub async fn provision(
             let path = reuse_path
                 .map(ToOwned::to_owned)
                 .or_else(|| task.worktree.clone())
-                .ok_or_else(|| anyhow::anyhow!("reuse mode but task {} has no worktree", task.id))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("reuse mode but task {} has no worktree", task.id)
+                })?;
             let reused = PathBuf::from(&path);
             if !reused.is_dir() {
-                anyhow::bail!("reuse worktree {path} for {} is missing or not a dir", task.id);
+                anyhow::bail!(
+                    "reuse worktree {path} for {} is missing or not a dir",
+                    task.id
+                );
             }
             let branch = task
                 .branch
@@ -156,7 +187,11 @@ pub async fn provision(
             // to land (the reused tree continues from where its owner left off).
             let out = git(&reused, &["checkout", "-B", &branch]).await?;
             if !out.ok {
-                anyhow::bail!("git checkout -B {branch} in reused tree for {} failed: {}", task.id, out.stderr);
+                anyhow::bail!(
+                    "git checkout -B {branch} in reused tree for {} failed: {}",
+                    task.id,
+                    out.stderr
+                );
             }
             bootstrap_permissions(repo, &reused, &eff.tool, eff.auto_trust_agent_folder);
             Ok(Provisioned {
@@ -171,7 +206,11 @@ pub async fn provision(
                 .unwrap_or_else(|| format!("{}{}", eff.branch_prefix, task.id));
             let out = git(repo, &["checkout", "-B", &branch, &eff.base_branch]).await?;
             if !out.ok {
-                anyhow::bail!("git checkout -B {branch} for {} failed: {}", task.id, out.stderr);
+                anyhow::bail!(
+                    "git checkout -B {branch} for {} failed: {}",
+                    task.id,
+                    out.stderr
+                );
             }
             // Branch mode runs in the main checkout, so the worktree *is* the repo:
             // the "repo already has settings" guard makes this a no-op when the repo
@@ -334,6 +373,38 @@ mod tests {
         assert!(Path::new(&p.worktree).is_dir());
     }
 
+    /// Regression (`simple-demo`): a leftover worktree dir sitting on the WRONG
+    /// branch (e.g. `main` after a polluted reset) must be forced onto the expected
+    /// `<prefix><key>` branch — otherwise the agent commits to `main` and the later
+    /// push fails with "src refspec does not match any". Provision must self-heal.
+    #[tokio::test]
+    async fn reused_tree_on_wrong_branch_is_corrected() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let eff = eff_for(dir.path(), WorktreeMode::Shared);
+        let mut t = Task::seed("sd-01", "sd", "t", "s", vec![], vec![], None);
+        t.run_id = Some("simple-demo".into());
+
+        // First provision creates the shared tree on `lazy/simple-demo`.
+        let p1 = provision(&t, &eff, &cfg, None).await.unwrap();
+        assert_eq!(p1.branch, "lazy/simple-demo");
+        // Corrupt it the way a polluted reset did: detach the tree's HEAD and
+        // delete the expected branch, so the tree is stranded off `lazy/simple-demo`
+        // — the exact state behind the "src refspec does not match any" failure.
+        git(Path::new(&p1.worktree), &["checkout", "--detach"]).await.unwrap();
+        git(dir.path(), &["branch", "-D", "lazy/simple-demo"]).await.unwrap();
+        assert!(!branch_exists(dir.path(), "lazy/simple-demo").await.unwrap());
+
+        // Re-provision must put the tree back on `lazy/simple-demo`.
+        let p2 = provision(&t, &eff, &cfg, None).await.unwrap();
+        assert_eq!(p2.branch, "lazy/simple-demo");
+        assert!(branch_exists(dir.path(), "lazy/simple-demo").await.unwrap());
+        // The tree's HEAD is now on our branch, not `main`.
+        let head_ref = git(Path::new(&p2.worktree), &["symbolic-ref", "HEAD"]).await.unwrap();
+        assert_eq!(head_ref.stdout, "refs/heads/lazy/simple-demo");
+    }
+
     #[tokio::test]
     async fn new_mode_reprovisions_when_branch_already_exists() {
         // Regression: a restart (or a torn-down tree) can leave the branch
@@ -444,7 +515,10 @@ mod tests {
         t1.worktree = Some(p.worktree.clone());
 
         teardown(&t1, &eff, &cfg).await.unwrap();
-        assert!(Path::new(&p.worktree).is_dir(), "shared tree must survive teardown");
+        assert!(
+            Path::new(&p.worktree).is_dir(),
+            "shared tree must survive teardown"
+        );
     }
 
     #[tokio::test]
@@ -456,7 +530,10 @@ mod tests {
         let eff = eff_for(dir.path(), WorktreeMode::New);
         let p = provision(&task, &eff, &cfg, None).await.unwrap();
         let settings = Path::new(&p.worktree).join(".claude/settings.json");
-        assert!(settings.is_file(), "worktree should get a scoped allow-list");
+        assert!(
+            settings.is_file(),
+            "worktree should get a scoped allow-list"
+        );
         let body = std::fs::read_to_string(&settings).unwrap();
         assert!(body.contains("\"allow\""));
         assert!(body.contains("Bash"));
@@ -479,8 +556,15 @@ mod tests {
         let p = provision(&task, &eff, &cfg, None).await.unwrap();
 
         // The repo's own file is untouched, and no bootstrap is written into the wt.
-        assert_eq!(std::fs::read_to_string(&repo_settings).unwrap(), "{\"mine\":true}");
-        assert!(!Path::new(&p.worktree).join(".claude/settings.json").exists());
+        assert_eq!(
+            std::fs::read_to_string(&repo_settings).unwrap(),
+            "{\"mine\":true}"
+        );
+        assert!(
+            !Path::new(&p.worktree)
+                .join(".claude/settings.json")
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -492,7 +576,11 @@ mod tests {
         let mut eff = eff_for(dir.path(), WorktreeMode::New);
         eff.tool = "codex".into();
         let p = provision(&task, &eff, &cfg, None).await.unwrap();
-        assert!(!Path::new(&p.worktree).join(".claude/settings.json").exists());
+        assert!(
+            !Path::new(&p.worktree)
+                .join(".claude/settings.json")
+                .exists()
+        );
     }
 
     #[tokio::test]

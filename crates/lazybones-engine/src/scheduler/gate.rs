@@ -68,12 +68,9 @@ mod tests {
     #[tokio::test]
     async fn first_red_blocks_with_command_and_tail() {
         let dir = tempfile::tempdir().unwrap();
-        let out = run(
-            dir.path(),
-            &["echo boom && false".into(), "true".into()],
-        )
-        .await
-        .unwrap();
+        let out = run(dir.path(), &["echo boom && false".into(), "true".into()])
+            .await
+            .unwrap();
         match out {
             GateOutcome::Red(reason) => {
                 assert!(reason.contains("echo boom && false"));

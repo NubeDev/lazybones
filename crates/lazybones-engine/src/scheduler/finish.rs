@@ -27,7 +27,13 @@ const AWAIT_SECS: u64 = 3600;
 ///
 /// Best-effort and self-contained: every failure path ends in a `Block` or a
 /// logged error so the supervisor loop never wedges.
-pub async fn drive(store: StoreHandle, hcom: Hcom, cfg: EngineConfig, eff: EffectiveGit, task: Task) {
+pub async fn drive(
+    store: StoreHandle,
+    hcom: Hcom,
+    cfg: EngineConfig,
+    eff: EffectiveGit,
+    task: Task,
+) {
     let signal = match await_signal(&hcom, &task.id).await {
         Ok(s) => s,
         Err(e) => {
@@ -46,7 +52,13 @@ pub async fn drive(store: StoreHandle, hcom: Hcom, cfg: EngineConfig, eff: Effec
         }
         Signal::Blocked(reason) => block(&store, &task, reason, ACTOR).await,
         Signal::Timeout => {
-            block(&store, &task, "agent timed out with no DONE signal".to_owned(), ACTOR).await;
+            block(
+                &store,
+                &task,
+                "agent timed out with no DONE signal".to_owned(),
+                ACTOR,
+            )
+            .await;
         }
     }
 }
@@ -105,26 +117,57 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
 
     match outcome {
         gate::GateOutcome::Red(reason) => block(store, task, reason, ACTOR).await,
-        gate::GateOutcome::Green => match merge::land(task, eff, cfg).await {
-            Ok(commit) => {
-                match store
-                    .transition(&task.id, Transition::Done { commit }, ACTOR)
-                    .await
-                {
-                    Ok(_) => {
-                        // Close-on-done (task → issue): best-effort, never blocks
-                        // or reverts the task. `task` already carries the linkage
-                        // fields (they're not touched by the Done transition).
-                        issue::close_on_done(store, &lazybones_gh::Gh::new(), task).await;
-                        if let Err(e) = worktree::teardown(task, eff, cfg).await {
-                            tracing::warn!(task = %task.id, "teardown failed: {e}");
-                        }
+        gate::GateOutcome::Green => {
+            // Auto-commit any uncommitted work BEFORE landing — the agent is not
+            // relied on to have run `git commit`. A green gate with a clean tree
+            // *and* no commits ahead of base is a real no-op task (the agent did
+            // nothing): block it rather than land empty work.
+            let wt = std::path::Path::new(&worktree_path);
+            match merge::commit_worktree(wt, task).await {
+                Ok(Some(_sha)) => {} // committed; fall through to land the new head
+                Ok(None) => {
+                    let branch = task.branch.clone().unwrap_or_default();
+                    let has_commits = merge::branch_has_commits(wt, &eff.base_branch, &branch)
+                        .await
+                        .unwrap_or(true);
+                    if !has_commits {
+                        block(
+                            store,
+                            task,
+                            "task produced no changes to commit (empty task)".to_owned(),
+                            ACTOR,
+                        )
+                        .await;
+                        return;
                     }
-                    Err(e) => tracing::warn!(task = %task.id, "done transition failed: {e}"),
+                    // Clean tree but the agent already committed — land those commits.
+                }
+                Err(e) => {
+                    block(store, task, format!("auto-commit failed: {e}"), ACTOR).await;
+                    return;
                 }
             }
-            Err(e) => block(store, task, format!("merge failed: {e}"), ACTOR).await,
-        },
+            match merge::land(task, eff, cfg).await {
+                Ok(commit) => {
+                    match store
+                        .transition(&task.id, Transition::Done { commit }, ACTOR)
+                        .await
+                    {
+                        Ok(_) => {
+                            // Close-on-done (task → issue): best-effort, never blocks
+                            // or reverts the task. `task` already carries the linkage
+                            // fields (they're not touched by the Done transition).
+                            issue::close_on_done(store, &lazybones_gh::Gh::new(), task).await;
+                            if let Err(e) = worktree::teardown(task, eff, cfg).await {
+                                tracing::warn!(task = %task.id, "teardown failed: {e}");
+                            }
+                        }
+                        Err(e) => tracing::warn!(task = %task.id, "done transition failed: {e}"),
+                    }
+                }
+                Err(e) => block(store, task, format!("merge failed: {e}"), ACTOR).await,
+            }
+        }
     }
 }
 

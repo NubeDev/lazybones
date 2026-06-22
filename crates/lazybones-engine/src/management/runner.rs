@@ -406,7 +406,10 @@ fn prepare_agent_dir_in(base: &std::path::Path) -> anyhow::Result<std::path::Pat
 /// lazybones token + base URL the management agent calls the REST API with.
 async fn build_hcom(store: &StoreHandle, turn: &TurnContext) -> Hcom {
     let mut env = match store.secret_env().await {
-        Ok(pairs) => pairs.into_iter().map(|s| (s.env_var, s.value)).collect::<Vec<_>>(),
+        Ok(pairs) => pairs
+            .into_iter()
+            .map(|s| (s.env_var, s.value))
+            .collect::<Vec<_>>(),
         Err(e) => {
             tracing::warn!("management: loading secret env failed, spawning without it: {e}");
             Vec::new()
@@ -424,7 +427,9 @@ async fn enabled_skills(store: &StoreHandle, config: &ManagementAgentConfig) -> 
     for id in &config.enabled_skills {
         match store.get_skill(id).await {
             Ok(Some(skill)) => out.push(skill),
-            Ok(None) => tracing::warn!(skill = %id, "management: enabled skill not found, skipping"),
+            Ok(None) => {
+                tracing::warn!(skill = %id, "management: enabled skill not found, skipping")
+            }
             Err(e) => tracing::warn!(skill = %id, "management: skill load failed: {e}"),
         }
     }

@@ -327,14 +327,19 @@ pub async fn gh_remove_worktree(
     session.require(Capability::Block, "gh:worktree:remove", &body.path)?;
     let gh = Gh::new();
     // Defensive: never let the primary checkout be removed from here.
-    if let Some(main) = gh.worktrees(&body.dir).await?.into_iter().find(|w| w.is_main)
+    if let Some(main) = gh
+        .worktrees(&body.dir)
+        .await?
+        .into_iter()
+        .find(|w| w.is_main)
         && main.path == body.path
     {
         return Err(crate::error::ApiError::bad_request(
             "refusing to remove the main worktree",
         ));
     }
-    gh.remove_worktree(&body.dir, &body.path, body.force).await?;
+    gh.remove_worktree(&body.dir, &body.path, body.force)
+        .await?;
     Ok(Json(json!({ "removed": body.path })))
 }
 

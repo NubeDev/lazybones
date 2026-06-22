@@ -34,6 +34,7 @@ pub async fn update_workflow(
         effort: w.effort,
         gate: w.gate,
         merge: w.merge,
+        auto_pr: w.auto_pr,
     };
     let run = state
         .store

@@ -57,11 +57,20 @@ fn anon(method: &str, path: &str, body: Value) -> Request<Body> {
 }
 
 fn get(path: &str) -> Request<Body> {
-    Request::builder().method("GET").uri(path).body(Body::empty()).unwrap()
+    Request::builder()
+        .method("GET")
+        .uri(path)
+        .body(Body::empty())
+        .unwrap()
 }
 
 fn app(store: StoreHandle) -> Router {
-    router(AppState::new(store, "run", "http://127.0.0.1:0", LOOP_TOKEN))
+    router(AppState::new(
+        store,
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ))
 }
 
 #[tokio::test]
@@ -168,7 +177,13 @@ async fn chat_opens_a_conversation_and_persists_the_turn() {
 
     // The conversation shows up in the list.
     let (_, convs) = send(&app, get("/agent/conversations")).await;
-    assert!(convs.as_array().unwrap().iter().any(|c| c["id"] == conversation));
+    assert!(
+        convs
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == conversation)
+    );
 
     // Empty text is rejected.
     let (s, _) = send(&app, anon("POST", "/agent/chat", json!({ "text": "   " }))).await;
@@ -264,7 +279,11 @@ async fn workflow_override_resolves_then_reverts() {
     // Deleting the override reverts the workflow to global.
     let (s, body) = send(
         &app,
-        loop_req("DELETE", "/settings/management-agent/workflows/wf-1", json!({})),
+        loop_req(
+            "DELETE",
+            "/settings/management-agent/workflows/wf-1",
+            json!({}),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);

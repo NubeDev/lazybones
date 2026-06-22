@@ -110,7 +110,10 @@ pub fn compose(
     if !enabled.is_empty() {
         out.push_str("=== YOUR SKILLS (operating runbooks) ===\n");
         for skill in enabled {
-            out.push_str(&format!("\n--- skill: {} ({}) ---\n", skill.id, skill.title));
+            out.push_str(&format!(
+                "\n--- skill: {} ({}) ---\n",
+                skill.id, skill.title
+            ));
             out.push_str(&skill.body);
             out.push('\n');
             if let Some(action) = &skill.action {

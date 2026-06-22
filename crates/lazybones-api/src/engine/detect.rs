@@ -84,8 +84,7 @@ const ANSWER_TAG: &str = "ANSWER::";
 /// What we ask the probe agent to answer: its model id and who it is, on one
 /// line prefixed with [`ANSWER_TAG`], so the test can echo a concrete identity
 /// back to the user.
-const PROBE_PROMPT: &str =
-    "Reply with exactly one line and nothing else, starting with ANSWER:: \
+const PROBE_PROMPT: &str = "Reply with exactly one line and nothing else, starting with ANSWER:: \
      and then `model=<your exact model id>, who=<a short phrase for who you are>`";
 
 /// Actually run the agent through hcom to prove its credential works.
@@ -119,13 +118,7 @@ pub(crate) fn probe_agent(
 
     // 1. Launch a single headless agent and capture its batch id.
     let mut launch = Command::new(&hcom);
-    launch.args([
-        tool,
-        "--headless",
-        "--hcom-prompt",
-        PROBE_PROMPT,
-        "--go",
-    ]);
+    launch.args([tool, "--headless", "--hcom-prompt", PROBE_PROMPT, "--go"]);
     if let Some((var, value)) = key_env {
         launch.env(var, value);
     }
@@ -297,7 +290,13 @@ fn parse_batch_id(text: &str) -> Option<String> {
 /// failing. The exit code is a fallback when the JSON can't be parsed.
 fn wait_for_batch(hcom: &std::path::Path, batch: &str, timeout_secs: u64) -> ProbeOutcome {
     let out = Command::new(hcom)
-        .args(["events", "launch", batch, "--timeout", &timeout_secs.to_string()])
+        .args([
+            "events",
+            "launch",
+            batch,
+            "--timeout",
+            &timeout_secs.to_string(),
+        ])
         .output();
     let out = match out {
         Ok(o) => o,

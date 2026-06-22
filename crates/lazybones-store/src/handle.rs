@@ -43,7 +43,8 @@ use crate::hcom_log::{
 use crate::init_schema::init_schema;
 use crate::run::{
     Lifecycle, Run, Workspace, advance_hcom_cursor, create_run, delete_run, get_run,
-    list_run_tasks, list_runs, mark_started, resume_run, stop_run, update_workspace,
+    clear_started, list_run_tasks, list_runs, mark_started, resume_run, set_pr_url, stop_run,
+    update_workspace,
 };
 use crate::secret::{
     Cipher, SecretEnv, SecretMeta, delete_secret, list_secrets, put_secret, secret_env,
@@ -851,6 +852,27 @@ impl StoreHandle {
     /// write fails.
     pub async fn mark_run_started(&self, id: &str, now: &str) -> Result<Run> {
         mark_started(&self.db, id, now).await
+    }
+
+    /// Un-activate a workflow: clear `started_at` and force lifecycle `Active`, so
+    /// a restart returns it to the `draft`-equivalent state the scheduler skips
+    /// until the operator presses Start again. Returns the run.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
+    /// write fails.
+    pub async fn clear_run_started(&self, id: &str) -> Result<Run> {
+        clear_started(&self.db, id).await
+    }
+
+    /// Record the auto-opened PR url on a workflow (the auto-PR idempotency guard).
+    /// Returns the run.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the run is missing or the
+    /// write fails.
+    pub async fn set_run_pr_url(&self, id: &str, url: &str) -> Result<Run> {
+        set_pr_url(&self.db, id, url).await
     }
 
     /// Pause a workflow: set its lifecycle to `stopped`. Returns the updated run.

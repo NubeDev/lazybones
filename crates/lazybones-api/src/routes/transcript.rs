@@ -35,14 +35,18 @@ pub async fn task_transcript(
 
     let bin = std::env::var("HCOM_BIN").unwrap_or_else(|_| "hcom".to_owned());
     let mut cmd = Command::new(&bin);
-    cmd.arg("transcript").arg(&agent).arg("--json").arg("--full");
+    cmd.arg("transcript")
+        .arg(&agent)
+        .arg("--json")
+        .arg("--full");
     if let Some(dir) = std::env::var_os("HCOM_DIR") {
         cmd.env("HCOM_DIR", dir);
     }
 
-    let out = cmd.output().await.map_err(|e| {
-        ApiError::Internal(format!("could not launch hcom transcript: {e}"))
-    })?;
+    let out = cmd
+        .output()
+        .await
+        .map_err(|e| ApiError::Internal(format!("could not launch hcom transcript: {e}")))?;
     if !out.status.success() {
         return Err(ApiError::bad_request(format!(
             "hcom transcript for agent `{agent}` failed ({}): {}",
@@ -52,8 +56,7 @@ pub async fn task_transcript(
     }
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let value: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
-        ApiError::Internal(format!("hcom transcript returned non-JSON: {e}"))
-    })?;
+    let value: Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| ApiError::Internal(format!("hcom transcript returned non-JSON: {e}")))?;
     Ok(Json(value))
 }

@@ -31,6 +31,9 @@ pub(crate) struct WorkspaceRow {
     /// Per-workflow merge strategy (`fast-forward` | `merge` | `pr`); `None`
     /// inherits the global. `Option` so pre-column rows read back as `None`.
     pub(crate) merge: Option<String>,
+    /// Open a PR automatically when every task is done. `Option` so pre-column
+    /// rows read back as `None` (off).
+    pub(crate) auto_pr: Option<bool>,
 }
 
 /// SurrealDB-facing run: the reserved `id` thing plus the workflow fields.
@@ -46,6 +49,9 @@ pub(crate) struct RunRow {
     /// Stored as `int` (`i64`); hcom ids are positive monotonic so they fit.
     /// `Option` so rows written before this column read back as `None`.
     pub(crate) hcom_log_cursor: Option<i64>,
+    /// The auto-opened PR url, once the run completed and the PR was created.
+    /// `Option` so pre-column rows read back as `None`.
+    pub(crate) pr_url: Option<String>,
 }
 
 impl RunRow {
@@ -64,11 +70,13 @@ impl RunRow {
                 effort: run.workspace.effort.clone(),
                 gate: run.workspace.gate.clone(),
                 merge: run.workspace.merge.map(|m| m.as_str().to_owned()),
+                auto_pr: run.workspace.auto_pr,
             },
             lifecycle: Some(run.lifecycle.as_str().to_owned()),
             created_at: Some(run.created_at.clone()),
             started_at: run.started_at.clone(),
             hcom_log_cursor: run.hcom_log_cursor.and_then(|c| i64::try_from(c).ok()),
+            pr_url: run.pr_url.clone(),
         }
     }
 
@@ -90,11 +98,13 @@ impl RunRow {
                     .workspace
                     .merge
                     .map(|s| MergeMode::parse(Some(s.as_str()))),
+                auto_pr: self.workspace.auto_pr,
             },
             lifecycle: Lifecycle::parse(self.lifecycle.as_deref()),
             created_at: self.created_at.unwrap_or_default(),
             started_at: self.started_at,
             hcom_log_cursor: self.hcom_log_cursor.and_then(|c| u64::try_from(c).ok()),
+            pr_url: self.pr_url,
         }
     }
 }

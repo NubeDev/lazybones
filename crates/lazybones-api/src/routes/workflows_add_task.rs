@@ -42,7 +42,14 @@ pub async fn add_workflow_task(
                 .get_template(template_id)
                 .await?
                 .ok_or(StoreError::TemplateNotFound(template_id.clone()))?;
-            instantiate(&template, &body.id, &body.title, &state.run, &id, body.deps.clone())
+            instantiate(
+                &template,
+                &body.id,
+                &body.title,
+                &state.run,
+                &id,
+                body.deps.clone(),
+            )
         }
         None => {
             let mut t = Task::seed(

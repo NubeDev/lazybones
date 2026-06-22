@@ -4,10 +4,10 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use tokio_stream::StreamExt;
 use lazybones_api::{AppState, router};
 use lazybones_store::{SeedTask, StoreEngine, StoreHandle, sync_seeds};
 use serde_json::{Value, json};
+use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
 const LOOP_TOKEN: &str = "loop-tok";
@@ -141,7 +141,14 @@ async fn gh_worktrees_lists_main_and_extra() {
         run_git(args);
     }
     let wt = dir.join("wt-extra");
-    run_git(&["worktree", "add", "-q", "-b", "feat/wt", wt.to_str().unwrap()]);
+    run_git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/wt",
+        wt.to_str().unwrap(),
+    ]);
 
     let uri = format!("/gh/worktrees?dir={}", urlencode(&dir.to_string_lossy()));
     let (status, body) = send(&app, loop_req("GET", &uri, None)).await;
@@ -178,7 +185,10 @@ async fn gh_local_branches_works_without_remote() {
         run_git(args);
     }
 
-    let uri = format!("/gh/local-branches?dir={}", urlencode(&dir.to_string_lossy()));
+    let uri = format!(
+        "/gh/local-branches?dir={}",
+        urlencode(&dir.to_string_lossy())
+    );
     let (status, body) = send(&app, loop_req("GET", &uri, None)).await;
     assert_eq!(status, StatusCode::OK);
     let names: Vec<&str> = body
@@ -280,11 +290,7 @@ async fn stream_pushes_a_transition_event() {
     let app = app().await;
 
     // Open the SSE stream first so the subscription exists before the transition.
-    let stream_res = app
-        .clone()
-        .oneshot(get("/stream"))
-        .await
-        .unwrap();
+    let stream_res = app.clone().oneshot(get("/stream")).await.unwrap();
     assert_eq!(stream_res.status(), StatusCode::OK);
     assert_eq!(
         stream_res
@@ -351,7 +357,9 @@ async fn stream_pushes_an_agent_activity_message() {
         .uri("/tasks/store/activity")
         .header("authorization", "Bearer agent-tok")
         .header("content-type", "application/json")
-        .body(Body::from(json!({ "message": "running cargo test" }).to_string()))
+        .body(Body::from(
+            json!({ "message": "running cargo test" }).to_string(),
+        ))
         .unwrap();
     let (status, _) = send(&app, activity).await;
     assert_eq!(status, StatusCode::OK);
@@ -600,7 +608,10 @@ async fn author_create_update_delete_over_rest() {
     // With its dep dropped, `ui` now promotes to ready alongside `store`.
     let (_, ready) = send(&app, loop_post("/tasks/promote", json!(null))).await;
     let ready: Vec<String> = serde_json::from_value(ready).unwrap();
-    assert!(ready.contains(&"ui".to_string()), "ui ready after dep dropped");
+    assert!(
+        ready.contains(&"ui".to_string()),
+        "ui ready after dep dropped"
+    );
 
     // Delete it; the read then 404s.
     let (status, body) = send(&app, loop_req("DELETE", "/tasks/ui", None)).await;
@@ -684,7 +695,11 @@ async fn chat_reads_empty_and_404s_unknown_task() {
 #[tokio::test]
 async fn chat_post_rejects_empty_text() {
     let app = app().await;
-    let (status, _) = send(&app, loop_post("/tasks/store/chat", json!({ "text": "   " }))).await;
+    let (status, _) = send(
+        &app,
+        loop_post("/tasks/store/chat", json!({ "text": "   " })),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -696,7 +711,10 @@ async fn chat_post_on_unclaimed_task_stores_guidance() {
     // spawn will fold in, not delivered live.
     let (status, posted) = send(
         &app,
-        loop_post("/tasks/store/chat", json!({ "text": "prefer an env var for the port" })),
+        loop_post(
+            "/tasks/store/chat",
+            json!({ "text": "prefer an env var for the port" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -725,7 +743,11 @@ async fn chat_post_revives_a_blocked_task() {
         ),
     )
     .await;
-    let (status, task) = send(&app, loop_post("/tasks/store/cancel", json!({ "reason": "gate red" }))).await;
+    let (status, task) = send(
+        &app,
+        loop_post("/tasks/store/cancel", json!({ "reason": "gate red" })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(task["status"], "blocked");
 
@@ -733,7 +755,10 @@ async fn chat_post_revives_a_blocked_task() {
     // it, keeping the worktree it left behind.
     let (status, posted) = send(
         &app,
-        loop_post("/tasks/store/chat", json!({ "text": "the gate failed on lint; fix it and retry" })),
+        loop_post(
+            "/tasks/store/chat",
+            json!({ "text": "the gate failed on lint; fix it and retry" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -743,10 +768,16 @@ async fn chat_post_revives_a_blocked_task() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(task["status"], "ready", "revive reopens the task");
     assert_eq!(task["reason"], Value::Null, "the block reason is cleared");
-    assert_eq!(task["worktree"], "/wt/store", "the worktree is kept for resume");
+    assert_eq!(
+        task["worktree"], "/wt/store",
+        "the worktree is kept for resume"
+    );
 
     // The conversation now holds the operator's guidance.
     let (_, convo) = send(&app, get("/tasks/store/chat")).await;
     assert_eq!(convo.as_array().unwrap().len(), 1);
-    assert_eq!(convo[0]["text"], "the gate failed on lint; fix it and retry");
+    assert_eq!(
+        convo[0]["text"],
+        "the gate failed on lint; fix it and retry"
+    );
 }

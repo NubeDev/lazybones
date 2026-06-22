@@ -2,8 +2,11 @@
 //!
 //! The spec comes from the DB (`task.spec`) — never re-read from `tasks/*.md` at
 //! runtime (SCOPE.md principle 6). The charter tells the agent, in order: where
-//! it works, to commit + push, to signal DONE/BLOCKED on its hcom thread exactly
-//! once, to reply to the operator on that thread, and to stay inside its worktree.
+//! it works, to leave its work **uncommitted** (the engine commits + pushes each
+//! task as exactly one commit on the green gate — the agent must NOT commit or push
+//! itself, or two tasks' work would blur on a shared branch), to signal
+//! DONE/BLOCKED on its hcom thread exactly once, to reply to the operator on that
+//! thread, and to stay inside its worktree.
 //!
 //! When the task carries a chat history (an operator workshopping a revived task,
 //! or steering one mid-flight), the conversation is appended so a re-spawned agent
@@ -22,15 +25,20 @@ pub fn compose(
     history: &[ChatMessage],
 ) -> String {
     let id = &task.id;
+    let _ = remote; // the engine pushes; the agent no longer runs git push
     let base = format!(
         "You are working in `{worktree}` on branch `{branch}`. Implement the task below.\n\
          \n\
+         Make your changes in the worktree and leave them UNCOMMITTED. Do NOT run\n\
+         `git commit` or `git push` — the engine commits your work as a single\n\
+         commit for this task and pushes it once the build gate passes. Committing\n\
+         yourself would blur this task's commit with the next one on a shared branch.\n\
+         \n\
          When the implementation is complete:\n\
-         1. Commit your work, then run `git push {remote} {branch}`.\n\
-         2. Signal completion exactly once on the hcom thread named `{id}`:\n\
+         1. Signal completion exactly once on the hcom thread named `{id}`:\n\
          `hcom send @all --thread {id} -- DONE`\n\
          (or `hcom send @all --thread {id} -- BLOCKED: <reason>` if you cannot finish).\n\
-         3. Then stop.\n\
+         2. Then stop.\n\
          \n\
          If the operator messages you on the thread `{id}`, reply to them on that\n\
          same thread (`hcom send @all --thread {id} -- <your reply>`), act on their\n\
@@ -59,8 +67,9 @@ fn conversation_section(id: &str, history: &[ChatMessage]) -> String {
     let mut out = String::from(
         "=== OPERATOR CONVERSATION ===\n\
          This task was attempted before and the operator has been in touch. Read the\n\
-         exchange below (oldest first), address the operator's latest guidance, then\n\
-         commit/push and re-signal DONE/BLOCKED on the thread as above.\n\n",
+         exchange below (oldest first), address the operator's latest guidance,\n\
+         leave your work uncommitted (the engine commits + pushes), then re-signal\n\
+         DONE/BLOCKED on the thread as above.\n\n",
     );
     for m in history {
         let who = match m.role {
@@ -90,11 +99,22 @@ mod tests {
 
     #[test]
     fn includes_charter_and_spec() {
-        let task = Task::seed("auth", "run", "Add auth", "Build the login.", vec![], vec![], None);
+        let task = Task::seed(
+            "auth",
+            "run",
+            "Add auth",
+            "Build the login.",
+            vec![],
+            vec![],
+            None,
+        );
         let p = compose(&task, "/wt/auth", "lazy/auth", "origin", &[]);
         assert!(p.contains("/wt/auth"));
         assert!(p.contains("lazy/auth"));
-        assert!(p.contains("git push origin lazy/auth"));
+        // The engine owns commit + push now; the agent is told NOT to.
+        assert!(p.contains("UNCOMMITTED"));
+        assert!(p.contains("Do NOT run"));
+        assert!(!p.contains("git push origin lazy/auth"));
         assert!(p.contains("--thread auth -- DONE"));
         assert!(p.contains("Build the login."));
         // No conversation section on a first run.
@@ -107,9 +127,20 @@ mod tests {
 
     #[test]
     fn folds_in_the_operator_conversation_when_present() {
-        let task = Task::seed("auth", "run", "Add auth", "Build the login.", vec![], vec![], None);
+        let task = Task::seed(
+            "auth",
+            "run",
+            "Add auth",
+            "Build the login.",
+            vec![],
+            vec![],
+            None,
+        );
         let history = vec![
-            msg(ChatRole::User, "the test fails because the port is hardcoded"),
+            msg(
+                ChatRole::User,
+                "the test fails because the port is hardcoded",
+            ),
             msg(ChatRole::Agent, "got it, switching to an env var"),
         ];
         let p = compose(&task, "/wt/auth", "lazy/auth", "origin", &history);

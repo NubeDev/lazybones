@@ -130,7 +130,10 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
             let worktree_mode = task.worktree_mode_override.unwrap_or(ws.worktree_mode);
             EffectiveGit {
                 repo: PathBuf::from(&ws.repo),
-                base_branch: ws.base_branch.clone().unwrap_or_else(|| cfg.base_branch.clone()),
+                base_branch: ws
+                    .base_branch
+                    .clone()
+                    .unwrap_or_else(|| cfg.base_branch.clone()),
                 branch_prefix: ws
                     .branch_prefix
                     .clone()
@@ -224,6 +227,7 @@ mod tests {
             effort: None,
             gate: None,
             merge: None,
+            auto_pr: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.repo, PathBuf::from("/repo/abc"));
@@ -246,6 +250,7 @@ mod tests {
             effort: None,
             gate: None,
             merge: None,
+            auto_pr: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.base_branch, "dev");
@@ -270,6 +275,7 @@ mod tests {
             effort: Some("medium".into()),
             gate: None,
             merge: None,
+            auto_pr: None,
         });
 
         // A task with no agent fields inherits workspace tool/effort + global model.
@@ -325,6 +331,7 @@ mod tests {
             effort: None,
             gate: None,
             merge: None,
+            auto_pr: None,
         });
         assert!(!resolve(&off, Some(&run), &cfg).auto_trust_agent_folder);
         assert!(resolve(&bare, Some(&run), &cfg).auto_trust_agent_folder);
@@ -344,6 +351,7 @@ mod tests {
             effort: None,
             gate: None,
             merge: None,
+            auto_pr: None,
         });
         let eff = resolve(&task, Some(&run), &cfg());
         assert_eq!(eff.worktree_mode, WorktreeMode::Branch);
@@ -361,6 +369,7 @@ mod tests {
             effort: None,
             gate,
             merge: None,
+            auto_pr: None,
         }
     }
 
@@ -372,7 +381,10 @@ mod tests {
 
         // Workspace gate wins over the global default.
         let run = run_with(ws_with_gate(Some(vec!["npm test".into()])));
-        assert_eq!(resolve(&task, Some(&run), &cfg).gate, vec!["npm test".to_owned()]);
+        assert_eq!(
+            resolve(&task, Some(&run), &cfg).gate,
+            vec!["npm test".to_owned()]
+        );
 
         // Explicit empty list is honoured as "no gate", not a fallback to global.
         let run = run_with(ws_with_gate(Some(vec![])));
@@ -404,6 +416,7 @@ mod tests {
             effort: None,
             gate: None,
             merge,
+            auto_pr: None,
         }
     }
 
@@ -424,7 +437,10 @@ mod tests {
         // Absent (None) inherits the global merge — a repo keeps strict linear
         // history while a sibling workflow opts into merge commits.
         let run = run_with(ws_with_merge(None));
-        assert_eq!(resolve(&task, Some(&run), &cfg).merge, MergeMode::FastForward);
+        assert_eq!(
+            resolve(&task, Some(&run), &cfg).merge,
+            MergeMode::FastForward
+        );
 
         // A standalone task always uses the global merge.
         assert_eq!(resolve(&task, None, &cfg).merge, MergeMode::FastForward);
@@ -462,10 +478,7 @@ mod tests {
         let mut shared_task = Task::seed("t", "r", "T", "s", vec![], vec![], None);
         shared_task.worktree_mode_override = Some(WorktreeMode::Shared);
         let run = run_with(ws_with_merge(Some(StoreMergeMode::Merge)));
-        assert_eq!(
-            resolve(&shared_task, Some(&run), &cfg).merge,
-            MergeMode::Pr,
-        );
+        assert_eq!(resolve(&shared_task, Some(&run), &cfg).merge, MergeMode::Pr,);
 
         // Sanity: a non-Shared workspace still honours its merge mode.
         let mut ws = ws_with_merge(Some(StoreMergeMode::Merge));

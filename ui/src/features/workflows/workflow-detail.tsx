@@ -10,6 +10,7 @@ import {
   Bot,
   Cpu,
   Gauge,
+  GitPullRequest,
 } from "lucide-react";
 import { Topbar } from "@/components/layout/topbar";
 import { Button } from "@/components/ui/button";
@@ -241,6 +242,19 @@ export function WorkflowDetail({
                 )}
               </span>
             </Tooltip>
+          )}
+
+          {/* The auto-opened PR (when `auto_pr` is on and the run completed). */}
+          {wf.pr_url && (
+            <a
+              href={wf.pr_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs text-accent hover:underline"
+            >
+              <GitPullRequest className="size-3.5" />
+              <span>View PR</span>
+            </a>
           )}
 
           <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">

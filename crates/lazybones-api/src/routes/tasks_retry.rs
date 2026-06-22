@@ -119,10 +119,12 @@ pub async fn retry_task(
             .get_run(run_key)
             .await?
             .ok_or_else(|| StoreError::RunNotFound(run_key.to_owned()))?;
+        let remote = std::env::var("LAZYBONES_REMOTE").unwrap_or_else(|_| "origin".to_owned());
         if let Err(e) = lazybones_engine::remove_worktree(
             std::path::Path::new(&run.workspace.repo),
             path,
             task.branch.as_deref(),
+            Some(&remote),
         )
         .await
         {

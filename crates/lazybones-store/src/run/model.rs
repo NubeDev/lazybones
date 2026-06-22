@@ -92,6 +92,14 @@ pub struct Workspace {
     /// pin `fast-forward` while others use `merge`.
     #[serde(default)]
     pub merge: Option<MergeMode>,
+    /// When `true`, the engine opens a GitHub PR for this workflow's branch once
+    /// every task is `done`: it spawns the workflow's configured agent to write a
+    /// summary, then `gh pr create`s it (idempotent — at most one PR per run, the
+    /// url recorded on the [`Run`]). `None`/`false` = off. Most useful with `Shared`
+    /// mode (one branch → one PR); a no-op for auto-merge modes that have no branch
+    /// left to PR. The PR opens against `base_branch`.
+    #[serde(default)]
+    pub auto_pr: Option<bool>,
 }
 
 /// The human-set lifecycle of a Run. Distinct from the derived *state*.
@@ -159,6 +167,12 @@ pub struct Run {
     /// before it read back as `None` with no migration.
     #[serde(default)]
     pub hcom_log_cursor: Option<u64>,
+    /// The URL of the PR the engine auto-opened for this run, once it has. `None`
+    /// until the auto-PR flow succeeds; set once and used as the idempotency guard
+    /// so a completed run opens **at most one** PR (the tick re-checks every pass).
+    /// Additive on the `SCHEMALESS` table — older rows read back `None`.
+    #[serde(default)]
+    pub pr_url: Option<String>,
 }
 
 impl Run {
@@ -178,6 +192,7 @@ impl Run {
             created_at: now.into(),
             started_at: None,
             hcom_log_cursor: None,
+            pr_url: None,
         }
     }
 }

@@ -141,7 +141,8 @@ mod tests {
     #[test]
     fn consent_screen_classifies() {
         let (kind, _, _) =
-            classify("agent spawn failed: launch blocked: screen settled before readiness").unwrap();
+            classify("agent spawn failed: launch blocked: screen settled before readiness")
+                .unwrap();
         assert_eq!(kind, "consent");
     }
 

@@ -13,7 +13,7 @@ use crate::hcom::Hcom;
 
 use super::block::block;
 use super::effective::{self, EffectiveGit};
-use super::{finish, hcom_tail, issue, prompt, reclaim, worktree};
+use super::{auto_pr, finish, hcom_tail, issue, prompt, reclaim, worktree};
 
 /// The actor recorded on transitions the tick drives.
 const ACTOR: &str = "scheduler:tick";
@@ -27,6 +27,10 @@ pub async fn tick(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig, tick_cou
     reclaim::reconcile(store, hcom, cfg).await;
     promote(store).await;
     claim_and_spawn(store, hcom, cfg).await;
+    // AUTO-PR: for any opt-in workflow whose every task is now done and has no PR
+    // yet, spawn the configured agent to summarize and `gh pr create`. Best-effort,
+    // idempotent (guarded by `run.pr_url`); never blocks claim/spawn.
+    auto_pr::open_prs_for_completed_runs(store, hcom, cfg).await;
     // TAIL: drain hcom's raw event stream into the durable hcom log. Best-effort,
     // self-contained, holds no await on agent work (docs/hcom-logs-scope.md).
     hcom_tail::tail_hcom(store, hcom).await;
@@ -157,7 +161,13 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         let provisioned = match worktree::provision(&task, &eff, cfg, reuse_path.as_deref()).await {
             Ok(p) => p,
             Err(e) => {
-                block(store, &task, format!("worktree provisioning failed: {e}"), ACTOR).await;
+                block(
+                    store,
+                    &task,
+                    format!("worktree provisioning failed: {e}"),
+                    ACTOR,
+                )
+                .await;
                 continue;
             }
         };

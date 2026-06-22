@@ -18,9 +18,7 @@ use crate::state::AppState;
 
 /// `GET /settings/preferences` — the current preferences, or the defaults if the
 /// operator has never saved any. Open read (local single-user daemon).
-pub async fn get_preferences(
-    State(state): State<AppState>,
-) -> ApiResult<Json<Preferences>> {
+pub async fn get_preferences(State(state): State<AppState>) -> ApiResult<Json<Preferences>> {
     let prefs = state.store.get_preferences().await?.unwrap_or_default();
     Ok(Json(prefs))
 }

@@ -39,7 +39,13 @@ pub async fn block(store: &StoreHandle, task: &Task, reason: String, actor: &str
     // 2. Record the block. This is the durable failure; everything after is the
     //    optional hands-off recovery.
     let blocked = match store
-        .transition(id, Transition::Block { reason: reason.clone() }, actor)
+        .transition(
+            id,
+            Transition::Block {
+                reason: reason.clone(),
+            },
+            actor,
+        )
         .await
     {
         Ok(t) => t,

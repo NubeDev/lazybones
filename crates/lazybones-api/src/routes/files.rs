@@ -28,10 +28,7 @@ fn dot() -> String {
 /// `..` component. Empty (`""`) is the repo root and is fine.
 fn safe_rel(rel: &str) -> ApiResult<&str> {
     let rel = rel.trim_matches('/');
-    if rel.starts_with('/')
-        || rel.split('/').any(|seg| seg == "..")
-        || rel.contains('\0')
-    {
+    if rel.starts_with('/') || rel.split('/').any(|seg| seg == "..") || rel.contains('\0') {
         return Err(ApiError::bad_request(format!("illegal path: {rel}")));
     }
     Ok(rel)

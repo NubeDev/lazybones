@@ -24,6 +24,9 @@ export interface Workspace {
   tool: string | null;
   model: string | null;
   effort: string | null;
+  /** Open a GitHub PR automatically once every task is done (the engine spawns the
+   *  configured agent to summarize, then `gh pr create`). null/false = off. */
+  auto_pr?: boolean | null;
 }
 
 /** Human-set lifecycle (the only stored workflow state). `stopped` is a
@@ -56,6 +59,8 @@ export interface Run {
   lifecycle: Lifecycle;
   created_at: string;
   started_at: string | null;
+  /** URL of the PR the engine auto-opened on completion; null until it has. */
+  pr_url?: string | null;
 }
 
 /** `GET /workflows` item — the run plus its derived state and task counts. */

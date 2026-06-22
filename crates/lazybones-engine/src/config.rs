@@ -130,11 +130,7 @@ impl EngineConfig {
         };
 
         Ok(Self {
-            target_repo: PathBuf::from(env_or(
-                "LAZYBONES_TARGET_REPO",
-                file.target_repo,
-                ".",
-            )),
+            target_repo: PathBuf::from(env_or("LAZYBONES_TARGET_REPO", file.target_repo, ".")),
             base_branch: env_or("LAZYBONES_BASE_BRANCH", file.base_branch, "main"),
             remote: env_or("LAZYBONES_REMOTE", file.remote, "origin"),
             gate: gate(file.gate),
@@ -306,11 +302,7 @@ mod tests {
     fn permission_flags_file_replaces_default() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("lazybones.yaml");
-        std::fs::write(
-            &path,
-            "permission_flags:\n  codex:\n    - --yolo\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "permission_flags:\n  codex:\n    - --yolo\n").unwrap();
         let cfg = EngineConfig::load(&path).unwrap();
         // A file map replaces the baked-in default wholesale.
         assert!(!cfg.permission_flags.contains_key("claude"));

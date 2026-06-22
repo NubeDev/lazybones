@@ -28,6 +28,7 @@ pub async fn create_workflow(
         effort: body.workspace.effort,
         gate: body.workspace.gate,
         merge: body.workspace.merge,
+        auto_pr: body.workspace.auto_pr,
     };
     let run = Run::new(&body.id, &body.title, workspace, state.store.now());
     Ok(Json(state.store.create_run(&run).await?))

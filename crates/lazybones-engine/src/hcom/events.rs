@@ -122,7 +122,11 @@ impl Hcom {
     /// Returns an error if hcom cannot be launched or reports a SQL error.
     pub async fn latest_event_id(&self) -> anyhow::Result<u64> {
         let mut cmd = self.command();
-        cmd.arg("events").arg("--sql").arg("1=1").arg("--last").arg("1");
+        cmd.arg("events")
+            .arg("--sql")
+            .arg("1=1")
+            .arg("--last")
+            .arg("1");
         let out = cmd.output().await?;
         if out.status.code() == Some(2) {
             anyhow::bail!(
@@ -202,8 +206,14 @@ mod tests {
             !argv.iter().any(|a| a == "--wait"),
             "drain must not use --wait (it returns the timeout sentinel, not the backlog): {argv:?}"
         );
-        assert!(argv.iter().any(|a| a == "id > 42"), "must filter id > cursor: {argv:?}");
-        let last = argv.iter().position(|a| a == "--last").expect("must bound with --last");
+        assert!(
+            argv.iter().any(|a| a == "id > 42"),
+            "must filter id > cursor: {argv:?}"
+        );
+        let last = argv
+            .iter()
+            .position(|a| a == "--last")
+            .expect("must bound with --last");
         assert_eq!(argv[last + 1], super::DRAIN_CAP.to_string());
     }
 }

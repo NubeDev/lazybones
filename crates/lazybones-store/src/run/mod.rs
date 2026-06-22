@@ -24,7 +24,7 @@ pub use get::get_run;
 pub use list::{list_run_tasks, list_runs};
 pub use model::{Lifecycle, MergeMode, Run, Workspace};
 pub use resume::resume_run;
-pub use start::mark_started;
+pub use start::{clear_started, mark_started, set_pr_url};
 pub use stop::stop_run;
 pub use update::update_workspace;
 
@@ -59,6 +59,7 @@ mod tests {
                 effort: None,
                 gate: None,
                 merge: None,
+                auto_pr: None,
             },
             "2026-01-01T00:00:00Z",
         )
@@ -105,6 +106,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auto_pr_and_pr_url_roundtrip() {
+        let db = db().await;
+        let mut run = sample();
+        run.workspace.auto_pr = Some(true);
+        create_run(&db, &run).await.unwrap();
+        // The opt-in flag survives a store roundtrip; pr_url starts unset.
+        let got = get_run(&db, "workflow-1").await.unwrap().unwrap();
+        assert_eq!(got.workspace.auto_pr, Some(true));
+        assert_eq!(got.pr_url, None);
+
+        // Recording the opened PR is the idempotency guard; it persists.
+        let after = set_pr_url(&db, "workflow-1", "https://github.com/x/y/pull/1").await.unwrap();
+        assert_eq!(after.pr_url.as_deref(), Some("https://github.com/x/y/pull/1"));
+        assert_eq!(
+            get_run(&db, "workflow-1").await.unwrap().unwrap().pr_url.as_deref(),
+            Some("https://github.com/x/y/pull/1")
+        );
+
+        // A restart (clear_started) drops the PR url so completion opens a fresh one.
+        let cleared = clear_started(&db, "workflow-1").await.unwrap();
+        assert_eq!(cleared.pr_url, None);
+    }
+
+    #[tokio::test]
     async fn update_workspace_overwrites_defaults_but_keeps_repo() {
         let db = db().await;
         create_run(&db, &sample()).await.unwrap();
@@ -123,6 +148,7 @@ mod tests {
                 effort: Some("high".into()),
                 gate: None,
                 merge: Some(MergeMode::Merge),
+                auto_pr: None,
             },
         )
         .await
@@ -188,6 +214,24 @@ mod tests {
         // Idempotent: a second start keeps the first stamp.
         let r2 = mark_started(&db, "workflow-1", "2026-03-03T00:00:00Z").await.unwrap();
         assert_eq!(r2.started_at.as_deref(), Some("2026-02-02T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn clear_started_un_activates_and_restart_can_start_again() {
+        let db = db().await;
+        create_run(&db, &sample()).await.unwrap();
+        mark_started(&db, "workflow-1", "2026-02-02T00:00:00Z").await.unwrap();
+
+        // Clearing drops the stamp (the scheduler then skips the run) and forces
+        // lifecycle Active so even a stopped run becomes startable again.
+        let cleared = clear_started(&db, "workflow-1").await.unwrap();
+        assert_eq!(cleared.started_at, None, "started_at cleared by restart");
+        assert_eq!(cleared.lifecycle, Lifecycle::Active);
+
+        // A subsequent start re-stamps with the new time (no longer idempotent to
+        // the old value, because the field was cleared).
+        let restarted = mark_started(&db, "workflow-1", "2026-04-04T00:00:00Z").await.unwrap();
+        assert_eq!(restarted.started_at.as_deref(), Some("2026-04-04T00:00:00Z"));
     }
 
     #[tokio::test]

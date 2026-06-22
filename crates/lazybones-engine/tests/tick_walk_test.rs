@@ -12,9 +12,7 @@ use std::path::Path;
 use std::process::Command;
 
 use lazybones_engine::{EngineConfig, MergeMode, harness::Engine};
-use lazybones_store::{
-    Run, Status, StoreEngine, StoreHandle, Task, WorktreeMode, Workspace,
-};
+use lazybones_store::{Run, Status, StoreEngine, StoreHandle, Task, Workspace, WorktreeMode};
 
 /// Write a `hcom` stub that prints `Names: testagent` on launch, emits a DONE
 /// event on `events --wait`, and `[]` on `list --json`. Returns its path.
@@ -31,7 +29,16 @@ case "$1" in
     echo '{"id":1,"ts":"2026-01-01T00:00:00Z","type":"message","instance":"testagent","data":{"text":"DONE","thread":"x"}}'
     ;;
   *)
-    # A launch: `1 <tool> --tag <id> ...`. Print the spawned name.
+    # A launch: `1 <tool> --tag <id> --dir <worktree> ...`. A real agent edits its
+    # worktree before signalling DONE; mimic that so the engine's auto-commit has
+    # work to commit (a no-op task is now correctly blocked, so the stub MUST
+    # produce a change). Parse `--dir` and write a file there.
+    dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--dir" ]; then dir="$2"; break; fi
+      shift
+    done
+    if [ -n "$dir" ]; then echo "agent work $$" >> "$dir/agent-work.txt"; fi
     echo "Names: testagent"
     ;;
 esac
@@ -50,15 +57,28 @@ exit 0
 
 /// `git` in `dir` with `args`, asserting success.
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// A git repo with one commit and a local bare remote `origin` so the merge
 /// push step succeeds. Returns the work repo path.
 fn init_repo_with_remote(root: &Path) -> std::path::PathBuf {
     let bare = root.join("remote.git");
-    Command::new("git").args(["init", "--bare"]).arg(&bare).output().unwrap();
+    Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare)
+        .output()
+        .unwrap();
 
     let repo = root.join("work");
     std::fs::create_dir_all(&repo).unwrap();
@@ -115,10 +135,26 @@ async fn task_walks_lifecycle_and_respects_dependency() {
 
     // Seed `store` (no deps) and `auth` (depends on `store`), both pending.
     store
-        .create_task(&Task::seed("store", "r", "Store", "build store", vec![], vec![], None))
+        .create_task(&Task::seed(
+            "store",
+            "r",
+            "Store",
+            "build store",
+            vec![],
+            vec![],
+            None,
+        ))
         .await
         .unwrap();
-    let mut auth = Task::seed("auth", "r", "Auth", "build auth", vec!["store".into()], vec![], None);
+    let mut auth = Task::seed(
+        "auth",
+        "r",
+        "Auth",
+        "build auth",
+        vec!["store".into()],
+        vec![],
+        None,
+    );
     auth.deps = vec!["store".into()];
     store.create_task(&auth).await.unwrap();
     store.relate_dep("auth", "store").await.unwrap();
@@ -129,18 +165,34 @@ async fn task_walks_lifecycle_and_respects_dependency() {
     // stays pending because `store` is not yet done.
     engine.tick().await;
     assert_eq!(status_of(&store, "store").await, Status::Running);
-    assert_eq!(status_of(&store, "auth").await, Status::Pending, "auth must wait for store");
+    assert_eq!(
+        status_of(&store, "auth").await,
+        Status::Pending,
+        "auth must wait for store"
+    );
 
     // The spawned finish task awaits DONE, gates, merges, and records done. Poll
     // until `store` reaches a terminal state.
     let store_done = wait_for(&store, "store", Status::Done).await;
-    assert!(store_done, "store should reach done; got {:?}", status_of(&store, "store").await);
+    assert!(
+        store_done,
+        "store should reach done; got {:?}",
+        status_of(&store, "store").await
+    );
 
     // Tick 2: now that `store` is done, `auth` promotes and is claimed.
     engine.tick().await;
-    assert_eq!(status_of(&store, "auth").await, Status::Running, "auth starts after store done");
+    assert_eq!(
+        status_of(&store, "auth").await,
+        Status::Running,
+        "auth starts after store done"
+    );
     let auth_done = wait_for(&store, "auth", Status::Done).await;
-    assert!(auth_done, "auth should reach done; got {:?}", status_of(&store, "auth").await);
+    assert!(
+        auth_done,
+        "auth should reach done; got {:?}",
+        status_of(&store, "auth").await
+    );
 }
 
 /// A workspace pointing at `repo` with all-inherited git config.
@@ -155,6 +207,7 @@ fn workspace(repo: &Path) -> Workspace {
         effort: None,
         gate: None,
         merge: None,
+        auto_pr: None,
     }
 }
 
@@ -172,16 +225,32 @@ async fn stopped_run_claims_nothing() {
         .unwrap();
 
     // A workflow with one task already `ready`, then paused.
-    let run = Run::new("wf-stopped", "Stopped WF", workspace(&repo), "2026-01-01T00:00:00Z");
+    let run = Run::new(
+        "wf-stopped",
+        "Stopped WF",
+        workspace(&repo),
+        "2026-01-01T00:00:00Z",
+    );
     store.create_run(&run).await.unwrap();
-    let mut t = Task::seed("solo", "wf-stopped", "Solo", "build it", vec![], vec![], None);
+    let mut t = Task::seed(
+        "solo",
+        "wf-stopped",
+        "Solo",
+        "build it",
+        vec![],
+        vec![],
+        None,
+    );
     t.run_id = Some("wf-stopped".into());
     t.status = Status::Ready;
     store.create_task(&t).await.unwrap();
     // The run was started (operator pressed Start) before being paused — only a
     // started run can be stopped/resumed. Stamp `started_at` so the post-resume
     // claim isn't blocked by the "created-but-never-started promotes nothing" guard.
-    store.mark_run_started("wf-stopped", "2026-01-01T00:00:01Z").await.unwrap();
+    store
+        .mark_run_started("wf-stopped", "2026-01-01T00:00:01Z")
+        .await
+        .unwrap();
     store.stop_run("wf-stopped").await.unwrap();
 
     let engine = Engine::with_hcom_bin(store.clone(), engine_cfg(&repo), &hcom_bin);
@@ -230,10 +299,23 @@ async fn unstarted_run_promotes_nothing() {
         .unwrap();
 
     // An active workflow with a ready-to-promote root task, but never started.
-    let run = Run::new("wf-unstarted", "Unstarted WF", workspace(&repo), "2026-01-01T00:00:00Z");
+    let run = Run::new(
+        "wf-unstarted",
+        "Unstarted WF",
+        workspace(&repo),
+        "2026-01-01T00:00:00Z",
+    );
     store.create_run(&run).await.unwrap();
     assert!(run.started_at.is_none(), "a fresh run has no started_at");
-    let mut t = Task::seed("root", "wf-unstarted", "Root", "build it", vec![], vec![], None);
+    let mut t = Task::seed(
+        "root",
+        "wf-unstarted",
+        "Root",
+        "build it",
+        vec![],
+        vec![],
+        None,
+    );
     t.run_id = Some("wf-unstarted".into());
     store.create_task(&t).await.unwrap();
 
@@ -248,7 +330,10 @@ async fn unstarted_run_promotes_nothing() {
     );
 
     // Start it (the operator's "go") and the same task promotes on the next tick.
-    store.mark_run_started("wf-unstarted", "2026-01-01T00:00:01Z").await.unwrap();
+    store
+        .mark_run_started("wf-unstarted", "2026-01-01T00:00:01Z")
+        .await
+        .unwrap();
     engine.tick().await;
     assert_ne!(
         status_of(&store, "root").await,

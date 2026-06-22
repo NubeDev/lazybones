@@ -35,6 +35,8 @@ export interface WorkspaceDraft {
   tool: string | null;
   model: string | null;
   effort: string | null;
+  /** Open a GitHub PR automatically once every task is done. null/false = off. */
+  auto_pr?: boolean | null;
 }
 
 /** `POST /workflows` — create a workflow bound to a workspace. `409` if id taken. */
@@ -121,13 +123,13 @@ export function stopResetWorkflow(id: string): Promise<WorkflowSummary> {
   );
 }
 
-/** Options for restarting a workflow. Both default to `false` server-side (the
- *  safe, resume-style restart). */
+/** Options for restarting a workflow. The default (empty body) is a **hard
+ *  reset**: re-run everything, remove worktrees, delete the workflow's branch(es)
+ *  locally and on the remote. */
 export interface RestartOptions {
-  /** Also reset tasks that are already done (a true from-scratch restart). */
-  include_done?: boolean;
-  /** Also tear down each reset task's git worktree. */
-  remove_worktrees?: boolean;
+  /** Soften to a resume-style restart: keep done tasks (reset only the unfinished
+   *  part) and keep each task's worktree + branch. Default `false` (hard reset). */
+  soft?: boolean;
 }
 
 /** `POST /workflows/:id/restart` — reset the workflow's tasks to pending so it

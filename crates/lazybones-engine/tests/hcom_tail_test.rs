@@ -9,7 +9,9 @@
 use std::path::Path;
 
 use lazybones_engine::{EngineConfig, MergeMode, harness::Engine};
-use lazybones_store::{HcomLogFilter, Run, StoreEngine, StoreHandle, Task, Workspace, WorktreeMode};
+use lazybones_store::{
+    HcomLogFilter, Run, StoreEngine, StoreHandle, Task, Workspace, WorktreeMode,
+};
 
 /// A fake hcom mirroring the real 0.7.21 shapes that bit us:
 /// - `list --json` reports the agent with a *prefixed* `name` (`auth-kula`) and a
@@ -93,6 +95,7 @@ async fn tail_ingests_event_and_advances_cursor() {
             effort: None,
             gate: None,
             merge: None,
+            auto_pr: None,
         },
         "2026-01-01T00:00:00Z",
     );
@@ -123,7 +126,12 @@ async fn tail_ingests_event_and_advances_cursor() {
     assert_eq!(entry.data["text"], serde_json::json!("working on auth"));
 
     // The run's cursor advanced to the max ingested id.
-    let cursor = store.get_run("workflow-1").await.unwrap().unwrap().hcom_log_cursor;
+    let cursor = store
+        .get_run("workflow-1")
+        .await
+        .unwrap()
+        .unwrap()
+        .hcom_log_cursor;
     assert_eq!(cursor, Some(7));
 
     // A second tick re-drains from below the cursor but the (run, hcom_id) upsert

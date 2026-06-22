@@ -45,13 +45,22 @@ fn loop_req(method: &str, path: &str, body: Value) -> Request<Body> {
 }
 
 fn get(path: &str) -> Request<Body> {
-    Request::builder().method("GET").uri(path).body(Body::empty()).unwrap()
+    Request::builder()
+        .method("GET")
+        .uri(path)
+        .body(Body::empty())
+        .unwrap()
 }
 
 #[tokio::test]
 async fn skill_crud_roundtrip() {
     let store = store().await;
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     // Create.
     let (s, body) = send(
@@ -115,7 +124,11 @@ async fn skill_crud_roundtrip() {
     assert_eq!(s, StatusCode::NOT_FOUND, "update unknown skill");
 
     // Delete (and report existence).
-    let (s, body) = send(&app, loop_req("DELETE", "/skills/code-review-rust", Value::Null)).await;
+    let (s, body) = send(
+        &app,
+        loop_req("DELETE", "/skills/code-review-rust", Value::Null),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["deleted"], true);
     let (s, _) = send(&app, get("/skills/code-review-rust")).await;
@@ -125,7 +138,12 @@ async fn skill_crud_roundtrip() {
 #[tokio::test]
 async fn template_attachments_attach_list_filter_detach() {
     let store = store().await;
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     // An owner template + a skill to attach.
     let (s, _) = send(
@@ -140,7 +158,11 @@ async fn template_attachments_attach_list_filter_detach() {
     assert_eq!(s, StatusCode::OK, "create template");
     let (s, _) = send(
         &app,
-        loop_req("POST", "/skills", json!({ "id": "review", "title": "Review", "body": "x" })),
+        loop_req(
+            "POST",
+            "/skills",
+            json!({ "id": "review", "title": "Review", "body": "x" }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "create skill");
@@ -180,7 +202,11 @@ async fn template_attachments_attach_list_filter_detach() {
     // List all → 2; filter by thing_kind=skill → 1.
     let (s, body) = send(&app, get("/templates/open-pr/attachments")).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(body.as_array().unwrap().len(), 2, "two distinct attachments");
+    assert_eq!(
+        body.as_array().unwrap().len(),
+        2,
+        "two distinct attachments"
+    );
 
     let (s, body) = send(&app, get("/templates/open-pr/attachments?thing_kind=skill")).await;
     assert_eq!(s, StatusCode::OK);
@@ -191,7 +217,11 @@ async fn template_attachments_attach_list_filter_detach() {
     // Detach the skill.
     let (s, body) = send(
         &app,
-        loop_req("DELETE", "/templates/open-pr/attachments/skill/review", Value::Null),
+        loop_req(
+            "DELETE",
+            "/templates/open-pr/attachments/skill/review",
+            Value::Null,
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -205,7 +235,12 @@ async fn template_attachments_attach_list_filter_detach() {
 #[tokio::test]
 async fn attaching_to_a_missing_template_is_404() {
     let store = store().await;
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     let (s, _) = send(
         &app,
@@ -225,7 +260,12 @@ async fn attaching_to_a_missing_template_is_404() {
 #[tokio::test]
 async fn structured_action_skill_validates_and_persists() {
     let store = store().await;
-    let app = router(AppState::new(store.clone(), "run", "http://127.0.0.1:0", LOOP_TOKEN));
+    let app = router(AppState::new(
+        store.clone(),
+        "run",
+        "http://127.0.0.1:0",
+        LOOP_TOKEN,
+    ));
 
     // A malformed action (template references an undeclared param) → 400.
     let (s, _) = send(

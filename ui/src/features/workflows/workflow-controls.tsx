@@ -65,8 +65,8 @@ export function WorkflowControls({
 
   const [dialog, setDialog] = useState<ActiveDialog>(null);
   const [promoted, setPromoted] = useState<string[] | null>(null);
-  const [includeDone, setIncludeDone] = useState(false);
-  const [removeWorktrees, setRemoveWorktrees] = useState(false);
+  // Default ON: a restart is a true hard reset unless the operator opts into soft.
+  const [hardReset, setHardReset] = useState(true);
 
   const state = workflow.state;
   const isDraft = state === "draft";
@@ -253,29 +253,16 @@ export function WorkflowControls({
               <input
                 type="checkbox"
                 className="mt-0.5"
-                checked={includeDone}
-                onChange={(e) => setIncludeDone(e.target.checked)}
+                checked={hardReset}
+                onChange={(e) => setHardReset(e.target.checked)}
               />
               <span>
-                <b className="font-medium">Also reset done tasks</b>
+                <b className="font-medium">Hard reset</b>
                 <span className="block text-muted-foreground">
-                  Re-run everything from scratch. Off: keep completed tasks, redo only
-                  the unfinished ones.
-                </span>
-              </span>
-            </label>
-            <label className="flex cursor-pointer items-start gap-2 text-xs">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={removeWorktrees}
-                onChange={(e) => setRemoveWorktrees(e.target.checked)}
-              />
-              <span>
-                <b className="font-medium">Remove worktrees</b>
-                <span className="block text-muted-foreground">
-                  Tear down each task's git worktree for a truly clean start. Off:
-                  leave them to be reused.
+                  Re-runs everything (done tasks included), removes worktrees, and
+                  deletes this workflow's branch locally and on the remote so it
+                  starts clean. Off: a soft resume — keep done tasks and their
+                  worktrees, redo only the unfinished part.
                 </span>
               </span>
             </label>
@@ -292,7 +279,7 @@ export function WorkflowControls({
               onClick={() => {
                 restart.mutate({
                   id: workflow.id,
-                  opts: { include_done: includeDone, remove_worktrees: removeWorktrees },
+                  opts: { soft: !hardReset },
                 });
                 setDialog(null);
               }}

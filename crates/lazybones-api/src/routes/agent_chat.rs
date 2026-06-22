@@ -20,8 +20,7 @@ use axum::response::Sse;
 use axum::response::sse::{Event as SseEvent, KeepAlive};
 use lazybones_auth::ManagementProfile;
 use lazybones_store::{
-    AgentConversation, AgentMessage, AgentRole, LiveEvent, ManagementAgentScope,
-    PermissionProfile,
+    AgentConversation, AgentMessage, AgentRole, LiveEvent, ManagementAgentScope, PermissionProfile,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -71,7 +70,10 @@ pub async fn post_agent_chat(
 
     // The effective page context for this turn (request envelope wins, else the
     // conversation's opening snapshot) and the workflow scope it implies.
-    let ctx = body.page_context.as_ref().or(conversation.page_context.as_ref());
+    let ctx = body
+        .page_context
+        .as_ref()
+        .or(conversation.page_context.as_ref());
     let workflow_scope = lazybones_engine::page_context_workflow_id(ctx);
     let scope = match &workflow_scope {
         Some(id) => ManagementAgentScope::Workflow(id.clone()),
@@ -134,7 +136,9 @@ pub async fn get_agent_chat(
         .get_agent_conversation(&conversation)
         .await?
         .ok_or(ApiError::NotFound)?;
-    Ok(Json(state.store.agent_message_history(&conversation).await?))
+    Ok(Json(
+        state.store.agent_message_history(&conversation).await?,
+    ))
 }
 
 /// `GET /agent/conversations` — list conversations, newest first.
@@ -200,7 +204,10 @@ fn to_sse(
 ) -> Option<Result<SseEvent, Infallible>> {
     match item.ok()? {
         LiveEvent::AgentMessage(msg) if msg.conversation_id == conversation => {
-            Some(Ok(SseEvent::default().event("message").json_data(msg).ok()?))
+            Some(Ok(SseEvent::default()
+                .event("message")
+                .json_data(msg)
+                .ok()?))
         }
         // Ephemeral "what the agent is doing now" tick — a separate `activity`
         // event the panel renders as the live working line (not stored).

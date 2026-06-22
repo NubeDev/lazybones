@@ -308,6 +308,11 @@ pub struct WorkspaceBody {
     /// wanting strict linear history can pin `fast-forward` while others use `merge`.
     #[serde(default)]
     pub merge: Option<MergeMode>,
+    /// Open a GitHub PR automatically once every task is done (the engine spawns
+    /// the workflow's agent to write a summary, then `gh pr create`). Omitted/`null`
+    /// = off. Best paired with `Shared` mode (one branch → one PR).
+    #[serde(default)]
+    pub auto_pr: Option<bool>,
 }
 
 /// `POST /workflows` body: a new workflow bound to a workspace.
@@ -596,6 +601,7 @@ mod tests {
                 effort: None,
                 gate: None,
                 merge: None,
+                auto_pr: None,
             },
             "2026-01-01T00:00:00Z",
         )

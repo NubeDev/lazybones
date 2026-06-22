@@ -74,13 +74,26 @@ fn write_exec(path: &Path, script: &str) -> String {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn init_repo_with_remote(root: &Path) -> std::path::PathBuf {
     let bare = root.join("remote.git");
-    Command::new("git").args(["init", "--bare"]).arg(&bare).output().unwrap();
+    Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare)
+        .output()
+        .unwrap();
     let repo = root.join("work");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-b", "main"]);
@@ -167,7 +180,11 @@ async fn auto_retry_reattempts_up_to_the_cap_then_stays_blocked() {
     let after_first = store.get_task("flaky").await.unwrap().unwrap();
     assert_eq!(after_first.retry_count, 1, "one auto-retry spent");
     let chat = store.chat_history("flaky").await.unwrap();
-    assert_eq!(chat.len(), 1, "one guidance message after the first auto-retry");
+    assert_eq!(
+        chat.len(),
+        1,
+        "one guidance message after the first auto-retry"
+    );
     assert!(
         chat[0].text.contains("still red") && chat[0].text.contains("smallest"),
         "quick-strategy guidance names the reason: {:?}",
@@ -225,7 +242,10 @@ async fn auto_retry_fires_on_a_spawn_failure() {
         status_of(&store, "spawny").await
     );
     let after_first = store.get_task("spawny").await.unwrap().unwrap();
-    assert_eq!(after_first.retry_count, 1, "the spawn-failure auto-retry was spent");
+    assert_eq!(
+        after_first.retry_count, 1,
+        "the spawn-failure auto-retry was spent"
+    );
 
     // Tick 2: spawn fails again → budget now spent (1 >= 1) → stays blocked.
     engine.tick().await;

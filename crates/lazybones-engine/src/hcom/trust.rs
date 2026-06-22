@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Resolve the `.claude.json` Claude Code reads.
 ///
@@ -93,12 +93,16 @@ fn config_with_trusted_folder(existing: &str, folder: &str) -> anyhow::Result<Op
             .cloned()
             .ok_or_else(|| anyhow::anyhow!(".claude.json is not a JSON object"))?
     };
-    let projects = root.entry("projects".to_owned()).or_insert_with(|| json!({}));
+    let projects = root
+        .entry("projects".to_owned())
+        .or_insert_with(|| json!({}));
     if !projects.is_object() {
         *projects = json!({});
     }
     let projects = projects.as_object_mut().expect("projects forced to object");
-    let entry = projects.entry(folder.to_owned()).or_insert_with(|| json!({}));
+    let entry = projects
+        .entry(folder.to_owned())
+        .or_insert_with(|| json!({}));
     if !entry.is_object() {
         *entry = json!({});
     }
@@ -129,7 +133,9 @@ fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(
         ".{}.lazy-trust.tmp",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("claude")
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("claude")
     ));
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, path)
@@ -143,8 +149,14 @@ mod tests {
     fn seeds_flag_in_empty_config() {
         let out = config_with_trusted_folder("", "/ws/a").unwrap().unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["projects"]["/ws/a"]["hasTrustDialogAccepted"], json!(true));
-        assert_eq!(v["projects"]["/ws/a"]["hasCompletedProjectOnboarding"], json!(true));
+        assert_eq!(
+            v["projects"]["/ws/a"]["hasTrustDialogAccepted"],
+            json!(true)
+        );
+        assert_eq!(
+            v["projects"]["/ws/a"]["hasCompletedProjectOnboarding"],
+            json!(true)
+        );
     }
 
     #[test]
@@ -156,12 +168,17 @@ mod tests {
     "/ws/a": { "hasTrustDialogAccepted": true, "history": [1, 2] }
   }
 }"#;
-        let out = config_with_trusted_folder(existing, "/ws/b").unwrap().unwrap();
+        let out = config_with_trusted_folder(existing, "/ws/b")
+            .unwrap()
+            .unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["numStartups"], json!(7));
         assert_eq!(v["bypassPermissionsModeAccepted"], json!(true));
         assert_eq!(v["projects"]["/ws/a"]["history"], json!([1, 2]));
-        assert_eq!(v["projects"]["/ws/b"]["hasTrustDialogAccepted"], json!(true));
+        assert_eq!(
+            v["projects"]["/ws/b"]["hasTrustDialogAccepted"],
+            json!(true)
+        );
     }
 
     #[test]
@@ -171,16 +188,25 @@ mod tests {
     "/ws/a": { "hasTrustDialogAccepted": false, "projectOnboardingSeenCount": 0, "history": ["x"] }
   }
 }"#;
-        let out = config_with_trusted_folder(existing, "/ws/a").unwrap().unwrap();
+        let out = config_with_trusted_folder(existing, "/ws/a")
+            .unwrap()
+            .unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["projects"]["/ws/a"]["hasTrustDialogAccepted"], json!(true));
+        assert_eq!(
+            v["projects"]["/ws/a"]["hasTrustDialogAccepted"],
+            json!(true)
+        );
         assert_eq!(v["projects"]["/ws/a"]["history"], json!(["x"]));
     }
 
     #[test]
     fn noop_when_already_trusted() {
         let existing = r#"{ "projects": { "/ws/a": { "hasTrustDialogAccepted": true } } }"#;
-        assert!(config_with_trusted_folder(existing, "/ws/a").unwrap().is_none());
+        assert!(
+            config_with_trusted_folder(existing, "/ws/a")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -200,7 +226,10 @@ mod tests {
         // cleaned up by the rename (only the final config remains).
         let back = std::fs::read_to_string(&path).unwrap();
         let v: Value = serde_json::from_str(&back).unwrap();
-        assert_eq!(v["projects"]["/ws/a"]["hasTrustDialogAccepted"], json!(true));
+        assert_eq!(
+            v["projects"]["/ws/a"]["hasTrustDialogAccepted"],
+            json!(true)
+        );
         let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .filter_map(Result::ok)

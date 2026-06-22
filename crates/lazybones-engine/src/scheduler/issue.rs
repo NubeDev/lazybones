@@ -111,12 +111,7 @@ pub async fn create(store: &StoreHandle, gh: &Gh, id: &str) -> Result<Task, Issu
 /// # Errors
 /// [`IssueError::BadLink`] if `link` has no parseable number;
 /// [`IssueError::Standalone`] / [`IssueError::Auth`] / [`IssueError::Gh`] as above.
-pub async fn link(
-    store: &StoreHandle,
-    gh: &Gh,
-    id: &str,
-    link: &str,
-) -> Result<Task, IssueError> {
+pub async fn link(store: &StoreHandle, gh: &Gh, id: &str, link: &str) -> Result<Task, IssueError> {
     let mut task = load(store, id).await?;
     let dir = repo_dir(store, &task).await?;
     ensure_auth(gh).await?;
@@ -238,7 +233,10 @@ async fn sync_one(store: &StoreHandle, gh: &Gh, task: &Task) -> Result<(), Issue
         // Issue closed externally and we haven't already recorded it → land done.
         (s, Some(IssueSyncState::Closed)) if s != Some(IssueSyncState::Closed) => {
             if task.status != lazybones_store::Status::Done {
-                match store.transition(&task.id, Transition::ExternalDone, ACTOR).await {
+                match store
+                    .transition(&task.id, Transition::ExternalDone, ACTOR)
+                    .await
+                {
                     Ok(_) => tracing::info!(
                         task = %task.id, number,
                         "issue closed on GitHub → task landed done"
@@ -321,10 +319,7 @@ mod tests {
     fn parse_link_accepts_hash_bare_and_url() {
         assert_eq!(parse_link("#42"), Some(42));
         assert_eq!(parse_link("42"), Some(42));
-        assert_eq!(
-            parse_link("https://github.com/o/r/issues/7"),
-            Some(7)
-        );
+        assert_eq!(parse_link("https://github.com/o/r/issues/7"), Some(7));
         assert_eq!(parse_link("https://github.com/o/r/issues/7/"), Some(7));
         assert_eq!(parse_link("not-a-link"), None);
     }
