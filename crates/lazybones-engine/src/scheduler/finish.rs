@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use lazybones_store::{StoreHandle, Task, Transition};
+use lazybones_store::{Status, StoreHandle, Task, Transition};
 
 use crate::config::EngineConfig;
 use crate::hcom::Hcom;
@@ -123,7 +123,8 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
             // *and* no commits ahead of base is a real no-op task (the agent did
             // nothing): block it rather than land empty work.
             let wt = std::path::Path::new(&worktree_path);
-            match merge::commit_worktree(wt, task).await {
+            let progress = workflow_progress(store, task).await;
+            match merge::commit_worktree(wt, task, progress).await {
                 Ok(Some(_sha)) => {} // committed; fall through to land the new head
                 Ok(None) => {
                     let branch = task.branch.clone().unwrap_or_default();
@@ -147,6 +148,16 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
                     return;
                 }
             }
+            // Push the task branch to the remote right after committing, so a
+            // finished task's work is backed up before the (mode-specific, possibly
+            // slower) landing merge runs. Best-effort: a missing remote is skipped
+            // and a push failure is logged, not fatal — `land()` still enforces the
+            // authoritative push for the merge.
+            if let Some(branch) = task.branch.as_deref()
+                && let Err(e) = merge::push_branch(wt, &cfg.remote, branch).await
+            {
+                tracing::warn!(task = %task.id, "post-commit branch push failed: {e}");
+            }
             match merge::land(task, eff, cfg).await {
                 Ok(commit) => {
                     match store
@@ -169,6 +180,23 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
             }
         }
     }
+}
+
+/// `Some((n, total))` for the task's workflow: `total` tasks in the workflow and
+/// this one is the `n`-th to complete. `None` for a standalone task (no `run_id`)
+/// — there is no workflow to count against, so the commit keeps its plain form.
+///
+/// The task hasn't transitioned to `Done` yet (that happens after landing), so
+/// the ordinal is the count of already-done siblings plus this one.
+async fn workflow_progress(store: &StoreHandle, task: &Task) -> Option<(usize, usize)> {
+    let run_id = task.run_id.as_deref()?;
+    let tasks = store.list_run_tasks(run_id).await.ok()?;
+    let total = tasks.len();
+    if total == 0 {
+        return None;
+    }
+    let done = tasks.iter().filter(|t| t.status == Status::Done).count();
+    Some((done + 1, total))
 }
 
 #[cfg(test)]

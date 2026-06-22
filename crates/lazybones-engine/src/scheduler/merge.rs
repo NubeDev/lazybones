@@ -81,11 +81,16 @@ pub async fn land(task: &Task, eff: &EffectiveGit, cfg: &EngineConfig) -> anyhow
 /// Runs in the task's own worktree (`worktree`), not the main repo, so a `Shared`
 /// run accumulates one commit per task on the shared branch in sequence.
 ///
+/// `progress` is `Some((n, total))` to label the commit with the task's position
+/// in its workflow — `n` of `total` tasks completed. `None` (a standalone task
+/// with no workflow) keeps the plain `task(<id>): <title>` form.
+///
 /// # Errors
 /// Returns an error if a git step fails; the caller turns it into a `Block`.
 pub async fn commit_worktree(
     worktree: &std::path::Path,
     task: &Task,
+    progress: Option<(usize, usize)>,
 ) -> anyhow::Result<Option<String>> {
     let add = git(worktree, &["add", "-A"]).await?;
     if !add.ok {
@@ -119,7 +124,11 @@ pub async fn commit_worktree(
         // commit. Let the caller decide (no-op vs. already-committed) via the branch.
         return Ok(None);
     }
-    let msg = format!("task({}): {}", task.id, task.title);
+    let msg = match progress {
+        // Title + workflow progress, e.g. "Add auth — task 2 completed of 5".
+        Some((n, total)) => format!("{} — task {n} completed of {total}", task.title),
+        None => format!("task({}): {}", task.id, task.title),
+    };
     let commit = git(worktree, &["commit", "-m", &msg]).await?;
     if !commit.ok {
         anyhow::bail!(
@@ -187,6 +196,23 @@ async fn push(repo: &std::path::Path, remote: &str, refname: &str) -> anyhow::Re
         anyhow::bail!("git push {remote} {refname} failed: {}", out.stderr);
     }
     Ok(())
+}
+
+/// Push `branch` to `remote` from `repo` (the task's worktree).
+///
+/// Public wrapper over [`push`] for pushing the task branch right after the
+/// auto-commit, before the landing merge — so a finished task's work reaches the
+/// remote even if a later landing step is slow or fails. A missing remote is
+/// skipped, not an error (see [`push`]).
+///
+/// # Errors
+/// Returns an error if a configured remote's push fails.
+pub async fn push_branch(
+    repo: &std::path::Path,
+    remote: &str,
+    branch: &str,
+) -> anyhow::Result<()> {
+    push(repo, remote, branch).await
 }
 
 /// Resolve the branch head, preferring the task's worktree if it has one.
@@ -412,7 +438,7 @@ mod tests {
 
         let mut task = Task::seed("auth", "r", "Add auth", "s", vec![], vec![], None);
         task.branch = Some("lazy/auth".into());
-        let sha = commit_worktree(dir.path(), &task).await.unwrap();
+        let sha = commit_worktree(dir.path(), &task, None).await.unwrap();
 
         let sha = sha.expect("uncommitted work should produce a commit");
         let head = rev_parse(dir.path(), "HEAD").await.unwrap();
@@ -423,6 +449,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(msg.stdout, "task(auth): Add auth");
+    }
+
+    /// With workflow progress, the commit message carries the task's position —
+    /// title plus "task N completed of M", dropping the `task(id):` prefix.
+    #[tokio::test]
+    async fn commit_worktree_message_carries_workflow_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        git(dir.path(), &["checkout", "-b", "lazy/run-1"])
+            .await
+            .unwrap();
+        std::fs::write(dir.path().join("work.txt"), "new work").unwrap();
+
+        let mut task = Task::seed("auth", "r", "Add auth", "s", vec![], vec![], None);
+        task.branch = Some("lazy/run-1".into());
+        commit_worktree(dir.path(), &task, Some((2, 5)))
+            .await
+            .unwrap()
+            .expect("uncommitted work should produce a commit");
+
+        let msg = git(dir.path(), &["log", "-1", "--pretty=%s"])
+            .await
+            .unwrap();
+        assert_eq!(msg.stdout, "Add auth — task 2 completed of 5");
     }
 
     /// A truly empty task (clean tree, nothing ahead of base) reports `None` from
@@ -437,7 +487,7 @@ mod tests {
 
         let mut task = Task::seed("noop", "r", "Nothing", "s", vec![], vec![], None);
         task.branch = Some("lazy/noop".into());
-        let res = commit_worktree(dir.path(), &task).await.unwrap();
+        let res = commit_worktree(dir.path(), &task, None).await.unwrap();
         assert!(res.is_none(), "a clean tree has nothing to commit");
         // And the branch carries no commits ahead of base → genuinely empty.
         let ahead = branch_has_commits(dir.path(), "main", "lazy/noop")
@@ -464,7 +514,7 @@ mod tests {
 
         let mut task = Task::seed("done", "r", "t", "s", vec![], vec![], None);
         task.branch = Some("lazy/done".into());
-        let res = commit_worktree(dir.path(), &task).await.unwrap();
+        let res = commit_worktree(dir.path(), &task, None).await.unwrap();
         assert!(res.is_none(), "nothing new to commit");
         let ahead = branch_has_commits(dir.path(), "main", "lazy/done")
             .await
@@ -490,7 +540,7 @@ mod tests {
         std::fs::write(dir.path().join("t1.txt"), "1").unwrap();
         let mut t1 = Task::seed("t1", "r", "First", "s", vec![], vec![], None);
         t1.branch = Some("lazy/run-1".into());
-        commit_worktree(dir.path(), &t1)
+        commit_worktree(dir.path(), &t1, None)
             .await
             .unwrap()
             .expect("t1 commit");
@@ -499,7 +549,7 @@ mod tests {
         std::fs::write(dir.path().join("t2.txt"), "2").unwrap();
         let mut t2 = Task::seed("t2", "r", "Second", "s", vec![], vec![], None);
         t2.branch = Some("lazy/run-1".into());
-        commit_worktree(dir.path(), &t2)
+        commit_worktree(dir.path(), &t2, None)
             .await
             .unwrap()
             .expect("t2 commit");
