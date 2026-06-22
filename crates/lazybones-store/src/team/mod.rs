@@ -15,7 +15,7 @@ mod under;
 pub use create::create_team;
 pub use get::get_team;
 pub use list::list_teams;
-pub use member::{MemberRole, Membership, add_member, members_of};
+pub use member::{MemberRole, Membership, add_member, members_of, remove_member};
 pub use model::Team;
 pub use under::{org_teams, place_team_under_org};
 
@@ -112,6 +112,23 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert_eq!(members[0], Membership { user: "ada".into(), role: MemberRole::Manager });
         assert_eq!(members[1], Membership { user: "bob".into(), role: MemberRole::Member });
+    }
+
+    #[tokio::test]
+    async fn remove_member_drops_the_edge_and_reports_existence() {
+        let db = db().await;
+        create_team(&db, &Team::new("platform", "Platform", "2026-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        create_user(&db, &User::new("ada", "Ada", "2026-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        add_member(&db, "ada", "platform", MemberRole::Manager).await.unwrap();
+
+        // First removal reports the edge existed; the second is a clean no-op.
+        assert!(remove_member(&db, "ada", "platform").await.unwrap());
+        assert!(members_of(&db, "platform").await.unwrap().is_empty());
+        assert!(!remove_member(&db, "ada", "platform").await.unwrap());
     }
 
     #[tokio::test]

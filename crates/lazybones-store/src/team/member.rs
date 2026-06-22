@@ -50,7 +50,7 @@ impl MemberRole {
 }
 
 /// One team membership: who, and with what per-team role.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Membership {
     /// The member's user id.
     pub user: String,
@@ -95,6 +95,34 @@ pub async fn add_member(
     .check()
     .map_err(StoreError::Operation)?;
     Ok(())
+}
+
+/// Remove `user ->member_of-> team`, returning whether an edge existed.
+///
+/// The inverse of [`add_member`]: idempotent in the other direction — removing a
+/// membership that was never there is a clean `false`, not an error. The team
+/// itself is left untouched (only the edge is dropped).
+///
+/// # Errors
+/// Returns [`StoreError::Operation`] if the read or delete fails.
+pub async fn remove_member(db: &Surreal<Db>, user: &str, team: &str) -> Result<bool> {
+    let edge = RecordId::new(MEMBER_OF_TABLE, format!("{user}__{team}"));
+    // Probe by id first (the edge id is deterministic), then delete unconditionally
+    // so the caller learns whether anything was actually removed.
+    let found: Vec<RecordId> = db
+        .query("SELECT VALUE id FROM $edge")
+        .bind(("edge", edge.clone()))
+        .await
+        .map_err(StoreError::Operation)?
+        .take(0)
+        .map_err(StoreError::Operation)?;
+    db.query("DELETE $edge")
+        .bind(("edge", edge))
+        .await
+        .map_err(StoreError::Operation)?
+        .check()
+        .map_err(StoreError::Operation)?;
+    Ok(!found.is_empty())
 }
 
 /// A row of the membership read: the member's plain user id and stored role.

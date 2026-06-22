@@ -106,7 +106,10 @@ impl IntoResponse for ApiError {
                 | StoreError::DocumentNotFound(_)
                 | StoreError::AssetNotFound(_)
                 | StoreError::BrandingNotFound(_)
-                | StoreError::SourceNotFound(_),
+                | StoreError::SourceNotFound(_)
+                | StoreError::ProjectNotFound(_)
+                | StoreError::TeamNotFound(_)
+                | StoreError::OrgNotFound(_),
             ) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Store(StoreError::IllegalTransition { .. }) => {
                 (StatusCode::CONFLICT, self.to_string())
@@ -118,7 +121,8 @@ impl IntoResponse for ApiError {
                 | StoreError::RunExists(_)
                 | StoreError::AgentExists(_)
                 | StoreError::DocumentExists(_)
-                | StoreError::BrandingExists(_),
+                | StoreError::BrandingExists(_)
+                | StoreError::ProjectExists(_),
             ) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),

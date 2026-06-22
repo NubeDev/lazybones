@@ -31,6 +31,12 @@ pub struct AppState {
     /// `http://127.0.0.1:8080`). Handed to the management agent so it can call
     /// the API the same way an operator does.
     pub base_url: String,
+    /// Whether org-graph roles are in force (an `[server]` config is present). When
+    /// `false` — the local single-operator daemon — the role guard
+    /// ([`routes::guard`](crate::routes)) no-ops and the operator is trusted exactly
+    /// as today (projects.md "Locally … there are no roles"). Set by the server
+    /// wiring via [`with_roles`](Self::with_roles); defaults off.
+    roles_enabled: bool,
     /// A monotonic counter for minting unique management-agent token suffixes.
     /// (`Date.now`/random are avoided; a simple counter is enough here.)
     mint_counter: Arc<AtomicU64>,
@@ -58,9 +64,26 @@ impl AppState {
             assets: Arc::new(FileBlobStore::new(std::env::temp_dir().join("lazybones-assets"))),
             run: run.into(),
             base_url: base_url.into(),
+            roles_enabled: false,
             mint_counter: Arc::new(AtomicU64::new(0)),
             tokens: Arc::new(RwLock::new(tokens)),
         }
+    }
+
+    /// Enable (or disable) org-graph role enforcement (builder style). The server
+    /// wiring flips this on when an `[server]` config is present; the local daemon
+    /// leaves it off so the role guard no-ops and trusts its single operator.
+    #[must_use]
+    pub fn with_roles(mut self, enabled: bool) -> Self {
+        self.roles_enabled = enabled;
+        self
+    }
+
+    /// Whether org-graph roles are enforced. The role guard reads this to decide
+    /// between gating a verb and passing through (local single-operator mode).
+    #[must_use]
+    pub fn roles_enabled(&self) -> bool {
+        self.roles_enabled
     }
 
     /// Swap in the asset blob store (builder style). Called by `serve.rs` to root

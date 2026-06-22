@@ -48,7 +48,7 @@ use crate::skill::{
 };
 use crate::team::{
     MemberRole, Membership, Team, add_member, create_team, get_team, list_teams, members_of,
-    org_teams, place_team_under_org,
+    org_teams, place_team_under_org, remove_member,
 };
 use crate::user::{User, create_user, get_user, list_users};
 use crate::chat::{ChatMessage, ChatRole, append_chat, chat_history};
@@ -1214,6 +1214,14 @@ impl StoreHandle {
     /// fails.
     pub async fn add_member(&self, user: &str, team: &str, role: MemberRole) -> Result<()> {
         add_member(&self.db, user, team, role).await
+    }
+
+    /// Remove `user ->member_of-> team`. Returns whether a membership existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn remove_member(&self, user: &str, team: &str) -> Result<bool> {
+        remove_member(&self.db, user, team).await
     }
 
     /// The members of a team, each with their per-team role.

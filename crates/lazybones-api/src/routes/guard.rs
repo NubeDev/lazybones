@@ -9,9 +9,11 @@
 //! `409` so the operator must [`resume`](super::workflows_resume) the workflow
 //! first. Standalone tasks (no parent run) are always revivable.
 
-use lazybones_store::{Lifecycle, Task};
+use lazybones_auth::AuthError;
+use lazybones_store::{Lifecycle, MemberRole, Task};
 
 use crate::error::{ApiError, ApiResult};
+use crate::extract::Session;
 use crate::state::AppState;
 
 /// Refuse (`409`) if `task`'s parent workflow is not in a revivable lifecycle
@@ -36,4 +38,79 @@ pub async fn ensure_run_revivable(state: &AppState, task: &Task) -> ApiResult<()
         )));
     }
     Ok(())
+}
+
+/// The org-graph authority a mutating verb demands of the calling principal,
+/// gated by [`ensure_role`] against the team graph (projects.md "Roles").
+///
+/// This is the D5 "option B" locus (review-resolutions.md): the daemon holds one
+/// root SurrealDB session and authorization is enforced here, in guard clauses —
+/// **not** by a per-request `db.authenticate(jwt)`, which would race on the shared
+/// handle. The principal is the session's [`actor`](Session::actor); in roles mode
+/// that string is the user id in the graph.
+pub enum RoleReq {
+    /// Org-wide authority — managing teams, users, membership and roles. Only a
+    /// global `admin` clears this (projects.md Roles: "Admin … manage teams,
+    /// users, roles").
+    Admin,
+    /// Authority over one team's projects — create/archive/edit and assign work,
+    /// see status (projects.md Roles: "Team Manager"). A global `admin` or a
+    /// `manager` of `team` clears it. A teamless project (`team == None`) has no
+    /// managing team, so it collapses to [`Admin`](Self::Admin).
+    TeamManager { team: Option<String> },
+}
+
+/// Refuse (`403`) unless the `session`'s principal holds the org-graph authority
+/// `req` demands.
+///
+/// **Local single-operator mode** ([`AppState::roles_enabled`] is `false`, no
+/// `[server]` config): there are no roles, so this is a pass-through — the daemon
+/// trusts its one operator exactly as today. A global `admin` clears every verb;
+/// otherwise the per-team `member_of` role is consulted.
+///
+/// # Errors
+/// Returns [`ApiError::Forbidden`] if the principal lacks the required role, or a
+/// store error if a graph read fails.
+pub async fn ensure_role(state: &AppState, session: &Session, req: RoleReq) -> ApiResult<()> {
+    // No `[server]` config ⇒ no roles: trust the single operator (no-op).
+    if !state.roles_enabled() {
+        return Ok(());
+    }
+
+    let principal = session.actor();
+    // A global admin clears everything (the `admin` bool on the user row).
+    if state
+        .store
+        .get_user(principal)
+        .await?
+        .is_some_and(|u| u.admin)
+    {
+        return Ok(());
+    }
+
+    match req {
+        RoleReq::Admin => Err(forbidden("admin")),
+        RoleReq::TeamManager { team: Some(team) } => {
+            let is_manager = state
+                .store
+                .members_of(&team)
+                .await?
+                .into_iter()
+                .any(|m| m.user == principal && m.role == MemberRole::Manager);
+            if is_manager {
+                Ok(())
+            } else {
+                Err(forbidden(&format!("manager of team `{team}`")))
+            }
+        }
+        // A teamless project has no managing team — only an admin may touch it.
+        RoleReq::TeamManager { team: None } => Err(forbidden("admin")),
+    }
+}
+
+/// A `403` carrying which authority the verb required.
+fn forbidden(required: &str) -> ApiError {
+    ApiError::Forbidden(AuthError::ForbiddenRole(format!(
+        "requires {required}"
+    )))
 }
