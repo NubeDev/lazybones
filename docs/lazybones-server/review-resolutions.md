@@ -113,8 +113,10 @@ The `(task, hcom_id)` dedup is hcom-specific; team chat dedups on its own ULID.
 ## Phase-1 blockers (must be closed before code)
 
 1. D1 transport decision ratified (remote SurrealDB + outbox; no Zenoh).
-2. D2 `scoped_to` → edge identity (decides the routing key shape).
-3. D4 id namespacing (decides record-id schema, not just wire).
+2. D2 `scoped_to` → edge identity (decides the routing key shape). **RESOLVED** —
+   pinned in [projects-decisions.md](projects-decisions.md) §2 (schema) / §1 Q2.
+3. D4 id namespacing (decides record-id schema, not just wire). **RESOLVED** —
+   `{org}/{edge}` rule + scope in [projects-decisions.md](projects-decisions.md) §3.
 4. D3 reassignment handshake defined before any cancel/reassign path.
 5. D5 authz enforcement locus (B, or pooled remote sessions).
 6. D7 retention policy sketched (can land in phase 2, but named now).
