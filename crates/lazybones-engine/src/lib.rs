@@ -204,6 +204,9 @@ pub mod harness {
         store: StoreHandle,
         hcom: Hcom,
         cfg: EngineConfig,
+        /// Per-engine drive-tracking set, mirroring what the supervisor owns so a
+        /// test tick re-attaches/claims through the same guard the daemon uses.
+        driving: crate::scheduler::finish::Driving,
     }
 
     impl Engine {
@@ -214,22 +217,24 @@ pub mod harness {
                 hcom: Hcom::discover().with_bin(bin),
                 store,
                 cfg,
+                driving: crate::scheduler::finish::Driving::default(),
             }
         }
 
-        /// Run one scheduler tick (reconcile → promote → claim → spawn).
+        /// Run one scheduler tick (reconcile → recover → promote → claim → spawn).
         ///
         /// Passes a non-due tick counter so the coarse-cadence reverse issue-sync
         /// (which would shell out to `gh`) never fires in a single-tick test;
         /// tests that exercise the sync call [`tick_n`](Self::tick_n) directly.
         pub async fn tick(&self) {
-            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, 1).await;
+            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, 1, &self.driving).await;
         }
 
         /// Run one tick with an explicit `tick_count` — lets a test drive the
         /// Nth-tick reverse issue-sync deterministically.
         pub async fn tick_n(&self, tick_count: u64) {
-            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, tick_count).await;
+            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, tick_count, &self.driving)
+                .await;
         }
     }
 

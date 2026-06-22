@@ -3,7 +3,7 @@
 mod auto_pr;
 mod block;
 mod effective;
-mod finish;
+pub(crate) mod finish;
 mod follow_up;
 mod gate;
 mod git;

@@ -1,0 +1,211 @@
+# Debugging a stuck workflow (hcom + the scheduler)
+
+> Audience: an operator (or the management agent) watching a workflow that looks
+> wedged. Read [scheduler.md](../scheduler.md) for the tick/state-machine model
+> first. This doc is the **triage runbook**: how to tell a genuinely-stuck task
+> from one that only *looks* stuck, and the handful of walls that actually stall
+> agents.
+
+## TL;DR — the one rule
+
+**"`done_count: 0` and nothing moving" is not evidence of a stall.** A workflow in
+`shared` mode runs its tasks **sequentially** on one branch: only the
+dependency-zero head runs first, and every other task sits `pending` behind it.
+A 10-minute implementation task is normal. Before escalating, prove the head task
+is *parked* (not *working*) using the triage flow below.
+
+Most "it's stuck again" reports are one of three non-bugs:
+
+1. The head task is **actively working** (`hcom list` shows `active: …`, not
+   `listening`) — just slow. Wait.
+2. **DONE→reconcile lag** — the task signalled DONE and pushed, but the record
+   sits `running` / `commit=null` for ~1–2 min before the daemon reconciles. A
+   manual retry here just churns already-committed work. See
+   [§ The reconcile-lag trap](#the-reconcile-lag-trap).
+3. A **false time signal** — `started_at` is a *start* time, not elapsed-stuck
+   time; and a date-rollover artifact has made a ~1-min lag look like ~24h.
+   Always check elapsed against `date -u`.
+
+A task is *genuinely* stuck only when it is `running` / `commit=null` for **several
+minutes**, the agent is **parked** (`listening`, not `active`), **and** the next
+task never auto-promotes.
+
+## Triage flow (run these in order)
+
+Set the daemon base URL once (default dev port shown; yours may differ — check the
+daemon banner or `/tmp/lazybones-dev.log`):
+
+```sh
+B=http://127.0.0.1:46787
+```
+
+### 1. Is the daemon even up?
+
+```sh
+curl -sf $B/health        # {"status":"ok"}
+```
+
+No response → the daemon is down; the loop isn't ticking. Restart it
+(`target/debug/lazybonesd serve`) and re-check.
+
+### 2. What does the workflow think its state is?
+
+```sh
+curl -s $B/workflows | python3 -m json.tool
+```
+
+Look at the workflow: `state`, `task_count`, `done_count`, `started_at`,
+`failed_at`. `state: running` with `done_count: 0` is expected while the head task
+runs — not a stall by itself.
+
+### 3. Which task is the chain actually waiting on?
+
+```sh
+curl -s $B/tasks | python3 -c "
+import sys,json
+RUN='doc-writer'      # <- your workflow id
+for t in json.load(sys.stdin):
+    if t.get('run_id')==RUN:
+        print(f\"{t['id']:<22} {t['status']:<8} commit={str(t['commit'])[:8]:<8}\"
+              f\" session={t['session']} retry={t['retry_count']}/{t['max_retries']}\"
+              f\" auto_retry={t['auto_retry']}\")
+        print(f\"   deps={t['deps']} started={t['started_at']} reason={t['reason']}\")
+"
+date -u                 # <- compare elapsed against THIS, not started_at alone
+```
+
+The one `running` task with `commit=null` is the head. Everything `pending` behind
+it is just waiting — that's correct, not stuck.
+
+> **`auto_retry: null` is a risk flag.** Auto-retry is what self-heals a task that
+> parks after DONE (it re-runs on a fresh session onto the *same* pushed commit,
+> zero work lost). A head task with `auto_retry: null` has **no self-heal** — if it
+> parks, a human must nudge it. Worth setting a retry policy at authoring time.
+
+### 4. Is the agent *working* or *parked*? (the decisive check)
+
+This is the single most informative command. `hcom` is the source of truth for
+"is the agent alive and what is it doing":
+
+```sh
+hcom list                       # one line per live agent
+hcom list -v                    # + session_id, directory, headless log path
+```
+
+Read the head task's line (named `<task-id>-<session>`, e.g. `dw-store-kobe`):
+
+| What you see | Meaning | Action |
+| --- | --- | --- |
+| `▶ … Ns ago: active: Write` / `Edit` / `Bash` | **Working.** Tool calls are firing. | Wait. Not stuck. |
+| `◉ … now: listening` | Idle — *finished or parked*. Cross-check below. | See step 5. |
+| (task's agent **absent** from `hcom list`) | The agent died/was reaped. | Reconcile will reclaim it; check the daemon log for `launch_blocked` / `spawn failed`. |
+
+`hcom list -v <task>-<sess>` also gives **Uptime / State Age** — the agent's real
+wall-clock age. Use it instead of `started_at` to judge "how long really?".
+
+### 5. If `listening` — finished or parked?
+
+A `listening` agent has either **finished** (signalled DONE, work pushed) or
+**parked** on an unanswerable prompt. Distinguish them:
+
+```sh
+# Did it actually produce work? Look in the worktree.
+cd <repo>/.lazy/wt/<workflow-id>            # shared mode: one wt per workflow
+git log --oneline -5                        # a fresh task(...) / "… completed of N" commit?
+git status --short                          # uncommitted work still sitting there?
+
+# What is the agent's last screen? (parked prompts show here)
+tail -40 ~/.hcom/.tmp/logs/background_*_*.log   # path from `hcom list -v`
+```
+
+- **Fresh commit present, record still `running`** → DONE→reconcile lag. **Wait**
+  (see next section). Do not retry.
+- **Uncommitted work + a Write/approval prompt on screen** → a parked agent. Match
+  it against [§ The walls](#the-walls-why-an-agent-actually-parks).
+- **No work at all, clean tree** → a genuine no-op or an early spawn-time park.
+
+## The reconcile-lag trap
+
+When a task agent signals DONE and pushes, the REST record can sit at
+`status=running`, `commit=null`, `finished_at=null` for **~1–2 minutes** before the
+daemon records the done-transition and promotes the next task. **This is normal.**
+
+Two endpoints lie here — do not read a stall into them:
+
+- `GET /runs/:id` (transitions) returns `[]` **even for fully done+committed
+  tasks** in this build. Empty transitions carry *no* information. The only
+  authoritative tells are the task record's `status` / `commit` / `finished_at`.
+- `started_at` is a *start* timestamp. "running since 01:35Z" is not "stuck for
+  hours" — confirm against `date -u` and `hcom list -v` Uptime.
+
+**Self-heal:** the first DONE sometimes doesn't reconcile (the headless agent parks
+at `listening: uncommitted text` instead of exiting). If the task has an
+`auto_retry` policy, the daemon re-runs it on a fresh session and it reconciles
+cleanly onto the **already-pushed commit** — zero work lost. So holding off a manual
+retry during the lag window is correct. **Proof a task reconciled:** its successor
+can't go `ready` unless it did — watch for the next task to auto-promote.
+
+Only escalate (human nudge / retry) when `running`/`commit=null` persists **several
+minutes** AND the next task never promotes AND `hcom` shows the agent `listening`
+(parked), not `active`.
+
+## The walls: why an agent actually parks
+
+When an agent *is* genuinely parked, it's almost always one of these. Each is a
+distinct wall with a distinct fix.
+
+| # | Symptom / tell | Cause | Fix |
+| --- | --- | --- | --- |
+| 1 | Hangs/loops **at spawn**; daemon log `launch_blocked: screen settled` / `spawn failed (exit status: 2)` | Claude Code **bypass-permissions consent** screen (one-time, per host) | Operator, once: run `claude` interactively → "Yes, I accept", or set `bypassPermissionsModeAccepted: true` in `~/.claude.json`. No env var skips it. |
+| 2 | Hangs at spawn with a **"Do you trust this folder?"** prompt | Folder-trust gate on the worktree | Auto-handled by `auto_trust_agent_folder` (default on, seeds `hasTrustDialogAccepted`). If off, enable it. |
+| 3 | Parks **mid-run**, `commit=null`, screen shows a Write/create-file approval for a `.claude/` or `memory-note` path | Claude Code **auto-memory** trying to write into protected `.claude/` — no `permissions.allow` rule suppresses it | Daemon spawns agents with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` ([hcom/spawn.rs](../../crates/lazybones-engine/src/hcom/spawn.rs)). Update + restart the daemon. On an old daemon: **deny** the prompt (3/No), never "allow all". |
+| 4 | Looks like a 40-min hang, but it's a **build failure**; worktree crate has a relative path-dep to a sibling checkout outside the repo | Inside `.lazy/wt/<id>/`, the relative path resolves to a non-existent `.lazy/wt/<sibling>` | Symlink the sibling at the wt **parent**: `ln -s /real/path <repo>/.lazy/wt/<sibling>` (`.lazy` is gitignored). Covers every task in the chain. |
+| 5 | Daemon (or **management agent**) itself parks at consent/trust; it runs in `.lazy/agent`, not a worktree | Same gates as #1–#3 but on the non-worktree scratch dir | `management/runner.rs` bootstraps `.lazy/agent` with a `.claude/settings.json` allow-list, filters out `--dangerously-skip-permissions`, and `hcom/spawn.rs` scrubs inherited `CLAUDECODE`/`CLAUDE_CODE_*`. Never re-add the skip flag to the management config. |
+
+The daemon files a `consent`-kind **follow-up** when it detects walls #1/#3
+([scheduler/follow_up.rs](../../crates/lazybones-engine/src/scheduler/follow_up.rs)),
+so check the follow-ups surface too.
+
+Note #4 can stack on #1: a task can clear the consent screen and *then* hit the
+build seam, so a single "stuck" task may have two causes.
+
+## API caveats while debugging
+
+- **`PATCH /tasks/:id` 401 for author tokens.** Editing an existing task is
+  effectively an operator action. An author can only set `auto_retry` at
+  *creation* (`POST /workflows/:id/tasks`); to change it afterward, use the
+  operator retry-policy control.
+- **External (issue-driven) completions are commit-less.** A task can land `done`
+  with `commit=null` via `Transition::ExternalDone` when its linked GitHub issue is
+  closed — that is not a stall and not lost work.
+
+## Worked example — the `doc-writer` "it's happened again" scare
+
+Live snapshot (`Document writer + asset server + standalone branding`, 5 tasks,
+shared branch `lazy/doc-writer`):
+
+```
+workflow doc-writer  state=running  task_count=5  done_count=0  started=01:35:56Z
+dw-store     running  commit=None  session=kobe  auto_retry=None   deps=[]
+dw-api       pending                              deps=[dw-store]
+render-spike pending                              deps=[dw-api]
+render       pending                              deps=[render-spike]
+ui           pending                              deps=[render]
+```
+
+`done_count: 0` after ~11 min looked like a stall. It wasn't:
+
+```
+$ hcom list
+▶ dw-store-kobe [headless]   6s ago: active: Write     # ← WORKING, not parked
+$ cd .lazy/wt/doc-writer && git status --short
+?? crates/lazybones-store/src/asset/                   # ← real work in progress
+?? crates/lazybones-store/src/document/
+```
+
+The agent was actively writing the Phase-1 store layer; the other four tasks were
+correctly `pending` behind the sequential head. **Verdict: wait, do not retry.**
+
+The one thing worth flagging: `dw-store` has `auto_retry: null`, so if it later
+parks after DONE there's no self-heal — that head task is the one to watch, and a
+retry policy would harden it.

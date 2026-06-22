@@ -23,10 +23,22 @@ const ACTOR: &str = "scheduler:tick";
 ///
 /// `tick_count` is the monotonic pass counter the supervisor loop threads in; it
 /// gates the coarse-cadence reverse issue→task sync (every Nth tick).
-pub async fn tick(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig, tick_count: u64) {
+pub async fn tick(
+    store: &StoreHandle,
+    hcom: &Hcom,
+    cfg: &EngineConfig,
+    tick_count: u64,
+    driving: &finish::Driving,
+) {
     reclaim::reconcile(store, hcom, cfg).await;
+    // RECOVERY: re-attach a drive loop to any in-flight task this process isn't
+    // already driving — e.g. after a daemon restart, whose tasks kept running but
+    // lost their in-memory drive loops. Runs after reclaim (which handles the
+    // no-live-agent case) and before claim, so an orphaned task is resumed rather
+    // than left `running` forever behind a parked agent.
+    reattach_orphans(store, hcom, cfg, driving).await;
     promote(store).await;
-    claim_and_spawn(store, hcom, cfg).await;
+    claim_and_spawn(store, hcom, cfg, driving).await;
     // AUTO-PR: for any opt-in workflow whose every task is now done and has no PR
     // yet, spawn the configured agent to summarize and `gh pr create`. Best-effort,
     // idempotent (guarded by `run.pr_url`); never blocks claim/spawn.
@@ -71,8 +83,56 @@ async fn promote(store: &StoreHandle) {
     }
 }
 
+/// RECOVERY: ensure every `running`/`gating` task has a drive loop in this process.
+///
+/// A daemon restart leaves tasks mid-flight in the store but drops the in-memory
+/// drive loops that were awaiting them; reclaim only rescues tasks whose agent is
+/// *gone*, so one whose agent is alive-but-idle (the headless-parks-at-`listening`
+/// case) would otherwise sit `running` forever. Here we re-attach a loop for any
+/// in-flight task not already in `driving`. `spawn_resume` re-checks the set
+/// atomically, so a steady-state task already being driven is skipped.
+async fn reattach_orphans(
+    store: &StoreHandle,
+    hcom: &Hcom,
+    cfg: &EngineConfig,
+    driving: &finish::Driving,
+) {
+    let mut runs: HashMap<String, Option<Run>> = HashMap::new();
+    for status in [Status::Running, Status::Gating] {
+        let tasks = match store.list_tasks(Some(status)).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("recovery: list {status:?} failed: {e}");
+                continue;
+            }
+        };
+        for task in tasks {
+            // Cheap pre-check; spawn_resume re-checks atomically before spawning.
+            if driving.lock().expect("driving set poisoned").contains(&task.id) {
+                continue;
+            }
+            let run = run_for(store, &task, &mut runs).await;
+            let eff = effective::resolve(&task, run.as_ref(), cfg);
+            tracing::info!(task = %task.id, ?status, "re-attaching drive loop (recovery)");
+            finish::spawn_resume(
+                store.clone(),
+                hcom.clone(),
+                cfg.clone(),
+                eff,
+                task,
+                driving.clone(),
+            );
+        }
+    }
+}
+
 /// CLAIM: provision + claim + spawn up to the remaining concurrency budget.
-async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
+async fn claim_and_spawn(
+    store: &StoreHandle,
+    hcom: &Hcom,
+    cfg: &EngineConfig,
+    driving: &finish::Driving,
+) {
     let budget = match budget(store, cfg).await {
         Ok(b) => b,
         Err(e) => {
@@ -139,12 +199,11 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         // tasks with a real run consult this; everything else falls straight
         // through. The budget slot isn't consumed (we `continue` before claim), so
         // sibling runs still fill it.
-        if eff.worktree_mode == lazybones_store::WorktreeMode::Shared {
-            if let Some(run_id) = task.run_id.as_deref() {
-                if busy_shared_runs.contains(run_id) {
-                    continue;
-                }
-            }
+        if eff.worktree_mode == lazybones_store::WorktreeMode::Shared
+            && let Some(run_id) = task.run_id.as_deref()
+            && busy_shared_runs.contains(run_id)
+        {
+            continue;
         }
 
         // Resolve a `reuse_from` source worktree before provisioning (the
@@ -241,14 +300,16 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
             busy_shared_runs.insert(run_id);
         }
 
-        // 4–5. Drive await → gate → finish in its own task.
-        tokio::spawn(finish::drive(
+        // 4–5. Drive await → gate → finish in its own task, tracked in `driving`
+        // so a later recovery pass never double-drives it.
+        finish::spawn_resume(
             store.clone(),
             hcom.clone(),
             cfg.clone(),
             eff,
             claimed,
-        ));
+            driving.clone(),
+        );
     }
 }
 

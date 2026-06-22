@@ -5,6 +5,8 @@
 //! and either lands the branch (`done`) or blocks the task, keeping the worktree
 //! for triage on a red gate.
 
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use lazybones_store::{Status, StoreHandle, Task, Transition};
@@ -19,9 +21,103 @@ use super::{gate, issue, merge, worktree};
 /// The actor recorded on transitions this module drives.
 const ACTOR: &str = "scheduler:finish";
 
-/// How long to block on the agent's DONE/BLOCKED signal before treating the task
-/// as stalled. Generous: real agent work runs for minutes.
+/// The set of task ids this daemon process currently has a drive loop for.
+///
+/// Owned by the supervisor ([`super::run`]) and shared into every tick. It exists
+/// so the per-tick recovery pass ([`super::tick`]) can re-attach a drive loop to an
+/// in-flight task that lost its loop on a daemon restart — **without** ever
+/// double-driving one it is already running. Inserted before a loop spawns, removed
+/// when it ends (even on panic, via [`DriveGuard`]).
+pub type Driving = Arc<Mutex<HashSet<String>>>;
+
+/// Removes a task id from the [`Driving`] set when the drive loop ends — including
+/// on a panic unwind, so a crashed loop frees its slot for a later recovery pass
+/// rather than wedging the task as permanently "being driven".
+struct DriveGuard {
+    driving: Driving,
+    id: String,
+}
+
+impl Drop for DriveGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.driving.lock() {
+            set.remove(&self.id);
+        }
+    }
+}
+
+/// Spawn the drive/resume loop for `task` unless this process is already driving it.
+///
+/// Claiming a fresh task and recovering an orphaned one both go through here, so the
+/// [`Driving`] set is the single guard against two loops racing the same task. The
+/// id is reserved (inserted) atomically *before* the loop spawns; if it was already
+/// present this is a no-op. Both call sites pass an owned clone of each argument.
+pub fn spawn_resume(
+    store: StoreHandle,
+    hcom: Hcom,
+    cfg: EngineConfig,
+    eff: EffectiveGit,
+    task: Task,
+    driving: Driving,
+) {
+    {
+        let mut set = driving.lock().expect("driving set poisoned");
+        if !set.insert(task.id.clone()) {
+            return; // already being driven by this process
+        }
+    }
+    tokio::spawn(async move {
+        let _guard = DriveGuard {
+            driving: driving.clone(),
+            id: task.id.clone(),
+        };
+        resume(store, hcom, cfg, eff, task).await;
+    });
+}
+
+/// Drive `task` to a terminal state, dispatching on its current status so a
+/// restart-recovery re-attach resumes from the right point:
+/// - `Gating` already passed the agent signal + `Gate` transition, so go straight
+///   to gating/landing (re-awaiting would block on a DONE that already fired).
+/// - anything else (`Running`) takes the full [`drive`] path: await the agent
+///   signal — now liveness-aware, so a parked/exited agent reconciles fast.
+async fn resume(
+    store: StoreHandle,
+    hcom: Hcom,
+    cfg: EngineConfig,
+    eff: EffectiveGit,
+    task: Task,
+) {
+    if task.status == Status::Gating {
+        gate_and_land(&store, &cfg, &eff, &task).await;
+    } else {
+        drive(store, hcom, cfg, eff, task).await;
+    }
+}
+
+/// Absolute ceiling on how long to block on the agent's DONE/BLOCKED signal before
+/// treating the task as stalled. Generous: real agent work runs for minutes. In
+/// practice we almost never reach it — liveness short-circuits first (see
+/// [`await_signal`]).
 const AWAIT_SECS: u64 = 3600;
+
+/// Each `await_signal` poll blocks this long for a DONE/BLOCKED message, then
+/// re-checks the agent's liveness via `hcom list`. Small enough that an exited or
+/// parked agent is noticed within a poll, large enough not to hammer hcom.
+const POLL_SLICE_SECS: u64 = 20;
+
+/// How long the task's agent may sit *idle* (hcom status not `active`/working) with
+/// no DONE/BLOCKED before we treat it as an implicit completion.
+///
+/// This is the fix for the headless fragility (see project memory
+/// `done-transition-reconcile-lag`): a headless `claude` often finishes its work
+/// and parks at `listening` **without** posting `DONE`, leaving the task `running`
+/// / `commit=null` and wedging the whole dependent chain for the full
+/// [`AWAIT_SECS`]. A genuinely working agent flips to `active` on every tool call,
+/// so a sustained idle window means it finished (or parked) — we then gate its
+/// worktree work rather than wait an hour. Long enough to ignore a brief
+/// between-turn pause.
+const IDLE_DONE_SECS: u64 = 60;
 
 /// Await the agent's signal for `task`, then gate and finish it.
 ///
@@ -42,8 +138,18 @@ pub async fn drive(
         }
     };
 
+    let inferred = matches!(signal, Signal::AgentDone);
     match signal {
-        Signal::Done => {
+        Signal::Done | Signal::AgentDone => {
+            if inferred {
+                // The agent exited or went idle without posting DONE — the known
+                // headless-parks-at-`listening` fragility. Don't wait the full
+                // timeout: gate whatever it committed/left in the worktree.
+                tracing::info!(
+                    task = %task.id,
+                    "agent finished without an explicit DONE (idle/exited); gating its work"
+                );
+            }
             if let Err(e) = store.transition(&task.id, Transition::Gate, ACTOR).await {
                 tracing::warn!(task = %task.id, "gate transition failed: {e}");
                 return;
@@ -65,12 +171,27 @@ pub async fn drive(
 
 /// What the agent signalled on its hcom thread.
 enum Signal {
+    /// The agent posted `DONE` on its thread.
     Done,
+    /// The agent posted `BLOCKED: <reason>`.
     Blocked(String),
+    /// No explicit signal, but the agent exited or went idle (`hcom list`) — the
+    /// headless-parks-at-`listening` case. Treated like `Done`: gate its work.
+    AgentDone,
+    /// Hit the absolute [`AWAIT_SECS`] ceiling with the agent still alive+working.
     Timeout,
 }
 
-/// Block until the agent posts DONE or BLOCKED on the task's thread, or timeout.
+/// Block until the agent posts DONE/BLOCKED on the task's thread, **or** the agent
+/// stops working (exits, or sits idle past [`IDLE_DONE_SECS`]) — whichever comes
+/// first.
+///
+/// The message is the fast, explicit path. The liveness fallback is what makes the
+/// scheduler solid against headless agents that finish without posting `DONE`
+/// (they park at `listening`): instead of waiting the full [`AWAIT_SECS`] for a
+/// signal that never comes, we notice the agent is no longer working and gate its
+/// worktree directly. This matches the scheduler's design rule of trusting `hcom`
+/// for "is the agent alive?" (docs/scheduler.md, "Liveness note").
 async fn await_signal(hcom: &Hcom, id: &str) -> anyhow::Result<Signal> {
     // hcom routes `--thread <id>` messages; match the thread carrying DONE/BLOCKED.
     let sql = format!(
@@ -78,20 +199,91 @@ async fn await_signal(hcom: &Hcom, id: &str) -> anyhow::Result<Signal> {
          AND (json_extract(data, '$.text') LIKE '%DONE%' \
          OR json_extract(data, '$.text') LIKE '%BLOCKED%')"
     );
-    let events = hcom.wait(&sql, Duration::from_secs(AWAIT_SECS)).await?;
-    let Some(ev) = events.first() else {
-        return Ok(Signal::Timeout);
-    };
-    let text = ev
-        .data
-        .get("text")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    if text.contains("BLOCKED") {
-        Ok(Signal::Blocked(blocked_reason(text)))
-    } else {
-        Ok(Signal::Done)
+
+    let mut waited = 0u64;
+    // Consecutive idle seconds observed, and whether we've ever seen the agent
+    // alive. `seen` guards the spawn race: a not-yet-registered agent reads as
+    // `Gone`, which must NOT be mistaken for an exit before it has even started.
+    let mut idle = 0u64;
+    let mut seen = false;
+
+    while waited < AWAIT_SECS {
+        let slice = POLL_SLICE_SECS.min(AWAIT_SECS - waited);
+        let events = hcom.wait(&sql, Duration::from_secs(slice)).await?;
+        waited += slice;
+
+        if let Some(ev) = events.first() {
+            let text = ev
+                .data
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            return Ok(if text.contains("BLOCKED") {
+                Signal::Blocked(blocked_reason(text))
+            } else {
+                Signal::Done
+            });
+        }
+
+        // No explicit signal this slice — is the agent still working? `hcom list`
+        // is authoritative for liveness; a transient list failure is `Unknown` and
+        // neither advances nor resets the idle streak.
+        match agent_liveness(hcom, id).await {
+            Liveness::Working => {
+                seen = true;
+                idle = 0;
+            }
+            Liveness::Idle => {
+                seen = true;
+                idle += slice;
+                if idle >= IDLE_DONE_SECS {
+                    return Ok(Signal::AgentDone);
+                }
+            }
+            // Gone *after* we've seen it = it exited/crashed → gate its work.
+            // Gone *before* = not yet registered; keep waiting.
+            Liveness::Gone if seen => return Ok(Signal::AgentDone),
+            Liveness::Gone | Liveness::Unknown => {}
+        }
     }
+    Ok(Signal::Timeout)
+}
+
+/// Whether the task's agent is working, idle, gone, or unknown — derived from
+/// `hcom list`.
+enum Liveness {
+    /// hcom reports the agent in a working status (`active`/running/thinking).
+    Working,
+    /// The agent is present but parked (`listening`/`idle`) — not doing work.
+    Idle,
+    /// No agent carries this task's tag — it exited or was reaped.
+    Gone,
+    /// `hcom list` could not be read this poll; make no inference.
+    Unknown,
+}
+
+/// Classify the task's agent from `hcom list`, matched by its `--tag` (the task id).
+async fn agent_liveness(hcom: &Hcom, id: &str) -> Liveness {
+    let agents = match hcom.list().await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(task = %id, "hcom list failed during await: {e}");
+            return Liveness::Unknown;
+        }
+    };
+    match agents.iter().find(|a| a.tag.as_deref() == Some(id)) {
+        None => Liveness::Gone,
+        Some(a) if is_working(&a.status) => Liveness::Working,
+        Some(_) => Liveness::Idle,
+    }
+}
+
+/// Whether an hcom status string means the agent is actively doing work (a tool
+/// call or turn in flight) rather than parked waiting for input. hcom reports
+/// `active` while working and `listening`/`idle` when parked; unknown strings are
+/// treated as working so we never cut a real agent short on an unfamiliar status.
+fn is_working(status: &str) -> bool {
+    !matches!(status, "listening" | "idle" | "dead" | "stopped" | "")
 }
 
 /// Extract the reason after `BLOCKED:` (or the whole message if none).
@@ -201,12 +393,27 @@ async fn workflow_progress(store: &StoreHandle, task: &Task) -> Option<(usize, u
 
 #[cfg(test)]
 mod tests {
-    use super::blocked_reason;
+    use super::{blocked_reason, is_working};
 
     #[test]
     fn extracts_reason_after_marker() {
         assert_eq!(blocked_reason("BLOCKED: deps missing"), "deps missing");
         assert_eq!(blocked_reason("foo BLOCKED bar"), "bar");
         assert_eq!(blocked_reason("BLOCKED"), "agent reported BLOCKED");
+    }
+
+    /// The liveness classifier must read hcom's parked states as *not working* (so
+    /// a finished/parked agent triggers the idle-done fallback) while treating any
+    /// working or unfamiliar status as working (so a real agent is never cut short).
+    #[test]
+    fn is_working_distinguishes_parked_from_active() {
+        // Parked / terminal statuses → not working (eligible for idle-done).
+        for parked in ["listening", "idle", "dead", "stopped", ""] {
+            assert!(!is_working(parked), "{parked:?} should read as not working");
+        }
+        // Working or unknown statuses → working (never cut short).
+        for working in ["active", "running", "thinking", "busy", "something-new"] {
+            assert!(is_working(working), "{working:?} should read as working");
+        }
     }
 }

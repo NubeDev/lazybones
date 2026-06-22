@@ -85,14 +85,7 @@ pub fn seed_claude_folder_trust(dir: &Path) {
 /// (onboarding counters, history); we set only the keys that clear the dialog and
 /// leave the rest to Claude, merging into any entry that already exists.
 fn config_with_trusted_folder(existing: &str, folder: &str) -> anyhow::Result<Option<String>> {
-    let mut root: serde_json::Map<String, Value> = if existing.trim().is_empty() {
-        serde_json::Map::new()
-    } else {
-        serde_json::from_str::<Value>(existing)?
-            .as_object()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!(".claude.json is not a JSON object"))?
-    };
+    let (mut root, salvaged) = parse_or_salvage_root(existing)?;
     let projects = root
         .entry("projects".to_owned())
         .or_insert_with(|| json!({}));
@@ -107,7 +100,15 @@ fn config_with_trusted_folder(existing: &str, folder: &str) -> anyhow::Result<Op
         *entry = json!({});
     }
     let entry = entry.as_object_mut().expect("entry forced to object");
-    if entry.get("hasTrustDialogAccepted").and_then(Value::as_bool) == Some(true) {
+    let already_trusted =
+        entry.get("hasTrustDialogAccepted").and_then(Value::as_bool) == Some(true);
+    // Skip the write only when the folder is *already* trusted AND the file was
+    // clean. If we salvaged a corrupt config, write the repaired version back even
+    // when the trust flag is already present — otherwise the corrupt file stays on
+    // disk and the next agent parks on Claude's interactive "configuration error"
+    // prompt (a headless agent can't answer it). Self-healing the config here is
+    // what makes a concurrent-write corruption non-fatal.
+    if already_trusted && !salvaged {
         return Ok(None);
     }
     entry.insert("hasTrustDialogAccepted".to_owned(), json!(true));
@@ -124,6 +125,45 @@ fn config_with_trusted_folder(existing: &str, folder: &str) -> anyhow::Result<Op
     let mut content = serde_json::to_string_pretty(&Value::Object(root))?;
     content.push('\n');
     Ok(Some(content))
+}
+
+/// Parse `existing` into the config's root object, **salvaging** a corrupt file
+/// when a strict parse fails. Returns `(root, salvaged)` — `salvaged` is true when
+/// the strict parse failed but a valid leading object was recovered, signalling the
+/// caller to write the repaired config back.
+///
+/// Claude Code rewrites `~/.claude.json` in place on every startup; when two agents
+/// start at once those writes race and can leave a complete object followed by
+/// leftover bytes from a longer prior write (`}…` then a stray tail). The file is
+/// then unparseable and Claude shows an interactive "configuration error" prompt
+/// that wedges a headless agent. `serde_json`'s streaming reader parses the first
+/// complete value and ignores trailing data, so we recover the valid prefix — the
+/// newest good state — rather than discarding the whole config.
+fn parse_or_salvage_root(existing: &str) -> anyhow::Result<(serde_json::Map<String, Value>, bool)> {
+    if existing.trim().is_empty() {
+        return Ok((serde_json::Map::new(), false));
+    }
+    // Strict parse first — the common, clean case.
+    if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(existing) {
+        return Ok((map, false));
+    }
+    // Strict parse failed. Recover the first complete JSON value (the valid prefix);
+    // trailing garbage after it is dropped.
+    let first = serde_json::Deserializer::from_str(existing)
+        .into_iter::<Value>()
+        .next();
+    match first {
+        Some(Ok(Value::Object(map))) => {
+            tracing::warn!(
+                "claude config was corrupt (trailing data after a valid object); \
+                 salvaged the valid prefix and will rewrite it"
+            );
+            Ok((map, true))
+        }
+        // A leading non-object value, or nothing parseable at all: refuse rather
+        // than clobber whatever is there with a guess.
+        _ => anyhow::bail!(".claude.json is unparseable and could not be salvaged"),
+    }
 }
 
 /// Write `content` to `path` via a temp file + rename so a concurrent Claude read
@@ -212,6 +252,47 @@ mod tests {
     #[test]
     fn rejects_non_object_root() {
         assert!(config_with_trusted_folder("[1,2,3]", "/ws/a").is_err());
+    }
+
+    /// A config corrupted by a concurrent write (a complete object followed by
+    /// leftover tail bytes) must be salvaged: the valid prefix is recovered, the
+    /// folder trusted, top-level keys preserved, and a write forced so the repair
+    /// lands on disk.
+    #[test]
+    fn salvages_config_with_trailing_garbage() {
+        // Valid object, then a stray fragment from a racing in-place write.
+        let corrupt = "{\n  \"bypassPermissionsModeAccepted\": true,\n  \
+             \"projects\": { \"/ws/a\": { \"hasTrustDialogAccepted\": true } }\n}\nf9d5c\"\n}\n";
+        // A strict parse must fail (proving this is the corrupt case)...
+        assert!(serde_json::from_str::<Value>(corrupt).is_err());
+        // ...yet we salvage it, force a rewrite (Some) even though /ws/a is already
+        // trusted, and keep the critical top-level bypass key.
+        let out = config_with_trusted_folder(corrupt, "/ws/a")
+            .unwrap()
+            .expect("a salvaged config is always rewritten");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["bypassPermissionsModeAccepted"], json!(true));
+        assert_eq!(v["projects"]["/ws/a"]["hasTrustDialogAccepted"], json!(true));
+    }
+
+    /// Salvage also clears the trailing garbage for a *new* folder, merging the
+    /// trust flag into the recovered prefix.
+    #[test]
+    fn salvages_and_trusts_new_folder() {
+        let corrupt = "{ \"numStartups\": 3 }  oops-trailing";
+        let out = config_with_trusted_folder(corrupt, "/ws/b")
+            .unwrap()
+            .expect("salvaged + new folder → rewrite");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["numStartups"], json!(3));
+        assert_eq!(v["projects"]["/ws/b"]["hasTrustDialogAccepted"], json!(true));
+    }
+
+    /// Truly unrecoverable input (no leading valid object) errors rather than
+    /// clobbering the file with a guess.
+    #[test]
+    fn unsalvageable_config_errors() {
+        assert!(config_with_trusted_folder("}{ totally broken", "/ws/a").is_err());
     }
 
     #[test]

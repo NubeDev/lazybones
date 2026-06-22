@@ -27,11 +27,16 @@ pub async fn run(store: StoreHandle, cfg: EngineConfig) {
         "scheduler started"
     );
 
+    // The set of tasks this process is driving — shared into every tick so the
+    // recovery pass can re-attach drive loops to in-flight tasks (e.g. after this
+    // daemon restarted) without ever double-driving one already in flight.
+    let driving = super::finish::Driving::default();
+
     let mut ticker = tokio::time::interval(period);
     let mut tick_count: u64 = 0;
     loop {
         ticker.tick().await;
-        tick(&store, &hcom, &cfg, tick_count).await;
+        tick(&store, &hcom, &cfg, tick_count, &driving).await;
         tick_count = tick_count.wrapping_add(1);
     }
 }
