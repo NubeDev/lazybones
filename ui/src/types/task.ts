@@ -9,8 +9,18 @@ export type Status =
 
 /** Mirror of `lazybones_store::WorktreeMode` — how the loop provisions the
  *  working tree when it claims this task. `new` = isolated worktree (default);
- *  `reuse` = an existing worktree path; `branch` = the main checkout on a branch. */
-export type WorktreeMode = "new" | "reuse" | "branch";
+ *  `reuse` = an existing worktree path; `branch` = the main checkout on a branch;
+ *  `shared` = one branch+worktree for the whole workflow (one PR). */
+export type WorktreeMode = "new" | "reuse" | "branch" | "shared";
+
+/** Mirror of `lazybones_store::RetryStrategy` — the fix intent for a revived
+ *  (re-attempted) task, folded into its re-spawn prompt as guidance. Drives both
+ *  a manual strategy-retry and the hands-off auto-retry loop. */
+export type RetryStrategy = "long_term" | "quick";
+
+/** Mirror of `lazybones_store::IssueSyncState` — the last-known state of a task's
+ *  linked GitHub issue (lowercase wire form). `null` on the task = never synced. */
+export type IssueSyncState = "open" | "closed";
 
 export const STATUSES: Status[] = [
   "pending",
@@ -31,6 +41,12 @@ export interface Task {
   deps: string[];
   owns: string[];
   tool: string | null;
+  /** Per-task model id forwarded to the agent CLI; `null` inherits the
+   *  run/global default (resolved most-specific-wins at execution time). */
+  model: string | null;
+  /** Per-task effort level forwarded to the agent CLI; `null` inherits the
+   *  run/global default. */
+  effort: string | null;
   worktree_mode: WorktreeMode;
   session: string | null;
   worktree: string | null;
@@ -38,4 +54,33 @@ export interface Task {
   commit: string | null;
   reason: string | null;
   heartbeat: string | null;
+  /** RFC3339 — when the task first moved to `running` (kept across reclaims). */
+  started_at: string | null;
+  /** RFC3339 — when the task reached `done`. */
+  finished_at: string | null;
+  /** RFC3339 — the most recent `blocked` (failure); cleared on revive/restart. */
+  failed_at: string | null;
+  /** FK to the parent workflow run; `null` for a standalone task. This — not the
+   *  `run` label — is the real relationship workflow views key off. */
+  run_id: string | null;
+  /** Provenance: which template this task was instantiated from, if any. */
+  template_id: string | null;
+  /** For `reuse` mode: the task id whose worktree to reuse. */
+  reuse_from: string | null;
+  /** Workflow-only override of the inherited worktree mode; `null` = inherit. */
+  worktree_mode_override: WorktreeMode | null;
+  /** Hands-off auto-retry strategy; `null` = off (a block waits for a human). */
+  auto_retry: RetryStrategy | null;
+  /** Cap on hands-off auto-retries before the task stays blocked (default 2). */
+  max_retries: number;
+  /** How many auto-retries have been spent (reset on a clean retry / done). */
+  retry_count: number;
+  /** Linked GitHub issue URL; `null` = unlinked. Read-only for now (managed via
+   *  the `/tasks/:id/issue` routes; no UI write surface yet). */
+  issue_url: string | null;
+  /** Whether reaching `done` closes the linked issue (default `false`). */
+  issue_close_on_done: boolean;
+  /** Last-synced state of the linked issue; `null` until first sync. Drives the
+   *  reverse issue→task poll's change detection. */
+  issue_synced_state: IssueSyncState | null;
 }

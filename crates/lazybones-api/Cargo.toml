@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 lazybones-store = { workspace = true }
 lazybones-auth = { workspace = true }
+lazybones-engine = { workspace = true }
+lazybones-gh = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,7 +22,11 @@ tower-http = { workspace = true }
 tokio-stream = { workspace = true }
 # `spawn_blocking` for the live agent-test probe (a blocking subprocess wait).
 tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# The 3-workflow integration test drives the in-process scheduler (engine
+# harness) over the same store and uses tempdir git repos.
+tempfile = "3"

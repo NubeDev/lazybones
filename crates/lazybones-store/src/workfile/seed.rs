@@ -24,4 +24,9 @@ pub struct SeedTask {
     /// Optional per-task agent tool.
     #[serde(default)]
     pub tool: Option<String>,
+    /// For `worktree_mode = reuse`: the id of the task whose worktree this task
+    /// continues. Implies a `depends_on` edge on that task (the reuse source
+    /// must finish first), wired automatically on sync.
+    #[serde(default)]
+    pub reuse_from: Option<String>,
 }

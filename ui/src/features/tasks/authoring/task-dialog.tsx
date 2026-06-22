@@ -39,6 +39,8 @@ export function TaskDialog({
           deps: task.deps,
           owns: task.owns,
           tool: task.tool,
+          model: task.model,
+          effort: task.effort,
           worktree_mode: task.worktree_mode,
         }
       : EMPTY_DRAFT,

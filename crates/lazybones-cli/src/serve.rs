@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use lazybones_api::{AppState, router};
+use lazybones_engine::EngineConfig;
 use lazybones_store::{StoreEngine, StoreHandle, sync_seeds};
 
 use crate::configure::Config;
@@ -15,17 +16,47 @@ async fn open_store(config: &Config) -> anyhow::Result<StoreHandle> {
     };
     let store =
         StoreHandle::open(&engine, &config.namespace, &config.database, &config.secret_key).await?;
+    // Seed the bundled default agent catalog on every boot. It's idempotent and
+    // never clobbers operator edits, so a fresh install gets a usable catalog and
+    // an existing one is left exactly as the operator left it.
+    match store.seed_default_agents(&store.now()).await {
+        Ok(n) if n > 0 => tracing::info!(seeded = n, "agent catalog seeded with defaults"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("agent catalog seed failed: {e}"),
+    }
+    // Seed a few demo skills the same way: idempotent, non-clobbering, so a fresh
+    // install has starter recipes to attach to templates.
+    match store.seed_default_skills(&store.now()).await {
+        Ok(n) if n > 0 => tracing::info!(seeded = n, "skill catalogue seeded with demos"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("skill catalogue seed failed: {e}"),
+    }
     Ok(store)
 }
 
-/// Serve the REST API until the process is signalled.
+/// Serve the REST API and run the in-process scheduler until signalled.
+///
+/// The scheduler shares the same [`StoreHandle`] — it reads/writes the store
+/// in-process, no HTTP round-trip to itself — and is aborted when the API stops.
 ///
 /// # Errors
 /// Returns an error if the store cannot open or the listener cannot bind.
-pub async fn serve(config: Config) -> anyhow::Result<()> {
+pub async fn serve(config: Config, engine: EngineConfig) -> anyhow::Result<()> {
     let store = open_store(&config).await?;
-    let state = AppState::new(store, config.run.clone(), config.loop_token.clone());
+    // The base URL the management agent calls the REST API with: an explicit
+    // override, else derived from the bind address (loopback for a local daemon).
+    let base_url = std::env::var("LAZYBONES_BASE_URL")
+        .unwrap_or_else(|_| format!("http://{}", config.bind));
+    let state = AppState::new(
+        store.clone(),
+        config.run.clone(),
+        base_url,
+        config.loop_token.clone(),
+    );
     let app = router(state);
+
+    // The loop is the daemon: if lazybonesd is up, the queue is being drained.
+    let sched = tokio::spawn(lazybones_engine::run(store, engine));
 
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     tracing::info!(bind = %config.bind, run = %config.run, "lazybonesd serving");
@@ -33,6 +64,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    sched.abort(); // stop the loop when the API stops
     Ok(())
 }
 

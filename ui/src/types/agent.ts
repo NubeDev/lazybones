@@ -22,6 +22,29 @@ export interface AgentReport {
   login_hint: string;
 }
 
+/** Mirror of `lazybones_store::AgentCatalog` — a CRUD-able agent definition
+ *  with the models and effort levels it offers. Drives the add-task pickers. */
+export interface AgentCatalog {
+  /** Tool id — matches the hcom tool key (e.g. `claude`). */
+  id: string;
+  /** Human label for the UI. */
+  label: string;
+  /** The env var the CLI reads its credential from. */
+  env_var: string;
+  /** How to obtain a credential / log in. */
+  login_hint: string;
+  /** Selectable model ids, most-preferred first; empty = no model picker. */
+  models: string[];
+  /** Default model when a task names none. */
+  default_model: string | null;
+  /** Selectable effort levels; empty = no effort picker. */
+  efforts: string[];
+  /** Default effort when a task names none. */
+  default_effort: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Mirror of `lazybones_api::AgentTestResult` — a live credential probe. */
 export interface AgentTestResult {
   tool: string;
@@ -29,6 +52,8 @@ export interface AgentTestResult {
   ok: boolean;
   /** Human-readable outcome (success summary or failure reason). */
   detail: string;
+  /** The agent's own reply — model id + identity it reported — when readable. */
+  reply?: string | null;
 }
 
 /** Mirror of `lazybones_store::SecretMeta` — a stored credential (no value). */

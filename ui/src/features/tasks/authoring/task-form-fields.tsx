@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils/cn";
-import { WORKTREE_MODES, WorktreeModePicker } from "../worktree-mode";
+import { AgentPicker } from "@/features/agents/agent-picker";
+import { WorktreeModePicker } from "../worktree-mode";
 import type { TaskDraft } from "@/lib/api/tasks";
 
 /** The shared editable fields for authoring a task (create + edit). The `id` is
@@ -100,16 +101,17 @@ export function TaskFormFields({
         />
       </Field>
 
-      <Field label="Agent tool" hint="blank = run default">
-        <Input
-          value={draft.tool ?? ""}
-          onChange={(e) => onDraft({ ...draft, tool: e.target.value.trim() || null })}
-          placeholder="claude"
-          className="font-mono"
-        />
-      </Field>
+      <AgentPicker
+        tool={draft.tool ?? ""}
+        model={draft.model ?? null}
+        effort={draft.effort ?? null}
+        onToolChange={(t) => onDraft({ ...draft, tool: t.trim() || null })}
+        onModelChange={(m) => onDraft({ ...draft, model: m })}
+        onEffortChange={(e) => onDraft({ ...draft, effort: e })}
+        labels={{ agent: "Agent tool", agentHint: "blank = inherit run/workflow default" }}
+      />
 
-      <Field label="Worktree" hint={WORKTREE_MODES[draft.worktree_mode].hint}>
+      <Field label="Worktree">
         <WorktreeModePicker
           value={draft.worktree_mode}
           onChange={(m) => onDraft({ ...draft, worktree_mode: m })}
@@ -145,12 +147,17 @@ function splitList(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** A blank draft for the create dialog. */
+/** A blank draft for the *standalone* task create dialog. Isolated is the honest
+ *  default here: a lone task has no workflow to share a branch with (the backend's
+ *  `shared` default degrades to `new` without a run anyway). Workflow tasks pick
+ *  their mode via the add-task dialog's inherit/override control instead. */
 export const EMPTY_DRAFT: TaskDraft = {
   title: "",
   spec: "",
   deps: [],
   owns: [],
   tool: null,
+  model: null,
+  effort: null,
   worktree_mode: "new",
 };

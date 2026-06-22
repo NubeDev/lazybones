@@ -1,21 +1,31 @@
-import { X, GitCommitHorizontal, Pencil } from "lucide-react";
+import { useState } from "react";
+import { X, Pencil, FileText, MessagesSquare, ScrollText } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FieldRow, Mono } from "./field-row";
-import { DepsList } from "./deps-list";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { BlockDialog } from "./block-dialog";
 import { DeleteDialog } from "./delete-dialog";
-import { SpecView } from "./spec-view";
+import {
+  SpecSection,
+  DependenciesSection,
+  DetailsSection,
+  BlockedReason,
+  RetrySection,
+  ChatSection,
+} from "./task-sections";
 import { TaskDialog } from "../authoring/task-dialog";
 import { StartDialog } from "../start-dialog";
+import { TaskLogsPanel } from "@/features/workflows/task-logs-panel";
 import { useTask } from "@/lib/hooks/use-tasks";
-import { relativeTime } from "@/lib/utils/platform";
+import { useSetAgentContext } from "@/features/agent/agent-context";
 import type { Task } from "@/types/task";
 
-/** The right-hand inspector for the selected task. */
+/** The task inspector. Rather than one endless vertical scroll, the body is split
+ *  across tabs — Overview (spec, deps, details, retry), Chat, and Logs — built
+ *  from the reusable sections in `task-sections`, so the same pieces back both
+ *  this panel and a full task page. */
 export function TaskDetail({
   id,
   byId,
@@ -30,6 +40,13 @@ export function TaskDetail({
   // Prefer fresh detail, fall back to the list snapshot for instant paint.
   const { data, isLoading } = useTask(id);
   const task = data ?? byId.get(id);
+  const [tab, setTab] = useState("overview");
+
+  // Ground the Lazybones Agent in this task while the panel is open (scope §7).
+  useSetAgentContext({
+    task_id: id,
+    run_id: task?.run_id ?? task?.run ?? undefined,
+  });
 
   if (!task) {
     return (
@@ -60,65 +77,48 @@ export function TaskDetail({
         </Button>
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="space-y-5 p-5">
-          <section>
-            <SectionLabel>Spec</SectionLabel>
-            <SpecView spec={task.spec} loading={isLoading && !data} />
-          </section>
-
-          <Separator />
-
-          <section>
-            <SectionLabel>Dependencies</SectionLabel>
-            <DepsList deps={task.deps} byId={byId} onSelect={onSelect} />
-          </section>
-
-          <Separator />
-
-          <section>
-            <SectionLabel>Details</SectionLabel>
-            <div className="divide-y divide-border">
-              <FieldRow label="Run">{task.run}</FieldRow>
-              <FieldRow label="Tool">{task.tool ?? "config default"}</FieldRow>
-              {task.session && <FieldRow label="Session"><Mono>{task.session}</Mono></FieldRow>}
-              {task.worktree && (
-                <FieldRow label="Worktree"><Mono>{task.worktree}</Mono></FieldRow>
-              )}
-              {task.branch && <FieldRow label="Branch"><Mono>{task.branch}</Mono></FieldRow>}
-              {task.commit && (
-                <FieldRow label="Commit">
-                  <span className="inline-flex items-center gap-1">
-                    <GitCommitHorizontal className="size-3 text-muted-foreground" />
-                    <Mono>{task.commit.slice(0, 12)}</Mono>
-                  </span>
-                </FieldRow>
-              )}
-              {task.heartbeat && (
-                <FieldRow label="Heartbeat">{relativeTime(task.heartbeat)}</FieldRow>
-              )}
-              {task.owns.length > 0 && (
-                <FieldRow label="Owns">
-                  <div className="flex flex-col items-end gap-0.5">
-                    {task.owns.map((g) => (
-                      <Mono key={g}>{g}</Mono>
-                    ))}
-                  </div>
-                </FieldRow>
-              )}
-            </div>
-          </section>
-
-          {task.reason && (
-            <div className="rounded-md border border-status-blocked/30 bg-status-blocked/10 p-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-status-blocked">
-                Blocked
-              </p>
-              <p className="mt-1 text-xs text-foreground">{task.reason}</p>
-            </div>
-          )}
+      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+        <div className="border-b border-border px-5 pt-3">
+          <TabsList>
+            <TabsTrigger value="overview">
+              <FileText className="size-3.5" /> Overview
+            </TabsTrigger>
+            <TabsTrigger value="chat">
+              <MessagesSquare className="size-3.5" /> Chat
+            </TabsTrigger>
+            <TabsTrigger value="logs">
+              <ScrollText className="size-3.5" /> Logs
+            </TabsTrigger>
+          </TabsList>
         </div>
-      </ScrollArea>
+
+        {/* Overview — the bulk of the task's facts, as cards. */}
+        <TabsContent value="overview" className="min-h-0 flex-1">
+          <ScrollArea className="h-full">
+            <div className="space-y-3 p-5">
+              <SpecSection spec={task.spec} loading={isLoading && !data} />
+              <BlockedReason task={task} />
+              <DependenciesSection task={task} byId={byId} onSelect={onSelect} />
+              <DetailsSection task={task} />
+              <RetrySection task={task} />
+            </div>
+          </ScrollArea>
+        </TabsContent>
+
+        {/* Chat fills the panel so the composer sits at the bottom. */}
+        <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col p-5">
+          <ChatSection task={task} />
+        </TabsContent>
+
+        {/* Logs lazy-load: the query is gated on this tab being active. */}
+        <TabsContent value="logs" className="min-h-0 flex-1">
+          <ScrollArea className="h-full">
+            <div className="p-5">
+              <TaskLogsPanel taskId={task.id} active={tab === "logs"} />
+            </div>
+          </ScrollArea>
+        </TabsContent>
+      </Tabs>
 
       <div className="flex items-center justify-between gap-2 border-t border-border p-4">
         <DeleteDialog taskId={task.id} onDeleted={onClose} />
@@ -145,17 +145,9 @@ function Panel({ children, onClose }: { children: React.ReactNode; onClose: () =
     <>
       {/* Mobile scrim */}
       <div className="fixed inset-0 z-20 bg-black/40 lg:hidden" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-30 flex w-full max-w-md flex-col border-l border-border bg-surface shadow-2xl animate-fade-up lg:static lg:z-0 lg:shadow-none">
+      <div className="fixed inset-y-0 right-0 z-30 flex w-full max-w-lg flex-col border-l border-border bg-surface shadow-2xl animate-fade-up lg:static lg:z-0 lg:shadow-none">
         {children}
       </div>
     </>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-      {children}
-    </h4>
   );
 }

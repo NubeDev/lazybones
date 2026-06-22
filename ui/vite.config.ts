@@ -16,10 +16,10 @@ export default defineConfig({
   // Tauri uses Chromium on Windows and WebKit on macOS/Linux.
   clearScreen: false,
   server: {
-    port: 1420,
+    port: 51840,
     strictPort: true,
     host: host || false,
-    hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
+    hmr: host ? { protocol: "ws", host, port: 51841 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
 });

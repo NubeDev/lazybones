@@ -1,12 +1,18 @@
 //! `GET /stream` — a live Server-Sent Events feed of run activity.
 //!
 //! The push side of the status surface (SCOPE.md: "live queries so status is a
-//! push feed, not a poll"). Two SSE event types flow over one connection:
+//! push feed, not a poll"). Three SSE event types flow over one connection:
 //!
 //! - `transition` — a lifecycle status change (the same [`Event`] rows that
 //!   `GET /runs/:id` replays, but live).
 //! - `activity` — an ephemeral agent progress message ("running cargo test…"),
 //!   so the user can see the agent is actually working.
+//! - `hcom_log` — a raw hcom event the tail just ingested (also durable; the same
+//!   rows `GET /runs/:id/hcom` replays). The live edge of the agent's own
+//!   messages/status/lifecycle (docs/hcom-logs-scope.md).
+//! - `chat` — a message just appended to a task's conversation (also durable; the
+//!   same rows `GET /tasks/:id/chat` replays). Carries operator messages and
+//!   mirrored agent replies so a "chat with the agent" view updates live.
 //!
 //! The browser uses `EventSource`, which reconnects on its own; this stream only
 //! carries items that occur while connected, so a client reconciles by refetching
@@ -46,6 +52,12 @@ fn to_sse(
     let sse = match item.ok()? {
         LiveEvent::Transition(event) => SseEvent::default().event("transition").json_data(event),
         LiveEvent::Activity(activity) => SseEvent::default().event("activity").json_data(activity),
+        LiveEvent::HcomLog(entry) => SseEvent::default().event("hcom_log").json_data(entry),
+        LiveEvent::Chat(message) => SseEvent::default().event("chat").json_data(message),
+        // Lazybones-Agent messages + activity ticks are carried only on the
+        // per-conversation stream (`/agent/chat/:conversation/stream`), never
+        // fanned out to every global `/stream` client (scope §8.4).
+        LiveEvent::AgentMessage(_) | LiveEvent::AgentActivity { .. } => return None,
     };
     Some(Ok(sse.ok()?))
 }

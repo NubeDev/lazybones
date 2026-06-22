@@ -17,14 +17,39 @@ concurrency: 3                            # [LAZYBONES_CONCURRENCY] max agents r
 worktrees: true                           # [LAZYBONES_WORKTREES]   false = serialize on base_branch
 worktree_root: .lazy/wt                   # [LAZYBONES_WORKTREE_ROOT] where `git worktree add` lands
 branch_prefix: lazy/                      # [LAZYBONES_BRANCH_PREFIX] task `auth` -> branch `lazy/auth`
-merge: fast-forward                       # [LAZYBONES_MERGE] fast-forward | merge | pr
+merge: merge                              # [LAZYBONES_MERGE] fast-forward | merge | pr
+                                          # 'merge' (not fast-forward) so parallel task branches that
+                                          # diverged from base integrate via a merge commit instead of
+                                          # failing --ff-only. Use fast-forward only for serialized runs.
 
 # --- which agent tool runs a task (per-task `tool:` in workfile.yaml overrides) ---
 agent_tool: claude                        # [LAZYBONES_AGENT_TOOL] claude | codex | gemini | opencode ...
 
+# --- per-tool flags that bypass the CLI's own interactive gates in a headless run ---
+# Without these a fresh, never-trusted worktree freezes on the tool's trust/approval
+# prompt. Keyed by tool id; a tool with no entry gets none. Setting this map (even to
+# {}) REPLACES the default below wholesale, so re-list any tool you still want covered.
+permission_flags:                          # forwarded verbatim to the claude CLI
+  # `--permission-mode auto`: a classifier auto-approves each action instead of
+  # prompting — so a headless agent NEVER hangs on an approval gate AND still does
+  # the work. Verified (claude v2.1.185) to clear every wall that parked agents
+  # before: destructive Bash like `git stash`, writes into the protected `.claude/`
+  # dir, and per-tool approval — all "Allowed by auto mode classifier", no prompt.
+  #
+  # Why NOT `--dangerously-skip-permissions`: in v2.1.x it ALWAYS shows the
+  # interactive "Bypass Permissions mode … Yes, I accept" consent screen, which a
+  # headless agent can't answer (it parks `launch_blocked`). `bypassPermissionsModeAccepted`
+  # does NOT suppress it (claude-code#52501). `auto` mode has no such consent screen.
+  #
+  # Belt-and-suspenders still underneath: worktree `.claude/settings.json` allow-list,
+  # folder-trust seeding (`auto_trust_agent_folder`), and CLAUDE_CODE_DISABLE_AUTO_MEMORY.
+  claude:
+    - --permission-mode
+    - auto
+
 # --- the brain: lazybonesd REST + embedded SurrealDB ---
 api:
-  bind: 127.0.0.1:7878                    # [LAZYBONES_BIND]
+  bind: 127.0.0.1:46787                   # [LAZYBONES_BIND]
 data_dir: .lazy/db                         # [LAZYBONES_DATA_DIR] embedded SurrealDB (kv-surrealkv) files
 namespace: lazybones                      # [LAZYBONES_NAMESPACE]
 database: run                             # [LAZYBONES_DATABASE]

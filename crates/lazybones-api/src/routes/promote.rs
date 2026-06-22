@@ -19,7 +19,9 @@ pub async fn promote_ready(
     session: Session,
 ) -> ApiResult<Json<Vec<String>>> {
     session.require(Capability::Claim, "promote", "")?;
-    let ready = state.store.newly_ready().await?;
+    // A stopped (paused) workflow promotes nothing — exclude its tasks.
+    let stopped = state.store.unpromotable_run_ids().await?;
+    let ready = state.store.newly_ready(&stopped).await?;
     for id in &ready {
         state
             .store

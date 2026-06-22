@@ -6,6 +6,8 @@ members = [
     "crates/lazybones-store",
     "crates/lazybones-auth",
     "crates/lazybones-api",
+    "crates/lazybones-engine",
+    "crates/lazybones-gh",
     "crates/lazybones-cli",
 ]
 
@@ -19,6 +21,8 @@ rust-version = "1.93"
 lazybones-store = { version = "0.1.0", path = "crates/lazybones-store" }
 lazybones-auth = { version = "0.1.0", path = "crates/lazybones-auth" }
 lazybones-api = { version = "0.1.0", path = "crates/lazybones-api" }
+lazybones-engine = { version = "0.1.0", path = "crates/lazybones-engine" }
+lazybones-gh = { version = "0.1.0", path = "crates/lazybones-gh" }
 
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "query"] }
@@ -33,7 +37,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 surrealdb = { version = "3", default-features = false, features = ["kv-mem", "kv-surrealkv"] }
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal", "process"] }
 # Adapt the store's `broadcast::Receiver` into a `Stream` for axum SSE (`/stream`).
 tokio-stream = { version = "0.1", features = ["sync"] }
 # CORS so the browser/desktop UI (a different origin) can read the REST surface.

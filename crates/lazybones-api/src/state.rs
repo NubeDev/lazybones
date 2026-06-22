@@ -5,9 +5,10 @@
 //! axum can share it across handlers.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-use lazybones_auth::ScopedSession;
+use lazybones_auth::{ManagementProfile, ScopedSession};
 use lazybones_store::StoreHandle;
 
 /// Shared state injected into every handler.
@@ -17,22 +18,57 @@ pub struct AppState {
     pub store: StoreHandle,
     /// The run label this server serves (groups history).
     pub run: String,
+    /// The externally-reachable base URL of this REST API (e.g.
+    /// `http://127.0.0.1:8080`). Handed to the management agent so it can call
+    /// the API the same way an operator does.
+    pub base_url: String,
+    /// A monotonic counter for minting unique management-agent token suffixes.
+    /// (`Date.now`/random are avoided; a simple counter is enough here.)
+    mint_counter: Arc<AtomicU64>,
     /// Bearer-token → session registry. The loop token is seeded at boot; agent
     /// tokens are minted on claim. Behind an `RwLock` so claim can register one.
     tokens: Arc<RwLock<HashMap<String, ScopedSession>>>,
 }
 
 impl AppState {
-    /// Build state around a store handle, run label, and the loop's bearer token.
+    /// Build state around a store handle, run label, base URL, and the loop's
+    /// bearer token.
     #[must_use]
-    pub fn new(store: StoreHandle, run: impl Into<String>, loop_token: impl Into<String>) -> Self {
+    pub fn new(
+        store: StoreHandle,
+        run: impl Into<String>,
+        base_url: impl Into<String>,
+        loop_token: impl Into<String>,
+    ) -> Self {
         let mut tokens = HashMap::new();
         tokens.insert(loop_token.into(), ScopedSession::for_loop("loop"));
         Self {
             store,
             run: run.into(),
+            base_url: base_url.into(),
+            mint_counter: Arc::new(AtomicU64::new(0)),
             tokens: Arc::new(RwLock::new(tokens)),
         }
+    }
+
+    /// Mint and register a scoped management-agent token for a conversation,
+    /// returning the bearer string. The grant comes from the permission profile
+    /// (read-only ⇒ `[Read]`, author ⇒ `[Read, Author]`, manage ⇒
+    /// `[Read, Author, Block]`); it is task-unbound but never carries
+    /// `Claim`/`Secret` (`docs/agent/lazybones-agent-scope.md` §10).
+    ///
+    /// Tokens are minted per turn and remain registered for the process
+    /// lifetime; the conversation id keeps the actor auditable.
+    pub fn mint_management_token(
+        &self,
+        conversation_id: &str,
+        profile: ManagementProfile,
+    ) -> String {
+        let n = self.mint_counter.fetch_add(1, Ordering::Relaxed);
+        let token = format!("lazybones-agent-{conversation_id}-{n}");
+        let actor = format!("agent:{conversation_id}");
+        self.register_agent(token.clone(), ScopedSession::for_management(actor, profile));
+        token
     }
 
     /// Resolve a bearer token to its session, if registered.

@@ -30,9 +30,56 @@ pub enum ApiError {
     #[error("not found")]
     NotFound,
 
+    /// A `gh`/`git` CLI invocation failed (not installed, not authed, or the
+    /// command itself errored). Surfaced as `502` — the failure is upstream of
+    /// us, in a tool we shell out to.
+    #[error(transparent)]
+    Gh(#[from] lazybones_gh::GhError),
+
+    /// The request is well-formed but semantically rejected (e.g. trying to
+    /// remove the main worktree). `400`.
+    #[error("{0}")]
+    BadRequest(String),
+
+    /// The request conflicts with the current state of the resource (e.g.
+    /// deleting a workflow that still has running tasks). `409`.
+    #[error("{0}")]
+    Conflict(String),
+
     /// An unexpected server-side failure.
     #[error("{0}")]
     Internal(String),
+}
+
+/// Map an engine [`IssueError`](lazybones_engine::IssueError) onto an HTTP
+/// status: a standalone task or a bad link is the caller's fault (`400`); a
+/// missing task / unlinked task is `404`; an unavailable `gh` is upstream
+/// (`502`); a store failure reuses the store mapping.
+impl From<lazybones_engine::IssueError> for ApiError {
+    fn from(e: lazybones_engine::IssueError) -> Self {
+        use lazybones_engine::IssueError as E;
+        match e {
+            E::Standalone(_) | E::BadLink(_) => ApiError::BadRequest(e.to_string()),
+            E::TaskNotFound(_) | E::NotLinked(_) => ApiError::NotFound,
+            // `gh` missing / unauthenticated is an actionable env problem ("run
+            // `gh auth login`") — surface the message verbatim as a `400`.
+            E::Auth(_) => ApiError::BadRequest(e.to_string()),
+            E::Gh(g) => ApiError::Gh(g),
+            E::Store(s) => ApiError::Store(s),
+        }
+    }
+}
+
+impl ApiError {
+    /// A `400 Bad Request` with a human-readable reason.
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        ApiError::BadRequest(msg.into())
+    }
+
+    /// A `409 Conflict` with a human-readable reason.
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        ApiError::Conflict(msg.into())
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -40,17 +87,28 @@ impl IntoResponse for ApiError {
         let (status, message) = match &self {
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, self.to_string()),
-            ApiError::Store(StoreError::TaskNotFound(_)) => {
-                (StatusCode::NOT_FOUND, self.to_string())
-            }
+            ApiError::Store(
+                StoreError::TaskNotFound(_)
+                | StoreError::TemplateNotFound(_)
+                | StoreError::SkillNotFound(_)
+                | StoreError::RunNotFound(_)
+                | StoreError::AgentNotFound(_),
+            ) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Store(StoreError::IllegalTransition { .. }) => {
                 (StatusCode::CONFLICT, self.to_string())
             }
-            ApiError::Store(StoreError::TaskExists(_)) => {
-                (StatusCode::CONFLICT, self.to_string())
-            }
+            ApiError::Store(
+                StoreError::TaskExists(_)
+                | StoreError::TemplateExists(_)
+                | StoreError::SkillExists(_)
+                | StoreError::RunExists(_)
+                | StoreError::AgentExists(_),
+            ) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
+            ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            ApiError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         (status, Json(json!({ "error": message }))).into_response()

@@ -19,15 +19,26 @@ use configure::Config;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "lazybones_cli=info,lazybones_api=info".into()),
+            // Default to info across all our crates — the engine especially, whose
+            // scheduler decisions (promote/claim/block/auto-retry) are the main
+            // operational signal. It was omitted here, so those lines were silently
+            // filtered out by default; only an explicit RUST_LOG showed them.
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "lazybones_cli=info,lazybones_api=info,lazybones_engine=info".into()
+            }),
         )
         .init();
 
-    let config = Config::load(&config_path())?;
+    let config_path = config_path();
+    let config = Config::load(&config_path)?;
 
     match command() {
-        Command::Serve => serve::serve(config).await,
+        Command::Serve => {
+            // The scheduler keys (gate, concurrency, worktrees, …) load from the
+            // same file + LAZYBONES_* env; only `serve` runs the loop.
+            let engine = lazybones_engine::EngineConfig::load(&config_path)?;
+            serve::serve(config, engine).await
+        }
         Command::Import(path) => serve::import(config, &path).await,
     }
 }

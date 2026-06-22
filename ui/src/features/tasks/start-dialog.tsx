@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { useReadyTask, useUpdateTask } from "@/lib/hooks/use-tasks";
 import { promoteBlockedReason } from "./drag-rules";
-import { WORKTREE_MODES, WorktreeModePicker } from "./worktree-mode";
+import { WorktreeModePicker } from "./worktree-mode";
 import type { Task, WorktreeMode } from "@/types/task";
 
 /** Start a task: pick its worktree mode, then promote it to `ready` so the run
@@ -76,9 +76,6 @@ export function StartDialog({
             <div className="space-y-1.5">
               <span className="text-xs font-medium">Worktree</span>
               <WorktreeModePicker value={mode} onChange={setMode} />
-              <p className="text-[11px] text-muted-foreground">
-                {WORKTREE_MODES[mode].hint}
-              </p>
             </div>
 
             <p className="mt-3 flex items-start gap-1.5 text-[11px] text-muted-foreground">

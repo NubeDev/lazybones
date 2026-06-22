@@ -1,0 +1,120 @@
+# Default agent catalog — seeded into the `agent` table on first boot.
+#
+# This is editable data, not code: an operator can add/edit/remove agents at
+# runtime via the CRUD API, and the seed never clobbers their changes (see
+# seed_default_agents). Update this file when providers ship new models or
+# efforts; it only affects fresh installs and ids the operator hasn't touched.
+#
+# `id` must match the hcom tool key (`hcom 1 <id> ...`). `models`/`efforts` are
+# what hcom forwards to the tool CLI (e.g. `--model`, `--effort`). Leave them
+# empty for agents with no such knob — the UI then shows no picker.
+#
+# Model ids current as of 2026-06; bump these as providers release new ones.
+
+- id: claude
+  label: Claude Code
+  env_var: ANTHROPIC_API_KEY
+  login_hint: console.anthropic.com/settings/keys — or run `claude login`
+  models:
+    - claude-opus-4-8
+    - claude-sonnet-4-6
+    - claude-haiku-4-5
+    - claude-fable-5
+  default_model: claude-opus-4-8
+  efforts:
+    - low
+    - medium
+    - high
+    - xhigh
+    - max
+  default_effort: high
+
+- id: codex
+  label: Codex
+  env_var: OPENAI_API_KEY
+  login_hint: platform.openai.com/api-keys — or run `codex login`
+  models:
+    - gpt-5.1-codex
+    - gpt-5.1
+    - gpt-5-codex
+  default_model: gpt-5.1-codex
+  efforts:
+    - low
+    - medium
+    - high
+  default_effort: medium
+
+- id: gemini
+  label: Gemini CLI
+  env_var: GEMINI_API_KEY
+  login_hint: aistudio.google.com/apikey
+  models:
+    - gemini-3-pro
+    - gemini-3-flash
+    - gemini-2.5-pro
+  default_model: gemini-3-pro
+  efforts: []
+  default_effort: null
+
+- id: copilot
+  label: GitHub Copilot
+  env_var: GITHUB_TOKEN
+  login_hint: run `copilot` and sign in, or set a GitHub token
+  models: []
+  default_model: null
+  efforts: []
+  default_effort: null
+
+- id: opencode
+  label: OpenCode
+  env_var: OPENCODE_API_KEY
+  login_hint: provider-agnostic — set the key for its configured model
+  models: []
+  default_model: null
+  efforts: []
+  default_effort: null
+
+- id: cursor
+  label: Cursor Agent
+  env_var: CURSOR_API_KEY
+  login_hint: run `cursor-agent login`
+  models: []
+  default_model: null
+  efforts: []
+  default_effort: null
+
+- id: kilo
+  label: Kilo Code
+  env_var: OPENROUTER_API_KEY
+  login_hint: openrouter.ai/keys — provider key for the configured model
+  models: []
+  default_model: null
+  efforts: []
+  default_effort: null
+
+- id: pi
+  label: Pi
+  env_var: PI_API_KEY
+  login_hint: set the API key for Pi's configured provider
+  models: []
+  default_model: null
+  efforts: []
+  default_effort: null
+
+- id: kimi
+  label: Kimi
+  env_var: MOONSHOT_API_KEY
+  login_hint: platform.moonshot.cn — Moonshot/Kimi API key
+  models: []
+  default_model: null
+  efforts: []
+  default_effort: null
+
+- id: antigravity
+  label: Antigravity
+  env_var: GEMINI_API_KEY
+  login_hint: aistudio.google.com/apikey
+  models: []
+  default_model: null
+  efforts: []
+  default_effort: null

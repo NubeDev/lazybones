@@ -34,13 +34,17 @@ export function blockTask(id: string, reason: string): Promise<void> {
   });
 }
 
-/** The authored fields of a task — shared by create + update. */
+/** The authored fields of a task — shared by create + update.
+ *  `model`/`effort` are honoured by `PATCH /tasks/:id`; the create route ignores
+ *  them (set them at workflow add-task time), so they're optional here. */
 export interface TaskDraft {
   title: string;
   spec: string;
   deps: string[];
   owns: string[];
   tool: string | null;
+  model?: string | null;
+  effort?: string | null;
   worktree_mode: WorktreeMode;
 }
 

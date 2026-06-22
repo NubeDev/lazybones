@@ -12,6 +12,8 @@ workspace = true
 surrealdb = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Bundled default agent catalog ships as authored YAML, parsed on seed.
+serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 # Secret store: authenticated encryption at rest (AES-256-GCM) keyed by a master
 # key derived from a passphrase/env, plus base64 for the stored ciphertext blob.

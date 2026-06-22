@@ -1,6 +1,9 @@
 import { useState } from "react";
 import type { View } from "./navigation";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
+import { TemplatesPage } from "@/features/templates/templates-page";
+import { SkillsPage } from "@/features/skills/skills-page";
+import { WorkflowsPage } from "@/features/workflows/workflows-page";
 import { TasksPage } from "@/features/tasks/tasks-page";
 import { RunsPage } from "@/features/runs/runs-page";
 import { SettingsPage } from "@/features/settings/settings-page";
@@ -22,6 +25,12 @@ export function ViewRenderer({
   switch (view) {
     case "dashboard":
       return <DashboardPage onNavigate={onNavigate} />;
+    case "templates":
+      return <TemplatesPage />;
+    case "skills":
+      return <SkillsPage />;
+    case "workflows":
+      return <WorkflowsPage />;
     case "tasks":
       return <TasksPage />;
     case "runs":

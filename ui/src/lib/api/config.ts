@@ -1,6 +1,6 @@
 /** Where `lazybonesd` listens. Overridable at build time via `VITE_API_BASE`,
  *  and at runtime via `localStorage["lazybones-api-base"]` (settings panel). */
-const DEFAULT_BASE = "http://127.0.0.1:7878";
+const DEFAULT_BASE = "http://127.0.0.1:46787";
 
 const STORAGE_KEY = "lazybones-api-base";
 

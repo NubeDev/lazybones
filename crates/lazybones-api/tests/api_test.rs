@@ -4,10 +4,10 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use tokio_stream::StreamExt;
 use lazybones_api::{AppState, router};
 use lazybones_store::{SeedTask, StoreEngine, StoreHandle, sync_seeds};
 use serde_json::{Value, json};
+use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
 const LOOP_TOKEN: &str = "loop-tok";
@@ -27,6 +27,7 @@ async fn app() -> Router {
                 deps: vec![],
                 owns: vec![],
                 tool: None,
+                reuse_from: None,
             },
             SeedTask {
                 id: "api".into(),
@@ -35,12 +36,13 @@ async fn app() -> Router {
                 deps: vec!["store".into()],
                 owns: vec![],
                 tool: None,
+                reuse_from: None,
             },
         ],
     )
     .await
     .unwrap();
-    let state = AppState::new(store, "run", LOOP_TOKEN);
+    let state = AppState::new(store, "run", "http://127.0.0.1:0", LOOP_TOKEN);
     router(state)
 }
 
@@ -83,6 +85,151 @@ fn get(path: &str) -> Request<Body> {
         .uri(path)
         .body(Body::empty())
         .unwrap()
+}
+
+#[tokio::test]
+async fn fs_list_browses_dirs_and_flags_repos() {
+    let app = app().await;
+
+    // A temp dir holding a plain subdir, a git repo (has `.git`), and a dotdir.
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join("plain")).unwrap();
+    std::fs::create_dir(tmp.path().join("repo")).unwrap();
+    std::fs::create_dir(tmp.path().join("repo/.git")).unwrap();
+    std::fs::create_dir(tmp.path().join(".hidden")).unwrap();
+
+    let uri = format!("/fs/list?path={}", tmp.path().display());
+    let (status, body) = send(&app, get(&uri)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let names: Vec<&str> = body["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    // Dotdirs are hidden; plain + repo are listed and sorted.
+    assert_eq!(names, vec!["plain", "repo"]);
+
+    let repo = &body["entries"][1];
+    assert_eq!(repo["name"], "repo");
+    assert_eq!(repo["is_repo"], true);
+    assert_eq!(body["entries"][0]["is_repo"], false);
+    assert!(body["parent"].is_string());
+}
+
+#[tokio::test]
+async fn gh_worktrees_lists_main_and_extra() {
+    let app = app().await;
+
+    // A real temp repo with one extra worktree on its own branch.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let run_git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "t@t"],
+        &["config", "user.name", "t"],
+        &["commit", "--allow-empty", "-q", "-m", "root"],
+    ] {
+        run_git(args);
+    }
+    let wt = dir.join("wt-extra");
+    run_git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/wt",
+        wt.to_str().unwrap(),
+    ]);
+
+    let uri = format!("/gh/worktrees?dir={}", urlencode(&dir.to_string_lossy()));
+    let (status, body) = send(&app, loop_req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let trees = body.as_array().unwrap();
+    assert_eq!(trees.len(), 2);
+    assert_eq!(trees[0]["is_main"], json!(true));
+    assert!(
+        trees
+            .iter()
+            .any(|w| w["branch"] == json!("feat/wt") && w["is_main"] == json!(false))
+    );
+}
+
+#[tokio::test]
+async fn gh_local_branches_works_without_remote() {
+    let app = app().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let run_git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "t@t"],
+        &["config", "user.name", "t"],
+        &["commit", "--allow-empty", "-q", "-m", "root"],
+        &["branch", "feat/x"],
+    ] {
+        run_git(args);
+    }
+
+    let uri = format!(
+        "/gh/local-branches?dir={}",
+        urlencode(&dir.to_string_lossy())
+    );
+    let (status, body) = send(&app, loop_req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"feat/x"));
+    // No remote → upstream null, ahead/behind 0 — and no error.
+    let feat = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["name"] == json!("feat/x"))
+        .unwrap();
+    assert_eq!(feat["upstream"], Value::Null);
+    assert_eq!(feat["ahead"], json!(0));
+}
+
+/// Minimal percent-encoding for a filesystem path used in a query string.
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'/' => "%2F".to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn gh_auth_probe_is_unguarded_and_returns_a_verdict() {
+    let app = app().await;
+    // No token, no network assumptions: the probe always answers 200 with a
+    // boolean (true if `gh` is logged in on this host, false otherwise).
+    let (status, body) = send(&app, get("/gh/auth")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["authenticated"].is_boolean());
 }
 
 #[tokio::test]
@@ -143,11 +290,7 @@ async fn stream_pushes_a_transition_event() {
     let app = app().await;
 
     // Open the SSE stream first so the subscription exists before the transition.
-    let stream_res = app
-        .clone()
-        .oneshot(get("/stream"))
-        .await
-        .unwrap();
+    let stream_res = app.clone().oneshot(get("/stream")).await.unwrap();
     assert_eq!(stream_res.status(), StatusCode::OK);
     assert_eq!(
         stream_res
@@ -214,7 +357,9 @@ async fn stream_pushes_an_agent_activity_message() {
         .uri("/tasks/store/activity")
         .header("authorization", "Bearer agent-tok")
         .header("content-type", "application/json")
-        .body(Body::from(json!({ "message": "running cargo test" }).to_string()))
+        .body(Body::from(
+            json!({ "message": "running cargo test" }).to_string(),
+        ))
         .unwrap();
     let (status, _) = send(&app, activity).await;
     assert_eq!(status, StatusCode::OK);
@@ -280,6 +425,31 @@ async fn ready_promotes_one_task() {
 }
 
 #[tokio::test]
+async fn hcom_log_routes_are_wired_and_read_the_durable_log() {
+    let app = app().await;
+
+    // The run's hcom log is empty (nothing tailed yet) but the route is wired and
+    // reads the durable table: 200 with an empty array.
+    let (status, body) = send(&app, get("/runs/run/hcom")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+
+    // `GET /tasks/:id/hcom` resolves the task's run, then filters to it: 200, [].
+    let (status, body) = send(&app, get("/tasks/store/hcom")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+
+    // An unknown task is a 404, not an empty log.
+    let (status, _) = send(&app, get("/tasks/nope/hcom")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Filter params parse and apply without error.
+    let (status, body) = send(&app, get("/runs/run/hcom?kind=message&after=0&limit=10")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+}
+
+#[tokio::test]
 async fn missing_token_is_unauthorized() {
     let app = app().await;
     let req = Request::builder()
@@ -301,6 +471,62 @@ async fn illegal_transition_is_conflict() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn cancel_blocks_a_running_task() {
+    let app = app().await;
+    // Promote + claim `store` so it is `running`.
+    send(&app, loop_post("/tasks/promote", json!(null))).await;
+    let (status, _) = send(
+        &app,
+        loop_post(
+            "/tasks/store/claim",
+            json!({
+                "session": "sess-1",
+                "worktree": "/wt/store",
+                "branch": "lazy/store",
+                "token": "agent-tok"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Cancel: the hcom kill is best-effort (no real agent here), so the task
+    // still lands in `blocked` with the supplied reason.
+    let (status, task) = send(
+        &app,
+        loop_post("/tasks/store/cancel", json!({ "reason": "operator stop" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "blocked");
+    assert_eq!(task["reason"], "operator stop");
+}
+
+#[tokio::test]
+async fn cancel_defaults_reason_when_omitted() {
+    let app = app().await;
+    send(&app, loop_post("/tasks/promote", json!(null))).await;
+    send(
+        &app,
+        loop_post(
+            "/tasks/store/claim",
+            json!({
+                "session": "s",
+                "worktree": "/wt",
+                "branch": "b",
+                "token": "agent-tok"
+            }),
+        ),
+    )
+    .await;
+
+    let (status, task) = send(&app, loop_post("/tasks/store/cancel", json!({}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "blocked");
+    assert_eq!(task["reason"], "cancelled by operator");
 }
 
 #[tokio::test]
@@ -382,7 +608,10 @@ async fn author_create_update_delete_over_rest() {
     // With its dep dropped, `ui` now promotes to ready alongside `store`.
     let (_, ready) = send(&app, loop_post("/tasks/promote", json!(null))).await;
     let ready: Vec<String> = serde_json::from_value(ready).unwrap();
-    assert!(ready.contains(&"ui".to_string()), "ui ready after dep dropped");
+    assert!(
+        ready.contains(&"ui".to_string()),
+        "ui ready after dep dropped"
+    );
 
     // Delete it; the read then 404s.
     let (status, body) = send(&app, loop_req("DELETE", "/tasks/ui", None)).await;
@@ -447,4 +676,108 @@ async fn agent_cannot_author_tasks() {
         .unwrap();
     let (status, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn chat_reads_empty_and_404s_unknown_task() {
+    let app = app().await;
+
+    // A task with no conversation yet: 200 with an empty array.
+    let (status, body) = send(&app, get("/tasks/store/chat")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+
+    // An unknown task is a 404, not an empty conversation.
+    let (status, _) = send(&app, get("/tasks/nope/chat")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn chat_post_rejects_empty_text() {
+    let app = app().await;
+    let (status, _) = send(
+        &app,
+        loop_post("/tasks/store/chat", json!({ "text": "   " })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn chat_post_on_unclaimed_task_stores_guidance() {
+    let app = app().await;
+
+    // `store` is pending (unclaimed): the message is stored as guidance the first
+    // spawn will fold in, not delivered live.
+    let (status, posted) = send(
+        &app,
+        loop_post(
+            "/tasks/store/chat",
+            json!({ "text": "prefer an env var for the port" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(posted["delivery"], "stored");
+    assert_eq!(posted["message"]["role"], "user");
+    assert_eq!(posted["message"]["text"], "prefer an env var for the port");
+
+    // And it is durable: GET returns the one message.
+    let (status, convo) = send(&app, get("/tasks/store/chat")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(convo.as_array().unwrap().len(), 1);
+    assert_eq!(convo[0]["text"], "prefer an env var for the port");
+}
+
+#[tokio::test]
+async fn chat_post_revives_a_blocked_task() {
+    let app = app().await;
+
+    // Drive `store` to blocked: promote -> claim -> cancel.
+    send(&app, loop_post("/tasks/promote", json!(null))).await;
+    send(
+        &app,
+        loop_post(
+            "/tasks/store/claim",
+            json!({ "session": "s", "worktree": "/wt/store", "branch": "lazy/store", "token": "agent-tok" }),
+        ),
+    )
+    .await;
+    let (status, task) = send(
+        &app,
+        loop_post("/tasks/store/cancel", json!({ "reason": "gate red" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "blocked");
+
+    // Chatting a blocked task revives it (blocked -> ready) so the loop re-spawns
+    // it, keeping the worktree it left behind.
+    let (status, posted) = send(
+        &app,
+        loop_post(
+            "/tasks/store/chat",
+            json!({ "text": "the gate failed on lint; fix it and retry" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(posted["delivery"], "revived");
+
+    let (status, task) = send(&app, get("/tasks/store")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task["status"], "ready", "revive reopens the task");
+    assert_eq!(task["reason"], Value::Null, "the block reason is cleared");
+    assert_eq!(
+        task["worktree"], "/wt/store",
+        "the worktree is kept for resume"
+    );
+
+    // The conversation now holds the operator's guidance.
+    let (_, convo) = send(&app, get("/tasks/store/chat")).await;
+    assert_eq!(convo.as_array().unwrap().len(), 1);
+    assert_eq!(
+        convo[0]["text"],
+        "the gate failed on lint; fix it and retry"
+    );
 }

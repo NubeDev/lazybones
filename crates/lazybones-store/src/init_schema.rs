@@ -19,15 +19,44 @@ DEFINE TABLE IF NOT EXISTS task SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS status ON task TYPE string;\n\
 DEFINE FIELD IF NOT EXISTS run ON task TYPE string;\n\
 DEFINE INDEX IF NOT EXISTS task_run_status ON task FIELDS run, status;\n\
+DEFINE INDEX IF NOT EXISTS task_run_id ON task FIELDS run_id;\n\
+DEFINE TABLE IF NOT EXISTS template SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS skill SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS attachment SCHEMALESS;\n\
+DEFINE INDEX IF NOT EXISTS attachment_unique ON attachment FIELDS owner_kind, owner_id, thing_kind, thing_id UNIQUE;\n\
+DEFINE INDEX IF NOT EXISTS attachment_owner ON attachment FIELDS owner_kind, owner_id;\n\
+DEFINE TABLE IF NOT EXISTS agent SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS run SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS depends_on TYPE RELATION SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS event SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS task ON event TYPE string;\n\
 DEFINE FIELD IF NOT EXISTS at ON event TYPE datetime;\n\
 DEFINE INDEX IF NOT EXISTS event_task_at ON event FIELDS task, at;\n\
+DEFINE TABLE IF NOT EXISTS hcom_log SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS run ON hcom_log TYPE string;\n\
+DEFINE FIELD IF NOT EXISTS hcom_id ON hcom_log TYPE int;\n\
+DEFINE INDEX IF NOT EXISTS hcom_log_run_id ON hcom_log FIELDS run, hcom_id UNIQUE;\n\
+DEFINE INDEX IF NOT EXISTS hcom_log_run_task ON hcom_log FIELDS run, task;\n\
+DEFINE TABLE IF NOT EXISTS chat SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS task ON chat TYPE string;\n\
+DEFINE FIELD IF NOT EXISTS at ON chat TYPE datetime;\n\
+DEFINE INDEX IF NOT EXISTS chat_task_at ON chat FIELDS task, at;\n\
+DEFINE TABLE IF NOT EXISTS settings SCHEMALESS;\n\
+DEFINE TABLE IF NOT EXISTS agent_conversation SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS created_at ON agent_conversation TYPE option<string>;\n\
+DEFINE TABLE IF NOT EXISTS agent_message SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS conversation_id ON agent_message TYPE string;\n\
+DEFINE FIELD IF NOT EXISTS at ON agent_message TYPE datetime;\n\
+DEFINE INDEX IF NOT EXISTS agent_message_conv_at ON agent_message FIELDS conversation_id, at;\n\
 DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS learned TYPE RELATION SCHEMALESS;\n\
 DEFINE TABLE IF NOT EXISTS secret SCHEMALESS;\n\
-DEFINE FIELD IF NOT EXISTS env_var ON secret TYPE string;";
+DEFINE FIELD IF NOT EXISTS env_var ON secret TYPE string;\n\
+DEFINE TABLE IF NOT EXISTS follow_up SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS run ON follow_up TYPE string;\n\
+DEFINE FIELD IF NOT EXISTS status ON follow_up TYPE string;\n\
+DEFINE INDEX IF NOT EXISTS follow_up_run_dedup ON follow_up FIELDS run, dedup_key UNIQUE;\n\
+DEFINE INDEX IF NOT EXISTS follow_up_run_status ON follow_up FIELDS run, status;";
 
 /// Apply the schema on the bootstrapped connection.
 ///

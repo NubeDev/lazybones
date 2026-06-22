@@ -3,8 +3,9 @@
 //! Only the few keys the binary needs to *boot* live here — the bind address,
 //! the embedded DB location, namespace/database, the run label, and the loop's
 //! bearer token. The rest of `lazybones.yaml` (gate commands, concurrency,
-//! worktree toggle) is consumed by the hcom loop script, not the daemon; it is
-//! imported into the DB on sync and not re-read here.
+//! worktree toggle) is the scheduler's config: it is loaded by
+//! [`EngineConfig`](lazybones_engine::EngineConfig), which the daemon's
+//! in-process loop reads — there is no external loop script.
 
 use std::path::Path;
 
@@ -63,7 +64,7 @@ impl Config {
             bind: env_or(
                 "LAZYBONES_BIND",
                 file.api.and_then(|a| a.bind),
-                "127.0.0.1:7878",
+                "127.0.0.1:46787",
             ),
             data_dir: env_or("LAZYBONES_DATA_DIR", file.data_dir, ".lazy/db"),
             namespace: env_or("LAZYBONES_NAMESPACE", file.namespace, "lazybones"),

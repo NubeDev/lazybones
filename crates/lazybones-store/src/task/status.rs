@@ -43,7 +43,8 @@ impl Status {
     /// Whether `self -> to` is a legal transition.
     ///
     /// `blocked` is reachable from any non-terminal state. `done` is terminal.
-    /// `running -> ready` is the reclaim path for a stale agent.
+    /// `running -> ready` is the reclaim path for a stale agent, and `blocked ->
+    /// ready` is the operator revive path (workshop a failed task back to life).
     #[must_use]
     pub fn can_transition(self, to: Status) -> bool {
         use Status::{Blocked, Done, Gating, Pending, Ready, Running};
@@ -53,7 +54,12 @@ impl Status {
             | (Running, Gating)
             | (Running, Ready)
             | (Gating, Done)
-            | (Gating, Ready) => true,
+            | (Gating, Ready)
+            // Revive: an operator workshops a blocked task back to life. The only
+            // edge out of the otherwise-terminal `blocked` state, and a deliberate
+            // operator override (mirrors how `running -> ready` reclaims a stale
+            // agent) — the worktree is kept, so the next claim resumes in place.
+            | (Blocked, Ready) => true,
             // Any non-terminal state can be blocked.
             (Pending | Ready | Running | Gating, Blocked) => true,
             _ => false,

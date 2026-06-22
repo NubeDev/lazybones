@@ -35,10 +35,10 @@ Then, over HTTP (the loop authenticates with the `LAZYBONES_LOOP_TOKEN`, default
 `lazybones-loop`):
 
 ```sh
-curl localhost:7878/health
-curl localhost:7878/tasks                       # list all
-curl localhost:7878/tasks?status=ready          # filter by status
-curl -X POST localhost:7878/tasks/promote \
+curl localhost:46787/health
+curl localhost:46787/tasks                       # list all
+curl localhost:46787/tasks?status=ready          # filter by status
+curl -X POST localhost:46787/tasks/promote \
      -H 'authorization: Bearer lazybones-loop'  # promote pending→ready
 ```
 
@@ -92,7 +92,7 @@ agent's environment at spawn. Listing only ever returns a `…last4` hint.
 
 `lazybones.yaml`, every key overridable by `LAZYBONES_*` env. The daemon reads
 only its boot keys (bind, data dir, namespace/database, run label, loop token);
-the gate/concurrency/worktree keys are consumed by the hcom loop script.
+the gate/concurrency/worktree keys are consumed by the in-process scheduler.
 
 ## Not yet built (tracked follow-ups)
 
@@ -100,5 +100,8 @@ the gate/concurrency/worktree keys are consumed by the hcom loop script.
   The `memory` table is declared; the embedding provider is an open question
   (SCOPE.md OQ7), so the routes are deliberately deferred.
 - **`GET /stream`** — SurrealDB live-query → SSE status feed.
-- **The hcom loop script** (`scripts/lazybones.sh`) — the orchestration loop that
-  drives this API. lazybones is the queue + gate; the loop is hcom.
+- **The scheduler** — an in-process Rust loop in `lazybonesd` (`src/scheduler/`)
+  plus a typed hcom CLI client (`src/hcom/`): read ready Tasks → worktree → spawn
+  via `hcom` → await the DONE event → gate → advance. This is the only execution
+  plane and the top priority; nothing runs until it exists. (Not a shell script —
+  see [docs/vision.md](docs/vision.md).)

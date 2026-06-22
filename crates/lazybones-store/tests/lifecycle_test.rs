@@ -16,6 +16,7 @@ fn seed(id: &str, deps: Vec<String>) -> SeedTask {
         deps,
         owns: vec![],
         tool: None,
+        reuse_from: None,
     }
 }
 
@@ -27,7 +28,7 @@ async fn claim_gate_done_walks_the_happy_path() {
         .unwrap();
 
     // No-dep task is immediately ready.
-    let ready = store.newly_ready().await.unwrap();
+    let ready = store.newly_ready(&[]).await.unwrap();
     assert_eq!(ready, vec!["store".to_owned()]);
     store
         .transition("store", Transition::Ready, "loop")
@@ -108,7 +109,7 @@ async fn dependent_task_is_not_ready_until_dep_done() {
     .unwrap();
 
     // Only `store` is ready at first.
-    assert_eq!(store.newly_ready().await.unwrap(), vec!["store".to_owned()]);
+    assert_eq!(store.newly_ready(&[]).await.unwrap(), vec!["store".to_owned()]);
 
     // Drive `store` to done.
     for t in [
@@ -125,7 +126,44 @@ async fn dependent_task_is_not_ready_until_dep_done() {
     }
 
     // Now `api` becomes ready.
-    assert_eq!(store.newly_ready().await.unwrap(), vec!["api".to_owned()]);
+    assert_eq!(store.newly_ready(&[]).await.unwrap(), vec!["api".to_owned()]);
+}
+
+#[tokio::test]
+async fn reuse_from_implies_a_dependency_edge() {
+    let store = store().await;
+    // `consumer` reuses `producer`'s worktree but lists NO explicit deps. The
+    // reuse link alone must order them: consumer stays pending until producer is
+    // done, exactly as if it had `depends_on: [producer]`.
+    let mut consumer = seed("consumer", vec![]);
+    consumer.reuse_from = Some("producer".into());
+    sync_seeds(&store, "run", &[seed("producer", vec![]), consumer])
+        .await
+        .unwrap();
+
+    // Only `producer` is ready — the implied edge holds `consumer` back.
+    assert_eq!(
+        store.newly_ready(&[]).await.unwrap(),
+        vec!["producer".to_owned()]
+    );
+
+    for t in [
+        Transition::Ready,
+        Transition::Claim {
+            session: "s".into(),
+            worktree: "w".into(),
+            branch: "b".into(),
+        },
+        Transition::Gate,
+        Transition::Done { commit: "c".into() },
+    ] {
+        store.transition("producer", t, "loop").await.unwrap();
+    }
+
+    assert_eq!(
+        store.newly_ready(&[]).await.unwrap(),
+        vec!["consumer".to_owned()]
+    );
 }
 
 #[tokio::test]

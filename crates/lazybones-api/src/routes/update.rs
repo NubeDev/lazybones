@@ -35,7 +35,17 @@ pub async fn update_task(
                 deps: body.deps.clone(),
                 owns: body.owns,
                 tool: body.tool,
+                model: body.model,
+                effort: body.effort,
                 worktree_mode: body.worktree_mode,
+                auto_trust_agent_folder: body.auto_trust_agent_folder,
+                // The auto-retry policy is operator config (Block-guarded), set via
+                // the retry route — not touched by this Author-guarded re-authoring.
+                auto_retry: None,
+                max_retries: None,
+                // Close-on-done is issue config, managed by the dedicated issue
+                // routes, not this authoring re-write.
+                issue_close_on_done: None,
             },
         )
         .await?;

@@ -1,0 +1,301 @@
+# Default skill catalogue — seeded into the `skill` table on first boot.
+#
+# This is editable data, not code: an operator can add/edit/remove skills at
+# runtime via the CRUD API, and the seed never clobbers their changes (see
+# seed_default_skills). These are demo recipes to make a fresh install useful —
+# attach them to a template (e.g. `code-review-rust` onto an `open-pr` template).
+#
+# `id` must be a friendly, install-unique key. `body` is the instruction block an
+# agent is meant to follow; keep it provider-agnostic and concrete.
+
+- id: code-review-rust
+  title: Rust code review
+  description: Checklist for reviewing Rust changes before approval.
+  body: |
+    Review this Rust change for correctness and idiom:
+    - No `unwrap()`/`expect()`/`panic!` in non-test code; return `Result` and add
+      context (`.map_err`/`?`) instead.
+    - Public items carry `///` docs; fallible public fns have an `# Errors` section.
+    - No needless `clone()`/allocation in hot paths; borrow where you can.
+    - Errors are typed (`thiserror`), not stringly; match the crate's existing enum.
+    - New behaviour has a unit test covering the happy path and one failure path.
+    - `cargo clippy --all-targets` is clean — no `#[allow]` added to silence it.
+
+- id: write-tests
+  title: Write thorough tests
+  description: Add focused, fast tests that cover the happy path and the edges.
+  body: |
+    Add tests for the change:
+    - One test per behaviour, named for what it asserts (not `test_1`).
+    - Cover the happy path, the boundary cases, and at least one failure/error path.
+    - Keep tests hermetic and fast: no network, no sleeps, no shared global state;
+      use in-memory fixtures where the codebase already does.
+    - Assert on observable outcomes, not internal implementation details.
+    - Make sure the new tests actually fail when the code under test is broken.
+
+- id: open-pr
+  title: Open a pull request
+  description: Push the branch and open a clean, reviewable PR against the base.
+  body: |
+    Finish the work and open a PR:
+    - Ensure the build and the test suite pass locally before pushing.
+    - Write a title in imperative mood (e.g. "Add skill seeding") and a body that
+      states the what, the why, and how it was verified.
+    - Keep the diff scoped to the task — no unrelated churn or formatting drift.
+    - Call out any follow-ups or known gaps explicitly rather than hiding them.
+
+- id: conventional-commits
+  title: Conventional commit messages
+  description: Write commit messages in the Conventional Commits style.
+  body: |
+    Write each commit as `type(scope): summary`:
+    - `type` is one of feat, fix, docs, refactor, test, chore, perf, build, ci.
+    - `scope` is the affected area (e.g. `scheduler`, `store`); omit if broad.
+    - The summary is imperative and ≤ 72 chars, no trailing period.
+    - Add a body explaining the why when the change isn't self-evident.
+    - One logical change per commit; don't bundle unrelated edits.
+
+# --- Lazybones-Agent runbooks ---------------------------------------------
+# These skills are operating procedures for the *management agent* (the
+# conversational operator aide), not for task agents. Each is a runbook telling
+# the agent which REST calls to make, in what order, with what guardrails. The
+# agent reads the enabled ones as part of its system prompt and executes the
+# calls itself (docs/agent/lazybones-agent-scope.md §6). The cardinal rule runs
+# through all of them: the agent AUTHORS, the human STARTS.
+
+- id: lazybones-add-workflow
+  title: Add a workflow
+  description: Author a new lazybones workflow from a description — never start it.
+  body: |
+    # Skill: Add a workflow
+
+    Author a new lazybones workflow from a natural-language description. You
+    AUTHOR ONLY — you never start it. After creating, tell the operator to press
+    Start.
+
+    ## Inputs to gather (ask if missing)
+    - A unique `id` (kebab-case) and a human `title`.
+    - `workspace.repo` — an absolute path. If the operator is on a workflow page,
+      default to that workflow's repo from the page context.
+    - Optional: `base_branch`, `tool`/`model`/`effort` (else inherit defaults).
+    - `worktree_mode` — set at the workspace level so every task inherits it. This
+      is the big "how many PRs" decision; see "How the branch & worktree work" in
+      the `lazybones-add-task` skill. **Default to `shared`** (one branch + worktree
+      for the whole workflow → a single PR) unless the operator explicitly wants
+      tasks reviewed/merged separately or run in parallel — then use `new` (one
+      branch/PR per task). When you pick `shared` by default, say so in one line so
+      the operator can override. Only deviate from `shared` when asked.
+
+    ## merge mode and how it pairs with worktree mode
+    `merge` decides what happens to a task's branch when it goes green:
+    `fast-forward`/`merge` auto-land it onto `base_branch` and push; `pr` pushes the
+    branch and leaves opening the PR to a human. **You normally do NOT set `merge`
+    for a `shared` workflow** — `shared` is automatically treated as `pr` (one
+    shared branch is reviewed as one PR; auto-merging it mid-run would leave nothing
+    to PR). Only set `merge` for a `new`-mode workflow, and only if the operator
+    wants something other than the default. If unsure, omit `merge`.
+
+    ## Procedure
+    1. Confirm no id clash: `GET /workflows/:id` → expect 404.
+    2. Create it (omit `merge` for a `shared` workflow — it's forced to `pr`):
+       POST /workflows
+       { "id", "title", "workspace": { "repo", "base_branch?", "worktree_mode?", "tool?", "model?", "effort?", "merge?" } }
+    3. For each task the operator described, run the `lazybones-add-task` skill.
+    4. Report the created workflow and its tasks. Do NOT call /start.
+       End with: "Created `<id>` with N tasks. Press Start when you're ready to
+       run it."
+
+    ## Guardrails
+    - A created workflow is `active` with NO `started_at` — it will NOT run until
+      an operator starts it. Never call POST /workflows/:id/start yourself.
+    - A duplicate id returns 409 — surface it, do not overwrite.
+
+- id: lazybones-add-task
+  title: Add a task to a workflow
+  description: Author one task on an existing workflow (or as a standalone task).
+  body: |
+    # Skill: Add a task
+
+    Add a task to a workflow the operator named (or a standalone task). You author
+    only; the task stays inert until its workflow is started by a human.
+
+    ## Inputs to gather (ask if missing)
+    - The target `workflow_id` (default to the page context's workflow).
+    - A unique task `id` (kebab-case) and `title`.
+    - The `spec`: a concrete, self-contained instruction for the task agent.
+    - Optional: `deps` (task ids that must finish first), `owns` (paths it owns),
+      `from_template`, and `tool`/`model`/`effort` overrides.
+    - Optional `worktree_mode` — how the task's working tree + branch are set up.
+      Read "How the branch & worktree work" below before choosing; it decides how
+      many branches (and therefore PRs) the workflow produces.
+
+    ## How the branch & worktree work
+    When a task is claimed it gets a *working tree* (a checkout the agent edits in)
+    and a *branch* (where its commits land). The `worktree_mode` chooses the shape:
+
+    - `shared` (**default**) — **one** worktree on **one** branch
+      (`<branch_prefix><run_id>`, named for the workflow, not the task) for *every*
+      task in the run. Tasks build on each other sequentially in the same tree, so
+      the whole workflow becomes a single branch → a **single PR**. This is the
+      default because most workflows are one feature split into steps the operator
+      wants to review and merge together. The scheduler serializes a shared run's
+      tasks (no two agents in one tree at once). A standalone task (no workflow)
+      falls back to `new`.
+    - `new` — a fresh, **isolated** worktree on its own branch
+      (`<branch_prefix><task_id>`), forked from the workflow's `base_branch`. Tasks
+      run in parallel and never collide. Trade-off: **one branch per task**, so a
+      workflow of N tasks yields N branches and N PRs. Choose this only when tasks
+      are genuinely independent and you want them in parallel / reviewed
+      separately. A later task only sees an earlier task's work if it `deps` on it
+      AND the workflow's `merge` mode lands that work back onto base (then the later
+      task forks from the advanced base).
+    - `reuse` — run in another task's existing worktree via `reuse_from`; continue
+      exactly where it left off (sets up a dependency edge on that task).
+    - `branch` — run in the repo's **main checkout** on the task's branch, no
+      separate worktree. Serial only; rarely needed.
+
+    Picking the mode: **default to `shared`** — one feature in ordered steps,
+    reviewed and merged as one PR, is the common case. Use `new` only when the
+    tasks are genuinely independent and the operator wants them parallel or
+    reviewed separately. `reuse` when a task must continue another's exact
+    uncommitted tree. Don't deviate from `shared` unless the operator asks.
+
+    `worktree_mode` can be set per workflow (inherited by its tasks) or overridden
+    per task. On a workflow task, omit it to inherit the workflow's mode (which now
+    defaults to `shared`); set it only to deviate.
+
+    ## Procedure
+    1. Verify the workflow exists: `GET /workflows/:id`.
+    2. Create the task on it:
+       POST /workflows/:id/tasks
+       { "id", "title", "spec", "deps?": [..], "owns?": [..], "from_template?", "worktree_mode?", "tool?", "model?", "effort?" }
+       (For a standalone task use `POST /tasks` with the same fields. `worktree_mode`
+       is one of `new` | `shared` | `reuse` | `branch`; on a workflow task you can
+       also use `worktree_mode_override` to deviate from the inherited mode.)
+    3. Report the task, its dependency edges, and (if not the default) its
+       worktree mode. Do not promote, claim, or start.
+
+    ## Guardrails
+    - Authoring a task never runs it. `POST /tasks/:id/ready` only marks it ready;
+      it still does nothing until the workflow is started by a human.
+    - A duplicate id returns 409 — surface it rather than mutating blindly.
+    - If the operator wants "one PR for the whole workflow", that's `shared` mode
+      on the workflow (or every task) — not N isolated tasks they merge by hand.
+
+- id: lazybones-add-template
+  title: Add a task-template
+  description: Author a reusable task-template, optionally attaching skills.
+  body: |
+    # Skill: Add a task-template
+
+    Author a reusable task-template — a stateless recipe tasks can be created
+    from — and optionally attach skills to it.
+
+    ## Inputs to gather (ask if missing)
+    - A unique template `id` (kebab-case) and `title`.
+    - The template `body` (the spec text instantiated tasks inherit).
+    - Optional: skill ids to attach (see `GET /skills`).
+
+    ## Procedure
+    1. Confirm no id clash: `GET /templates/:id` → expect 404.
+    2. Create it: `POST /templates { "id", "title", "body", ... }`.
+    3. For each skill to attach:
+       POST /templates/:id/attachments { "thing_kind": "skill", "thing_id": "<skill-id>" }
+    4. Report the template and its attached skills.
+
+    ## Guardrails
+    - Templates are stateless recipes; creating one runs nothing.
+    - A duplicate id returns 409 — surface it.
+
+- id: lazybones-add-skill
+  title: Add a skill
+  description: Author a new reusable skill (provider-agnostic markdown runbook).
+  body: |
+    # Skill: Add a skill
+
+    Author a new skill: a block of provider-agnostic markdown instructions an
+    agent can follow. Skills are stateless and have no runtime.
+
+    ## Inputs to gather (ask if missing)
+    - A unique skill `id` (kebab-case) and `title`.
+    - A one-line `description` (the picker hint).
+    - The `body`: concrete, provider-agnostic instructions.
+
+    ## Procedure
+    1. Confirm no id clash: `GET /skills/:id` → expect 404.
+    2. Create it: `POST /skills { "id", "title", "description", "body" }`.
+    3. Report the created skill. Mention it can be attached to a template via the
+       `lazybones-add-template` flow.
+
+    ## Guardrails
+    - Keep the body provider-agnostic and concrete; it is advisory text, not code.
+    - A duplicate id returns 409 — surface it.
+
+- id: lazybones-supervise
+  title: Supervise runs
+  description: Summarize workflow/task state and surface blockers — read-only.
+  body: |
+    # Skill: Supervise
+
+    Explain the current state of runs and surface blockers. This is READ-ONLY —
+    you never start, stop, retry, or cancel anything. If something needs a human
+    action, say so plainly (and optionally file a follow-up).
+
+    ## Procedure
+    1. Scope to the workflow/task in the page context, or list broadly:
+       `GET /workflows`, `GET /workflows/:id`, `GET /workflows/:id/tasks`.
+    2. For a task in question: `GET /tasks/:id`, `GET /tasks/:id/chat`,
+       `GET /runs/:id/follow-ups` (open blockers), `GET /runs/:id` (transitions).
+    3. Summarize concisely: what's done, running, pending, blocked — and WHY each
+       blocked/failed task is stuck (read its latest chat + follow-ups).
+    4. Recommend the human action where one is needed (e.g. "press Start",
+       "retry task X after fixing Y"). Do not take that action yourself.
+
+    ## Escape hatch
+    - To leave a durable note/blocker for the operator instead of acting:
+      POST /follow-ups (Block) — describe the issue and the suggested next step.
+
+- id: lazybones-retry
+  title: Propose a task retry (gated)
+  description: Propose retrying a blocked/failed task — requires human confirmation.
+  body: |
+    # Skill: Propose a retry (gated)
+
+    Propose retrying a blocked or failed task. This is a LIFECYCLE action: you
+    NEVER call the retry endpoint yourself. You propose it; the human confirms it
+    in the UI, and the UI makes the call under the operator's own authority. This
+    skill only works when your permission profile is "Author & manage".
+
+    ## Procedure
+    1. Understand the failure first (read-only): `GET /tasks/:id`,
+       `GET /tasks/:id/chat`, `GET /runs/:id/follow-ups`. Explain WHY it failed.
+    2. Decide whether a retry is even sensible. If the fix needs a spec/code change
+       you can author, do that first (see `lazybones-add-task`) and say so.
+    3. If a retry is the right call, PROPOSE it — write a one-sentence rationale,
+       then a single CONFIRM line:
+       CONFIRM: {"action":"retry","method":"POST","path":"/tasks/<id>/retry"}
+    4. Stop. Do not call the endpoint. The operator clicks Confirm (or Cancel).
+
+    ## Guardrails
+    - One proposed action per turn. Never chain or auto-confirm.
+    - If you cannot manage (wrong profile), don't emit CONFIRM — instead explain
+      the recommended retry and tell the operator to do it, or file a follow-up.
+    - A retry re-runs real work; always justify it before proposing.
+
+- id: lazybones-mark-task-ready
+  title: Mark a task ready (structured)
+  description: Promote a pending task to `ready` — a deterministic, typed action.
+  body: |
+    # Skill: Mark a task ready
+
+    Promote a single authored task from `pending` to `ready`. This is an
+    AUTHORING-plane action (the task still won't run until its workflow is
+    started by a human), exposed as a structured action so the call shape is
+    fixed and validated rather than improvised.
+  action:
+    method: POST
+    path_template: /tasks/{id}/ready
+    params:
+      - name: id
+        required: true
+        description: The id of the pending task to promote to ready.

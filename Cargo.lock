@@ -2141,14 +2141,18 @@ dependencies = [
  "axum 0.7.9",
  "http-body-util",
  "lazybones-auth",
+ "lazybones-engine",
+ "lazybones-gh",
  "lazybones-store",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-stream",
  "tower",
  "tower-http",
+ "tracing",
 ]
 
 [[package]]
@@ -2167,12 +2171,42 @@ dependencies = [
  "axum 0.7.9",
  "lazybones-api",
  "lazybones-auth",
+ "lazybones-engine",
  "lazybones-store",
  "serde",
  "serde_yaml",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "lazybones-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "lazybones-gh",
+ "lazybones-store",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lazybones-gh"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2183,6 +2217,7 @@ dependencies = [
  "base64",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "surrealdb",
  "thiserror",

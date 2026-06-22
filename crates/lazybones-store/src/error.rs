@@ -42,6 +42,46 @@ pub enum StoreError {
     #[error("task already exists: {0}")]
     TaskExists(String),
 
+    /// A template id was referenced that does not exist in the store.
+    #[error("template not found: {0}")]
+    TemplateNotFound(String),
+
+    /// A template was created with an id that is already taken.
+    #[error("template already exists: {0}")]
+    TemplateExists(String),
+
+    /// A skill id was referenced that does not exist in the store.
+    #[error("skill not found: {0}")]
+    SkillNotFound(String),
+
+    /// A skill was created with an id that is already taken.
+    #[error("skill already exists: {0}")]
+    SkillExists(String),
+
+    /// The bundled demo skill catalogue (YAML) failed to parse on seed.
+    #[error("skill catalogue seed failed: {0}")]
+    SkillSeed(String),
+
+    /// A run (workflow) id was referenced that does not exist in the store.
+    #[error("run not found: {0}")]
+    RunNotFound(String),
+
+    /// A run (workflow) was created with an id that is already taken.
+    #[error("run already exists: {0}")]
+    RunExists(String),
+
+    /// An agent catalog id was referenced that does not exist in the store.
+    #[error("agent not found: {0}")]
+    AgentNotFound(String),
+
+    /// An agent catalog entry was created with an id that is already taken.
+    #[error("agent already exists: {0}")]
+    AgentExists(String),
+
+    /// The bundled default agent catalog (YAML) failed to parse on seed.
+    #[error("agent catalog seed failed: {0}")]
+    AgentSeed(String),
+
     /// Sealing or opening a secret failed (bad master key, corrupt blob, …).
     #[error("secret error: {0}")]
     Secret(String),

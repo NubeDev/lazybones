@@ -1,9 +1,27 @@
-import { GitBranch, Boxes, Clock } from "lucide-react";
+import { GitBranch, Boxes, Clock, FolderGit2, Recycle, Wrench, Zap } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status-badge";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils/cn";
 import { relativeTime } from "@/lib/utils/platform";
-import type { Task } from "@/types/task";
+import { WORKTREE_MODES } from "@/features/tasks/worktree-mode";
+import { useRetryTask } from "@/lib/hooks/use-workflows";
+import type { RetryStrategy, Task, WorktreeMode } from "@/types/task";
+
+/** The mode the loop will actually use: a workflow-only override wins, else the
+ *  task's stored mode. Lets the board surface reuse chains at a glance without
+ *  re-fetching the parent workflow. */
+function effectiveMode(task: Task): WorktreeMode {
+  return task.worktree_mode_override ?? task.worktree_mode;
+}
+
+/** A worktree path shown short: its last two segments, enough to tell trees apart
+ *  while the full path lives in the tooltip. */
+function shortWorktree(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
+}
 
 /** A compact, clickable task tile for the board columns. Draggable when the task
  *  has a legal operator move (promote / block); the board enforces where it can
@@ -28,6 +46,17 @@ export function TaskCard({
   onDragStart?: (id: string) => void;
   onDragEnd?: () => void;
 }) {
+  const retry = useRetryTask();
+  const isBlocked = task.status === "blocked";
+
+  // Quick triage straight from the board. `stopPropagation` so the click acts
+  // instead of selecting the card / starting a drag. The full strategy +
+  // auto-retry surface lives in the inspector (click the card to open it).
+  const quickRetry = (e: React.MouseEvent, strategy: RetryStrategy) => {
+    e.stopPropagation();
+    retry.mutate({ id: task.id, strategy });
+  };
+
   return (
     <Card
       draggable={draggable}
@@ -86,6 +115,59 @@ export function TaskCard({
           </span>
         )}
       </div>
+
+      {/* Resolved worktree: mode + path + reuse source, so reuse chains across a
+          workflow's tasks are visible at a glance (docs/multi-repo-and-worktrees.md). */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground/80">
+        <Tooltip label={WORKTREE_MODES[effectiveMode(task)].hint} side="bottom">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-muted-foreground">
+            {WORKTREE_MODES[effectiveMode(task)].label}
+          </span>
+        </Tooltip>
+        {task.worktree && (
+          <Tooltip label={task.worktree} side="bottom">
+            <span className="inline-flex items-center gap-1 truncate">
+              <FolderGit2 className="size-3" />
+              <span className="truncate font-mono">{shortWorktree(task.worktree)}</span>
+            </span>
+          </Tooltip>
+        )}
+        {task.reuse_from && (
+          <span className="inline-flex items-center gap-1">
+            <Recycle className="size-3" />
+            <span className="font-mono">reuses {task.reuse_from}</span>
+          </span>
+        )}
+      </div>
+
+      {isBlocked && (
+        <div
+          className="mt-3 flex gap-1.5 border-t border-border pt-2.5"
+          draggable={false}
+          onDragStart={(e) => e.stopPropagation()}
+        >
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 flex-1 px-2 text-[11px]"
+            disabled={retry.isPending}
+            title="Revive and fix the root cause properly (open the task for more options)"
+            onClick={(e) => quickRetry(e, "long_term")}
+          >
+            <Wrench /> Fix
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 flex-1 px-2 text-[11px]"
+            disabled={retry.isPending}
+            title="Revive and apply the smallest change that gets it green"
+            onClick={(e) => quickRetry(e, "quick")}
+          >
+            <Zap /> Quick
+          </Button>
+        </div>
+      )}
     </Card>
   );
 }

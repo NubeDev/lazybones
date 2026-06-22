@@ -14,6 +14,11 @@
 
 use tokio::sync::broadcast;
 
+use crate::chat::ChatMessage;
+use crate::hcom_log::HcomLogEntry;
+
+use crate::agent_chat::AgentMessage;
+
 use super::activity::Activity;
 use super::row::Event;
 
@@ -29,6 +34,32 @@ pub enum LiveEvent {
     Transition(Event),
     /// An ephemeral agent progress message (not persisted).
     Activity(Activity),
+    /// A raw hcom event the tail just ingested — also durable in the `hcom_log`
+    /// table, published here for the live edge (docs/hcom-logs-scope.md). Because
+    /// persistence happens before publish, anything streamed is already
+    /// re-fetchable via `GET /runs/:id/hcom`.
+    HcomLog(HcomLogEntry),
+    /// A chat message just appended to a task's conversation — also durable in
+    /// the `chat` table, published here for the live edge so a "chat with the
+    /// agent" view updates without polling. Carries both operator messages and
+    /// mirrored agent replies.
+    Chat(ChatMessage),
+    /// A management-agent message just appended to a conversation — also durable
+    /// in the `agent_message` table, published here for the live edge so the
+    /// global agent chat panel updates without polling. Carries operator turns,
+    /// mirrored agent replies, and tool-action transparency notes
+    /// (`docs/agent/lazybones-agent-scope.md` §8.4).
+    AgentMessage(AgentMessage),
+    /// An ephemeral management-agent *activity* tick (NOT persisted) — what the
+    /// agent is doing right now ("Running Bash…", "Reading…"), derived from its
+    /// hcom tool-status events. Published on the per-conversation SSE so the panel
+    /// shows live progress instead of a blank spinner; history stays clean.
+    AgentActivity {
+        /// The conversation this activity belongs to.
+        conversation_id: String,
+        /// A short human-readable note ("Running Bash…").
+        text: String,
+    },
 }
 
 /// A cloneable publish/subscribe handle for the live feed.
