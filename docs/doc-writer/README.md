@@ -243,6 +243,11 @@ Add an `assets: AssetStore` (the `BlobStore`) field to
 
 ## UI layer — `ui/`
 
+> **Detailed UI scope lives in [`ui-scope.md`](ui-scope.md)** — that doc owns
+> Phase 4 (screens, components, dependency decisions, build sub-phases, browser
+> verification) and supersedes the sketch below. The summary here is kept for
+> orientation.
+
 Follow the existing feature-folder + `lib/api/*.ts` + `types/*` conventions
 ([workflows](ui/src/features/workflows/), [client.ts](ui/src/lib/api/client.ts)).
 
