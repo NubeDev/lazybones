@@ -139,12 +139,11 @@ async fn claim_and_spawn(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
         // tasks with a real run consult this; everything else falls straight
         // through. The budget slot isn't consumed (we `continue` before claim), so
         // sibling runs still fill it.
-        if eff.worktree_mode == lazybones_store::WorktreeMode::Shared {
-            if let Some(run_id) = task.run_id.as_deref() {
-                if busy_shared_runs.contains(run_id) {
-                    continue;
-                }
-            }
+        if eff.worktree_mode == lazybones_store::WorktreeMode::Shared
+            && let Some(run_id) = task.run_id.as_deref()
+            && busy_shared_runs.contains(run_id)
+        {
+            continue;
         }
 
         // Resolve a `reuse_from` source worktree before provisioning (the

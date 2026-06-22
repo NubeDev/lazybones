@@ -622,6 +622,15 @@ impl Gh {
 /// Spawn `bin <args...>` in `dir`, capture stdout (trailing newlines trimmed),
 /// and map a non-zero exit or spawn failure to [`GhError`]. Shared by the `gh`
 /// and `git` paths so both get identical error handling.
+/// `errno` for "Text file busy" on Linux. `std::io::Error` exposes the raw errno
+/// but std has no named constant for it and we don't depend on `libc`, so we name
+/// it here. Used to detect a transient exec failure on a just-written binary.
+const ETXTBSY: i32 = 26;
+
+/// How many times to retry a spawn that fails with [`ETXTBSY`] before giving up.
+/// The condition clears in milliseconds; a handful of short backoffs is ample.
+const ETXTBSY_RETRIES: i32 = 5;
+
 async fn exec<I, S>(bin: &str, dir: impl AsRef<Path>, args: I) -> Result<String, GhError>
 where
     I: IntoIterator<Item = S>,
@@ -647,16 +656,36 @@ where
         });
     }
 
-    let output = Command::new(bin)
-        .current_dir(dir)
-        .args(&args)
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .map_err(|source| GhError::Spawn {
-            bin: bin.to_string(),
-            source,
-        })?;
+    // Spawn with a bounded retry on `ETXTBSY` ("Text file busy"). Exec'ing a file
+    // that some process still holds open for writing fails with ETXTBSY; this never
+    // happens for the real, stable `gh`/`git` binaries, but a freshly-written
+    // executable (a test's fake `gh`, or any just-generated script) can transiently
+    // trip it when a concurrent fork briefly inherits the write fd. ETXTBSY clears
+    // on its own in milliseconds, so a few backed-off retries make the spawn
+    // deterministic without changing any success/failure semantics.
+    let mut attempt = 0;
+    let output = loop {
+        match Command::new(bin)
+            .current_dir(dir)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+            .await
+        {
+            Ok(out) => break out,
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempt < ETXTBSY_RETRIES => {
+                attempt += 1;
+                let backoff = 5 * u64::try_from(attempt).unwrap_or(1);
+                tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+            }
+            Err(source) => {
+                return Err(GhError::Spawn {
+                    bin: bin.to_string(),
+                    source,
+                });
+            }
+        }
+    };
 
     if !output.status.success() {
         return Err(GhError::Command {

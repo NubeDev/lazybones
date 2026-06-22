@@ -20,6 +20,10 @@ thiserror = { workspace = true }
 aes-gcm = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
+# Content-addressed assets: an async `BlobStore` trait usable behind `dyn`, and
+# plain-text extraction from uploaded PDF sources.
+async-trait = { workspace = true }
+pdf-extract = { workspace = true }
 # In-process event bus: broadcast each transition to live SSE subscribers.
 tokio = { workspace = true }
 

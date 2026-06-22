@@ -56,7 +56,26 @@ DEFINE TABLE IF NOT EXISTS follow_up SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS run ON follow_up TYPE string;\n\
 DEFINE FIELD IF NOT EXISTS status ON follow_up TYPE string;\n\
 DEFINE INDEX IF NOT EXISTS follow_up_run_dedup ON follow_up FIELDS run, dedup_key UNIQUE;\n\
-DEFINE INDEX IF NOT EXISTS follow_up_run_status ON follow_up FIELDS run, status;";
+DEFINE INDEX IF NOT EXISTS follow_up_run_status ON follow_up FIELDS run, status;\n\
+DEFINE TABLE IF NOT EXISTS document SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS project ON document TYPE option<string>;\n\
+DEFINE INDEX IF NOT EXISTS document_project ON document FIELDS project;\n\
+DEFINE TABLE IF NOT EXISTS asset SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS project ON asset TYPE option<string>;\n\
+DEFINE INDEX IF NOT EXISTS asset_project ON asset FIELDS project;\n\
+DEFINE INDEX IF NOT EXISTS asset_sha256 ON asset FIELDS sha256;\n\
+DEFINE TABLE IF NOT EXISTS branding SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS project ON branding TYPE option<string>;\n\
+DEFINE INDEX IF NOT EXISTS branding_project ON branding FIELDS project;\n\
+DEFINE TABLE IF NOT EXISTS source SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS project ON source TYPE option<string>;\n\
+DEFINE FIELD IF NOT EXISTS document ON source TYPE string;\n\
+DEFINE INDEX IF NOT EXISTS source_project ON source FIELDS project;\n\
+DEFINE INDEX IF NOT EXISTS source_document ON source FIELDS document;\n\
+DEFINE TABLE IF NOT EXISTS source_chunk SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS source ON source_chunk TYPE option<string>;\n\
+DEFINE FIELD IF NOT EXISTS vector ON source_chunk TYPE option<array<float>>;\n\
+DEFINE INDEX IF NOT EXISTS source_chunk_vector ON source_chunk FIELDS vector HNSW DIMENSION 1536 DIST COSINE;";
 
 /// Apply the schema on the bootstrapped connection.
 ///
