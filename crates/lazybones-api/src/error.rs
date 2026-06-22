@@ -41,6 +41,11 @@ pub enum ApiError {
     #[error(transparent)]
     Asset(#[from] AssetError),
 
+    /// A document failed to render to PDF (Typst compile/export error). Ours to
+    /// own — surfaced as `500`.
+    #[error(transparent)]
+    Render(#[from] lazybones_render::RenderError),
+
     /// The request is well-formed but semantically rejected (e.g. trying to
     /// remove the main worktree). `400`.
     #[error("{0}")]
@@ -121,6 +126,7 @@ impl IntoResponse for ApiError {
             // failure is ours (`500`).
             ApiError::Asset(AssetError::NotFound(_)) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Asset(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            ApiError::Render(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),

@@ -38,6 +38,9 @@ typst-assets = { version = "=0.15.0", features = ["fonts"] }
 # `typst`, so it is a direct dependency. Same exact pin as the rest of the set.
 typst-layout = "=0.15.0"
 comemo = "=0.5.1"
+# Markdown parsing for the markdown→Typst markup converter (the main Phase 3b
+# implementation risk) and for the HTML preview fallback.
+pulldown-cmark = { version = "0.13", default-features = false }
 
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "query"] }

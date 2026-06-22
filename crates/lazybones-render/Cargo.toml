@@ -16,3 +16,7 @@ typst-pdf = { workspace = true }
 typst-assets = { workspace = true }
 typst-layout = { workspace = true }
 comemo = { workspace = true }
+# Markdown → Typst markup (the main Phase 3b risk) and markdown → HTML preview
+# (the `html` feature provides the preview writer).
+pulldown-cmark = { workspace = true, features = ["html"] }
+thiserror = { workspace = true }
