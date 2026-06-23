@@ -20,6 +20,30 @@ You drive it entirely over HTTP. The split that matters:
 
 A task runs only when **both** happen: you promote it **and** the daemon is up.
 
+## House rules when authoring a workflow for a human (read first)
+
+When a human asks you to *set up* a workflow (author the run + its tasks) so they
+can review it, follow these — they are settled defaults, not per-request choices:
+
+- **Do NOT start the workflow.** Author the workflow, its tasks, and any
+  auto-retry policy, then **stop and hand back** — the human reviews the tasks and
+  presses Start (`POST /workflows/:id/start`) themselves. Only start it if they
+  explicitly ask you to ("start it", "kick it off", "run it now"). A freshly
+  authored workflow is `active` but has promoted nothing, so it sits idle and safe
+  until Start.
+- **Permission mode is `auto`, and it is daemon-global — there is no per-workflow
+  or per-task "bypass" field.** The API silently ignores a `permission_mode` /
+  `bypassPermissions` key in the workspace; the engine spawns `claude` with
+  `--permission-mode auto` (a classifier auto-approves safe calls). This is
+  deliberate: true bypass (`--dangerously-skip-permissions`) triggers a one-time
+  consent screen in claude v2.1.x that **hangs headless agents** (see
+  `crates/lazybones-engine/src/config.rs` and the `headless-agent-stuck-bypass-consent`
+  note). `auto` is the mode that has run prior workflows (e.g. `doc-writer`)
+  cleanly. If a user asks for "bypass," tell them it's already effectively handled
+  by `auto` and that switching to real bypass means reconfiguring + restarting the
+  daemon (`permission_flags` config), at the risk of the consent-screen hang — do
+  not silently try to set it on the workflow.
+
 ## Connection facts
 
 | Thing | Value |

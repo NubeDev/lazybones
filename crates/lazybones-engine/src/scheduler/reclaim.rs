@@ -6,16 +6,17 @@
 //! reclaimed to `ready`; its worktree is kept and reused (agent work is
 //! idempotent).
 
-use lazybones_store::{Status, StoreHandle, Task, Transition};
+use lazybones_store::{Lifecycle, Status, StoreHandle, Task, Transition};
 
 use crate::config::EngineConfig;
-use crate::hcom::Hcom;
+use crate::hcom::{Hcom, HcomAgent};
 
 /// The actor recorded on reclaim transitions in the run log.
 const ACTOR: &str = "scheduler:reclaim";
 
-/// Reclaim every stale in-flight task. Best-effort: a single failure is logged
-/// and the pass continues.
+/// Reclaim every stale in-flight task, then reap agents that should no longer be
+/// alive (issue #05). Best-effort: a single failure is logged and the pass
+/// continues. One `hcom list` serves both passes.
 pub async fn reconcile(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
     let live = match hcom.list().await {
         Ok(agents) => agents,
@@ -42,6 +43,74 @@ pub async fn reconcile(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
             match store.transition(&task.id, Transition::Reclaim, ACTOR).await {
                 Ok(_) => tracing::info!(task = %task.id, "reclaimed stale task to ready"),
                 Err(e) => tracing::warn!(task = %task.id, "reclaim transition failed: {e}"),
+            }
+        }
+    }
+
+    reap_finished_agents(store, hcom, &live).await;
+}
+
+/// Whether `tag` carries a non-dead live agent in `live`.
+fn has_live_agent(tag: &str, live: &[HcomAgent]) -> bool {
+    live.iter()
+        .any(|a| a.tag.as_deref() == Some(tag) && a.status != "dead")
+}
+
+/// Reap agents that have outlived their purpose (issue #05 — finished/stopped
+/// workflows otherwise leak live agents that accumulate and starve the event
+/// drain). Two classes, both keyed off the agent's `tag`:
+///
+/// 1. **Leaked auto_pr summarizers** — an `<run>-autopr` agent for a run that is
+///    stopped, already has its PR recorded, or no longer opts into auto_pr. A
+///    legitimate summarizer only lives transiently inside one tick's `open_pr`
+///    await (which now reaps it on completion); one still alive here has leaked.
+/// 2. **Terminal-task agents** — the agent of a `done`/`blocked` task. Its work is
+///    over; the lingering process is pure leak.
+///
+/// Conservative by construction: it never touches an agent whose task is still
+/// in-flight, nor the summarizer of an active run that is still legitimately
+/// opening its PR. Best-effort — a kill failure is logged, not fatal.
+async fn reap_finished_agents(store: &StoreHandle, hcom: &Hcom, live: &[HcomAgent]) {
+    if live.is_empty() {
+        return;
+    }
+
+    // 1. Leaked auto_pr summarizers.
+    let runs = store.list_runs().await.unwrap_or_default();
+    for run in &runs {
+        let tag = format!("{}-autopr", run.id);
+        if !has_live_agent(&tag, live) {
+            continue;
+        }
+        let illegitimate = run.lifecycle == Lifecycle::Stopped
+            || run.pr_url.is_some()
+            || run.workspace.auto_pr != Some(true);
+        if illegitimate {
+            match hcom.kill_tag(&tag).await {
+                Ok(_) => tracing::info!(run = %run.id, "reap: killed leaked auto_pr summarizer {tag}"),
+                Err(e) => tracing::warn!(run = %run.id, "reap: kill {tag} failed: {e}"),
+            }
+        }
+    }
+
+    // 2. Agents of terminal tasks.
+    for status in [Status::Done, Status::Blocked] {
+        let tasks = match store.list_tasks(Some(status)).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("reap: list {status:?} failed: {e}");
+                continue;
+            }
+        };
+        for task in tasks {
+            if !has_live_agent(&task.id, live) {
+                continue;
+            }
+            match hcom.kill_tag(&task.id).await {
+                Ok(_) => {
+                    tracing::info!(task = %task.id, ?status, "reap: killed leaked agent for terminal task")
+                }
+                Err(e) => tracing::warn!(task = %task.id, "reap: kill failed: {e}"),
             }
         }
     }

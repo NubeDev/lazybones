@@ -29,6 +29,11 @@ pub enum Transition {
         worktree: String,
         /// The branch the agent commits to.
         branch: String,
+        /// The worktree `HEAD` at claim time (before the agent runs). Recorded so
+        /// the empty-task gate can ask "did *this* task advance HEAD?" rather than
+        /// the shared-worktree-broken "is the branch ahead of base?". `None` when
+        /// the head could not be read (the gate then falls back to the old check).
+        base_commit: Option<String>,
     },
     /// `running -> gating`: the agent signalled DONE; gate to re-run.
     Gate,
@@ -137,10 +142,18 @@ fn apply_side_data(task: &mut Task, transition: &Transition, now: &str) {
             session,
             worktree,
             branch,
+            base_commit,
         } => {
             task.session = Some(session.clone());
             task.worktree = Some(worktree.clone());
             task.branch = Some(branch.clone());
+            // Record where the branch sat before this task ran, so the gate can
+            // tell a genuine no-op (HEAD unchanged) from a task that legitimately
+            // committed on top of shared work. Always overwrite: a reclaim/revive
+            // re-runs from the current HEAD (any partial work already committed by
+            // the prior, now-dead, agent attempt is the new baseline for "did this
+            // *attempt* produce work?").
+            task.base_commit = base_commit.clone();
             // Stamp the first start only; reclaims/revives re-claim the same task
             // and must not reset when work actually began.
             task.started_at.get_or_insert_with(|| now.to_owned());
@@ -236,6 +249,7 @@ mod tests {
                 session: "s".into(),
                 worktree: "/wt/a".into(),
                 branch: "lazy/a".into(),
+                base_commit: None,
             },
             "loop",
         )
@@ -257,6 +271,7 @@ mod tests {
                 session: "s2".into(),
                 worktree: "/wt/a".into(),
                 branch: "lazy/a".into(),
+                base_commit: None,
             },
             "loop",
         )

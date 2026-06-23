@@ -52,6 +52,9 @@ export function useUpdateDocument() {
     onSuccess: (_data, { id }) => {
       qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["document", id] });
+      // The preview ("Rendered from the last saved version") is a separate query;
+      // refresh it too so saving immediately re-renders the preview/PDF source.
+      qc.invalidateQueries({ queryKey: ["doc-render", id] });
     },
   });
 }
@@ -82,8 +85,10 @@ export function useAddReference() {
   return useMutation({
     mutationFn: ({ id, referenceId }: { id: string; referenceId: string }) =>
       addReference(id, referenceId),
-    onSuccess: (_d, { id }) =>
-      qc.invalidateQueries({ queryKey: ["doc-references", id] }),
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: ["doc-references", id] });
+      qc.invalidateQueries({ queryKey: ["doc-render", id] });
+    },
   });
 }
 
@@ -93,8 +98,10 @@ export function useRemoveReference() {
   return useMutation({
     mutationFn: ({ id, refId }: { id: string; refId: string }) =>
       removeReference(id, refId),
-    onSuccess: (_d, { id }) =>
-      qc.invalidateQueries({ queryKey: ["doc-references", id] }),
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: ["doc-references", id] });
+      qc.invalidateQueries({ queryKey: ["doc-render", id] });
+    },
   });
 }
 

@@ -162,6 +162,34 @@ pub async fn branch_has_commits(
     Ok(out.stdout.trim() != "0")
 }
 
+/// Whether this task advanced the branch beyond where it started — i.e. its agent
+/// actually committed work. Compares the worktree's current `HEAD` against the
+/// `base_commit` captured at claim time.
+///
+/// This is the shared-worktree-correct empty-task check: [`branch_has_commits`]
+/// asks "is the branch ahead of *base*?", which is always true for task N>1 in a
+/// shared tree (the branch carries every prior task's commits), so it cannot tell
+/// a no-op task from one that legitimately built on shared work. "Did *HEAD* move
+/// since *this task* was claimed?" can.
+///
+/// Returns `Ok(true)` if HEAD differs from `base_commit` (work was produced).
+/// `base_commit == None` (an older task claimed before this field existed, or a
+/// HEAD that couldn't be read) yields `Ok(true)` — be permissive rather than
+/// wrongly flag real work as empty; the caller falls back to [`branch_has_commits`].
+///
+/// # Errors
+/// Returns an error only if git cannot be launched.
+pub async fn head_advanced(
+    worktree: &std::path::Path,
+    base_commit: Option<&str>,
+) -> anyhow::Result<bool> {
+    let Some(base) = base_commit else {
+        return Ok(true);
+    };
+    let head = rev_parse(worktree, "HEAD").await?;
+    Ok(head.trim() != base.trim())
+}
+
 /// `git checkout <branch>` in the main repo.
 async fn checkout(repo: &std::path::Path, branch: &str) -> anyhow::Result<()> {
     let out = git(repo, &["checkout", branch]).await?;
@@ -593,6 +621,56 @@ mod tests {
         assert!(
             err.to_string().contains("git push"),
             "a configured-but-failing push must surface as an error, got: {err}"
+        );
+    }
+
+    /// The shared-worktree false-done guard (issue #04). In a shared tree a later
+    /// task's branch is *always* ahead of base (it carries prior tasks' commits),
+    /// so `branch_has_commits` cannot tell a no-op task from real work — that is
+    /// exactly how empty tasks were landing with the previous task's sha.
+    /// `head_advanced` compares against the HEAD captured at *this task's* claim:
+    /// unchanged HEAD ⇒ no work, even though the branch is commits-ahead.
+    #[tokio::test]
+    async fn head_advanced_flags_noop_task_in_shared_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        git(dir.path(), &["checkout", "-b", "lazy/run-1"])
+            .await
+            .unwrap();
+        // Task 1 commits real work on the shared branch.
+        std::fs::write(dir.path().join("t1.txt"), "1").unwrap();
+        git(dir.path(), &["add", "."]).await.unwrap();
+        git(dir.path(), &["commit", "-m", "t1 work"]).await.unwrap();
+        let after_t1 = rev_parse(dir.path(), "HEAD").await.unwrap();
+
+        // Task 2 is claimed here (base_commit = current HEAD) but does NOTHING.
+        // The branch is one commit ahead of base, so the OLD check is fooled...
+        let ahead = branch_has_commits(dir.path(), "main", "lazy/run-1")
+            .await
+            .unwrap();
+        assert!(ahead, "shared branch is always ahead — the old check lies");
+        // ...but head_advanced sees HEAD never moved since t2's claim → empty.
+        let advanced = head_advanced(dir.path(), Some(&after_t1)).await.unwrap();
+        assert!(!advanced, "HEAD unchanged since claim ⇒ task produced no work");
+
+        // Task 2 now genuinely commits → HEAD advances past its base_commit.
+        std::fs::write(dir.path().join("t2.txt"), "2").unwrap();
+        git(dir.path(), &["add", "."]).await.unwrap();
+        git(dir.path(), &["commit", "-m", "t2 work"]).await.unwrap();
+        let advanced = head_advanced(dir.path(), Some(&after_t1)).await.unwrap();
+        assert!(advanced, "HEAD moved past base_commit ⇒ real work");
+    }
+
+    /// `head_advanced` is permissive when no base_commit was recorded (legacy task
+    /// claimed before the field existed): it returns `true` so the gate falls back
+    /// to the branch-ahead check rather than wrongly flagging real work as empty.
+    #[tokio::test]
+    async fn head_advanced_is_permissive_without_base_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        assert!(
+            head_advanced(dir.path(), None).await.unwrap(),
+            "no base_commit ⇒ assume work exists (fall back to other checks)"
         );
     }
 }

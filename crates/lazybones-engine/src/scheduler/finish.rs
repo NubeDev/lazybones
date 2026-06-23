@@ -319,21 +319,48 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
             match merge::commit_worktree(wt, task, progress).await {
                 Ok(Some(_sha)) => {} // committed; fall through to land the new head
                 Ok(None) => {
-                    let branch = task.branch.clone().unwrap_or_default();
-                    let has_commits = merge::branch_has_commits(wt, &eff.base_branch, &branch)
+                    // Clean tree, nothing to commit. Two very different cases:
+                    //   a) the agent already committed its work → land those commits;
+                    //   b) the agent did *nothing* → a no-op task; block it.
+                    // In a shared worktree the branch always carries prior tasks'
+                    // commits, so `branch_has_commits` (ahead-of-base) can't tell
+                    // these apart and wrongly lands (b) with the previous task's sha
+                    // — the false-done bug. The right question is "did HEAD move
+                    // since *this task* was claimed?": compare against base_commit.
+                    let advanced = merge::head_advanced(wt, task.base_commit.as_deref())
                         .await
                         .unwrap_or(true);
-                    if !has_commits {
+                    if !advanced {
+                        // base_commit known and HEAD unchanged ⇒ genuinely empty.
                         block(
                             store,
                             task,
-                            "task produced no changes to commit (empty task)".to_owned(),
+                            "task produced no commit of its own (empty task)".to_owned(),
                             ACTOR,
                         )
                         .await;
                         return;
                     }
-                    // Clean tree but the agent already committed — land those commits.
+                    // base_commit absent (legacy/unreadable): fall back to the old
+                    // ahead-of-base check so a non-shared empty task is still caught.
+                    if task.base_commit.is_none() {
+                        let branch = task.branch.clone().unwrap_or_default();
+                        let has_commits = merge::branch_has_commits(wt, &eff.base_branch, &branch)
+                            .await
+                            .unwrap_or(true);
+                        if !has_commits {
+                            block(
+                                store,
+                                task,
+                                "task produced no changes to commit (empty task)".to_owned(),
+                                ACTOR,
+                            )
+                            .await;
+                            return;
+                        }
+                    }
+                    // HEAD advanced (or fallback found commits) — the agent already
+                    // committed; land those commits.
                 }
                 Err(e) => {
                     block(store, task, format!("auto-commit failed: {e}"), ACTOR).await;

@@ -976,6 +976,7 @@ async fn drive_to_running(store: &StoreHandle, id: &str) {
                 session: "s".into(),
                 worktree: "/wt".into(),
                 branch: "b".into(),
+                base_commit: None,
             },
             "test",
         )
@@ -993,6 +994,7 @@ async fn drive_to_done(store: &StoreHandle, id: &str) {
             session: "s".into(),
             worktree: "/wt".into(),
             branch: "b".into(),
+            base_commit: None,
         },
         Transition::Gate,
         Transition::Done {
@@ -1019,6 +1021,7 @@ async fn drive_to_blocked(store: &StoreHandle, id: &str, reason: &str) {
                 session: "s".into(),
                 worktree: "/wt".into(),
                 branch: "b".into(),
+                base_commit: None,
             },
             "test",
         )
@@ -1261,6 +1264,7 @@ async fn drive_to_done_with(store: &StoreHandle, id: &str, worktree: &str, branc
             session: "s".into(),
             worktree: worktree.into(),
             branch: branch.into(),
+            base_commit: None,
         },
         Transition::Gate,
         Transition::Done {

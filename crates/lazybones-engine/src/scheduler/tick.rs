@@ -272,7 +272,20 @@ async fn claim_and_spawn(
             }
         };
 
-        // 3. Claim: ready → running, recording the session + worktree + branch.
+        // 3. Claim: ready → running, recording the session + worktree + branch +
+        //    the worktree HEAD captured *now*, before the agent commits anything.
+        //    In a shared tree the branch already carries prior tasks' commits, so
+        //    this baseline is how the gate later tells real work (HEAD moved) from
+        //    a no-op task. Best-effort: a read failure leaves it `None`.
+        let base_commit = super::git::git(
+            std::path::Path::new(&provisioned.worktree),
+            &["rev-parse", "HEAD"],
+        )
+        .await
+        .ok()
+        .filter(|o| o.ok)
+        .map(|o| o.stdout)
+        .filter(|s| !s.is_empty());
         let claimed = store
             .transition(
                 &task.id,
@@ -280,6 +293,7 @@ async fn claim_and_spawn(
                     session,
                     worktree: provisioned.worktree.clone(),
                     branch: provisioned.branch.clone(),
+                    base_commit,
                 },
                 ACTOR,
             )

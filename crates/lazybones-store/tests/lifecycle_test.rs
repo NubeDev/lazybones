@@ -42,6 +42,7 @@ async fn claim_gate_done_walks_the_happy_path() {
                 session: "sess-1".into(),
                 worktree: "/wt/store".into(),
                 branch: "lazy/store".into(),
+                base_commit: None,
             },
             "loop",
         )
@@ -118,6 +119,7 @@ async fn dependent_task_is_not_ready_until_dep_done() {
             session: "s".into(),
             worktree: "w".into(),
             branch: "b".into(),
+            base_commit: None,
         },
         Transition::Gate,
         Transition::Done { commit: "c".into() },
@@ -153,6 +155,7 @@ async fn reuse_from_implies_a_dependency_edge() {
             session: "s".into(),
             worktree: "w".into(),
             branch: "b".into(),
+            base_commit: None,
         },
         Transition::Gate,
         Transition::Done { commit: "c".into() },

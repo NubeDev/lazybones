@@ -227,6 +227,14 @@ pub struct Task {
     pub worktree: Option<String>,
     /// The branch the agent commits to, if claimed.
     pub branch: Option<String>,
+    /// The worktree `HEAD` captured at claim time — where the branch sat *before*
+    /// this task's agent ran. In a shared worktree the branch already carries every
+    /// prior task's commits, so "did this task do work?" is `HEAD != base_commit`,
+    /// not "is the branch ahead of base?" (which is always true for task N>1). The
+    /// empty-task gate uses this to tell a real no-op from a task that legitimately
+    /// committed on top of shared work. `None` until the first claim records it.
+    #[serde(default)]
+    pub base_commit: Option<String>,
     /// The commit sha recorded on `done`.
     pub commit: Option<String>,
     /// Why the task was blocked, if blocked.
@@ -333,6 +341,7 @@ impl Task {
             session: None,
             worktree: None,
             branch: None,
+            base_commit: None,
             commit: None,
             reason: None,
             heartbeat: None,

@@ -7,6 +7,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use lazybones_auth::{Capability, ScopedSession};
+use lazybones_gh::Gh;
 use lazybones_store::{Task, Transition};
 
 use crate::dto::ClaimBody;
@@ -23,6 +24,17 @@ pub async fn claim_task(
 ) -> ApiResult<Json<Task>> {
     session.require(Capability::Claim, "claim", &id)?;
 
+    // Capture the worktree HEAD *before* the agent runs, so the empty-task gate can
+    // later tell "this task advanced HEAD" from "no-op task" even in a shared tree
+    // (where the branch always carries prior tasks' commits). Best-effort: a read
+    // failure leaves it `None` and the gate falls back to the branch-ahead check.
+    let base_commit = Gh::new()
+        .git(&body.worktree, ["rev-parse", "HEAD"])
+        .await
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty());
+
     let task = state
         .store
         .transition(
@@ -31,6 +43,7 @@ pub async fn claim_task(
                 session: body.session.clone(),
                 worktree: body.worktree,
                 branch: body.branch,
+                base_commit,
             },
             session.actor(),
         )

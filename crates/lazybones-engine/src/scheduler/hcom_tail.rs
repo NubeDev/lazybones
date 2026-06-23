@@ -123,9 +123,50 @@ pub async fn tail_hcom(store: &StoreHandle, hcom: &Hcom) {
 
     // 5. Advance each touched run's cursor AFTER the rows are written, so a crash
     //    between write and cursor-bump only re-ingests (harmless), never skips.
-    for (run_id, max_id) in max_by_run {
-        if let Err(e) = store.advance_hcom_cursor(&run_id, max_id).await {
+    for (run_id, max_id) in &max_by_run {
+        if let Err(e) = store.advance_hcom_cursor(run_id, *max_id).await {
             tracing::warn!(run = %run_id, "tail: advance_hcom_cursor failed: {e}");
+        }
+    }
+
+    // 6. Fast-forward FINISHED-but-still-active runs past the drained backlog.
+    //
+    //    `lo` is the min cursor over active runs. A workflow whose every task is
+    //    terminal (done/blocked) produces no new events, so no event ever resolves
+    //    to it and its cursor stays frozen — pinning `lo` low forever. With a large
+    //    backlog (e.g. a reaped agent swarm), every tick then re-drains the same
+    //    capped 5000-event window, drops it (those agents are gone from `hcom
+    //    list`), advances nothing, and logs `drain hit cap` — a wedged tail that is
+    //    issue #05's "finished workflows linger as active" turned into a hot loop.
+    //
+    //    A finished run will never emit an event in the skipped range, so stepping
+    //    its cursor to the batch high-water mark loses nothing; any genuinely late
+    //    event carries a fresh id above the mark and still rides the next drain.
+    //    Monotonic `advance_hcom_cursor` makes this a safe no-op when already ahead.
+    let batch_max = events
+        .iter()
+        .filter_map(HcomEvent::id_int)
+        .map(|id| u64::try_from(id).unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    for run in &active {
+        // A run that just got events was already advanced precisely above.
+        if max_by_run.contains_key(&run.id) {
+            continue;
+        }
+        if run.hcom_log_cursor.unwrap_or(0) >= batch_max {
+            continue;
+        }
+        // Finished == has tasks and every one is terminal. Unknown (query error)
+        // or still-in-flight → leave the cursor alone so no live work is skipped.
+        let finished = match store.list_run_tasks(&run.id).await {
+            Ok(tasks) => !tasks.is_empty() && tasks.iter().all(|t| t.status.is_terminal()),
+            Err(_) => false,
+        };
+        if finished
+            && let Err(e) = store.advance_hcom_cursor(&run.id, batch_max).await
+        {
+            tracing::warn!(run = %run.id, "tail: fast-forward of finished run cursor failed: {e}");
         }
     }
 }

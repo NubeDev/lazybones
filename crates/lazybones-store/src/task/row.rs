@@ -38,6 +38,9 @@ pub(crate) struct TaskRow {
     pub(crate) session: Option<String>,
     pub(crate) worktree: Option<String>,
     pub(crate) branch: Option<String>,
+    /// Worktree HEAD captured at claim; `Option` so legacy rows read back as
+    /// `None` (the empty-task gate then falls back to the old branch-ahead check).
+    pub(crate) base_commit: Option<String>,
     pub(crate) commit: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) heartbeat: Option<String>,
@@ -92,6 +95,7 @@ impl TaskRow {
             session: task.session.clone(),
             worktree: task.worktree.clone(),
             branch: task.branch.clone(),
+            base_commit: task.base_commit.clone(),
             commit: task.commit.clone(),
             reason: task.reason.clone(),
             heartbeat: task.heartbeat.clone(),
@@ -129,6 +133,7 @@ impl TaskRow {
             session: self.session,
             worktree: self.worktree,
             branch: self.branch,
+            base_commit: self.base_commit,
             commit: self.commit,
             reason: self.reason,
             heartbeat: self.heartbeat,
