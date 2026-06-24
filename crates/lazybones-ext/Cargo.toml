@@ -15,7 +15,20 @@ workspace = true
 [dependencies]
 # WASM extension runtime. See the root Cargo.toml workspace table for the pinning
 # rationale (track one Wasmtime major; own the WIT contract on top).
-wasmtime = { workspace = true }
+#
+# Features: `async` is mandatory — the design (§3.4) constrains us to async HOST
+# functions (`call_async` + epoch yielding) so guest I/O never blocks a Tokio
+# worker. `component-model` for the Component Model / WIT bindings; `cranelift`
+# to compile guests at load time.
+wasmtime = { workspace = true, features = ["async", "component-model", "cranelift"] }
 wasmtime-wasi = { workspace = true }
-wit-bindgen = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+# Drives the async host invocation (`call_async`) and the host-side call timeout.
+tokio = { workspace = true }
+
+[dev-dependencies]
+# Test harness drives the async host on a multi-thread runtime and asserts on the
+# loaded example guest component (see `tests/`).
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }

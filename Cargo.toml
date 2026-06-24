@@ -12,6 +12,12 @@ members = [
     "crates/lazybones-render",
     "crates/lazybones-ext",
 ]
+# Example WASM guest(s): standalone crates targeting `wasm32-wasip2`, built into
+# checked-in `.wasm` fixtures. They have their own dep set and `[workspace]` table,
+# so keep them out of the main workspace build/test graph.
+exclude = [
+    "crates/lazybones-ext/fixtures/examples",
+]
 
 [workspace.package]
 version = "0.1.0"
