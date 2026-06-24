@@ -277,6 +277,35 @@ impl Registry {
             .collect()
     }
 
+    /// Flip an installed extension's `enabled` flag in place, keeping the
+    /// in-memory dispatch index in lock-step with an admin's enable/disable
+    /// decision persisted in the store (design §3.6). Returns whether the id was
+    /// registered; a no-op `false` is fine (the store stays authoritative and the
+    /// registry is rebuilt from it on boot).
+    pub fn set_enabled(&mut self, id: &str, enabled: bool) -> bool {
+        match self.by_id.get_mut(id) {
+            Some(record) => {
+                record.enabled = enabled;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Replace an installed extension's granted capabilities in place, mirroring an
+    /// admin's grant decision (design §3.6). The `granted ⊆ requested` policy is
+    /// enforced by the caller at grant time; this only keeps the dispatch index's
+    /// effective grant current. Returns whether the id was registered.
+    pub fn set_grants(&mut self, id: &str, granted: Vec<Capability>) -> bool {
+        match self.by_id.get_mut(id) {
+            Some(record) => {
+                record.granted_caps = granted;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Remove an extension from the registry (and its export index). Returns the
     /// removed record, if any.
     pub fn remove(&mut self, id: &str) -> Option<ExtensionRecord> {

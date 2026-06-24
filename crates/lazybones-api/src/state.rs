@@ -6,9 +6,10 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use lazybones_auth::{ManagementProfile, ScopedSession};
+use lazybones_ext::{EngineLimits, ExtEngine, Registry};
 use lazybones_store::{BlobStore, FileBlobStore, StoreHandle};
 
 /// The content-addressed byte store for asset payloads, behind the
@@ -37,6 +38,17 @@ pub struct AppState {
     /// Bearer-token → session registry. The loop token is seeded at boot; agent
     /// tokens are minted on claim. Behind an `RwLock` so claim can register one.
     tokens: Arc<RwLock<HashMap<String, ScopedSession>>>,
+    /// The in-memory extension registry — the dispatch index keyed by exported WIT
+    /// interface (extension-system design §3.2). The `/extensions` routes install
+    /// into it and mirror enable/disable/grant decisions here so the scheduler's
+    /// dispatch stays in lock-step with the durable store rows. Behind an `RwLock`
+    /// because install/remove mutate it. The store remains authoritative; this is
+    /// rebuilt from it on boot.
+    extensions: Arc<RwLock<Registry>>,
+    /// The shared Wasmtime extension engine (one per process, fuel+epoch+memory
+    /// limited — design §3.4), built lazily on first test-invoke so the common
+    /// no-extensions path (and most tests) never pays the engine/ticker cost.
+    ext_engine: Arc<OnceLock<ExtEngine>>,
 }
 
 impl AppState {
@@ -60,7 +72,29 @@ impl AppState {
             base_url: base_url.into(),
             mint_counter: Arc::new(AtomicU64::new(0)),
             tokens: Arc::new(RwLock::new(tokens)),
+            extensions: Arc::new(RwLock::new(Registry::new())),
+            ext_engine: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// The shared extension registry (the dispatch index). Cheap to clone (an
+    /// `Arc` bump); the `/extensions` routes lock it to install/remove and to
+    /// mirror enable/disable/grant decisions.
+    #[must_use]
+    pub fn extensions(&self) -> &Arc<RwLock<Registry>> {
+        &self.extensions
+    }
+
+    /// The shared Wasmtime extension engine, built on first use. A second-or-later
+    /// call returns the already-initialised engine. Engine construction failure is
+    /// a process-level environment fault (a bad Wasmtime config), so it panics
+    /// rather than threading a `Result` through every caller.
+    #[must_use]
+    pub fn ext_engine(&self) -> &ExtEngine {
+        self.ext_engine.get_or_init(|| {
+            ExtEngine::new(EngineLimits::default())
+                .expect("initialize the shared wasm extension engine")
+        })
     }
 
     /// Swap in the asset blob store (builder style). Called by `serve.rs` to root

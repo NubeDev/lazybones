@@ -56,6 +56,13 @@ pub enum ApiError {
     #[error("{0}")]
     Conflict(String),
 
+    /// An extension install/validation/test-invoke failure surfaced from
+    /// `lazybones-ext` (a bad manifest, a failed grant, a guest fault). `400` — the
+    /// supplied component/grant is the caller's to fix. A duplicate id is mapped to
+    /// `409` separately at the call site.
+    #[error("{0}")]
+    Extension(String),
+
     /// An unexpected server-side failure.
     #[error("{0}")]
     Internal(String),
@@ -76,6 +83,21 @@ impl From<lazybones_engine::IssueError> for ApiError {
             E::Auth(_) => ApiError::BadRequest(e.to_string()),
             E::Gh(g) => ApiError::Gh(g),
             E::Store(s) => ApiError::Store(s),
+        }
+    }
+}
+
+/// Map an extension-registry [`RegistryError`](lazybones_ext::RegistryError) onto
+/// an HTTP status: a duplicate install id conflicts with existing state (`409`);
+/// everything else (bad manifest, sha mismatch, re-review required, grant
+/// violation) is a malformed request the caller must fix (`400`).
+impl From<lazybones_ext::RegistryError> for ApiError {
+    fn from(e: lazybones_ext::RegistryError) -> Self {
+        use lazybones_ext::RegistryError as E;
+        let msg = e.to_string();
+        match e {
+            E::AlreadyRegistered(_) => ApiError::Conflict(msg),
+            _ => ApiError::Extension(msg),
         }
     }
 }
@@ -106,7 +128,8 @@ impl IntoResponse for ApiError {
                 | StoreError::DocumentNotFound(_)
                 | StoreError::AssetNotFound(_)
                 | StoreError::BrandingNotFound(_)
-                | StoreError::SourceNotFound(_),
+                | StoreError::SourceNotFound(_)
+                | StoreError::ExtensionNotFound(_),
             ) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Store(StoreError::IllegalTransition { .. }) => {
                 (StatusCode::CONFLICT, self.to_string())
@@ -118,7 +141,8 @@ impl IntoResponse for ApiError {
                 | StoreError::RunExists(_)
                 | StoreError::AgentExists(_)
                 | StoreError::DocumentExists(_)
-                | StoreError::BrandingExists(_),
+                | StoreError::BrandingExists(_)
+                | StoreError::ExtensionExists(_),
             ) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             ApiError::Gh(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
@@ -130,6 +154,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
+            ApiError::Extension(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         (status, Json(json!({ "error": message }))).into_response()

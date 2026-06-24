@@ -3298,6 +3298,7 @@ dependencies = [
  "http-body-util",
  "lazybones-auth",
  "lazybones-engine",
+ "lazybones-ext",
  "lazybones-gh",
  "lazybones-render",
  "lazybones-store",
