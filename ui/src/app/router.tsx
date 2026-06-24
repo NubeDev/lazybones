@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { View } from "./navigation";
+import { ExtRouteView, isExtRoute } from "@/lib/ext/slot-host";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
 import { TemplatesPage } from "@/features/templates/templates-page";
 import { SkillsPage } from "@/features/skills/skills-page";
@@ -11,9 +12,10 @@ import { BrandingPage } from "@/features/branding/branding-page";
 import { SettingsPage } from "@/features/settings/settings-page";
 
 /** A tiny in-memory router — no URLs to keep desktop + browser identical.
- *  Returns the active view and the renderer for the current page. */
+ *  The active view is a built-in [`View`] or an extension route id (`ext:…`),
+ *  so the state is a plain string. Returns the active view and the navigator. */
 export function useRouter() {
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setView] = useState<string>("dashboard");
   return { view, navigate: setView } as const;
 }
 
@@ -21,10 +23,13 @@ export function ViewRenderer({
   view,
   onNavigate,
 }: {
-  view: View;
-  onNavigate: (v: View) => void;
+  view: string;
+  onNavigate: (v: string) => void;
 }) {
-  switch (view) {
+  // Extension-contributed pages render through the slot host (error-boundaried).
+  if (isExtRoute(view)) return <ExtRouteView view={view} />;
+
+  switch (view as View) {
     case "dashboard":
       return <DashboardPage onNavigate={onNavigate} />;
     case "templates":

@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "lazybones — multi-agent build orchestration dashboard (browser + desktop)",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -13,6 +16,8 @@
     "desktop:build": "tauri build"
   },
   "dependencies": {
+    "@lazybones/ext-sdk": "*",
+    "@module-federation/runtime": "^2.6.0",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-dropdown-menu": "^2.1.6",
     "@radix-ui/react-scroll-area": "^1.2.3",
@@ -32,6 +37,8 @@
     "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
+    "@module-federation/enhanced": "^2.6.0",
+    "@module-federation/vite": "^1.16.10",
     "@tailwindcss/vite": "^4.0.6",
     "@tauri-apps/cli": "^2.2.7",
     "@types/react": "^19.0.8",

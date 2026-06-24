@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
+    <!--
+      Browser-target Content-Security-Policy. The desktop (Tauri) target sets its
+      own CSP in src-tauri/tauri.conf.json. Both must let the Module Federation
+      runtime dynamically `import()` each enabled remote's `remoteEntry.js` +
+      chunks, which the daemon serves from its own origin under
+      `GET /extensions/:id/frontend/*` (design §4.3–§4.4) — hence the daemon
+      origin in BOTH `script-src` (the dynamic import) and `connect-src` (REST +
+      SSE). `'unsafe-inline'` covers the pre-paint theme script just below;
+      `'wasm-unsafe-eval'` covers any wasm a remote ships. Remotes are
+      first-party/signed-only in v1 (design §4.5), so loading them in-origin is
+      an accepted trust decision, not an open door.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' http://127.0.0.1:46787 http://localhost:46787; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:46787 http://localhost:46787 ws://127.0.0.1:46787 ws://localhost:51840 ws://127.0.0.1:51840; worker-src 'self' blob:"
+    />
     <title>lazybones</title>
     <script>
       // Apply the persisted theme before first paint to avoid a flash.

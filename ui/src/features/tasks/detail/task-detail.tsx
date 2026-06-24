@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { X, Pencil, FileText, MessagesSquare, ScrollText } from "lucide-react";
+import { X, Pencil, FileText, MessagesSquare, ScrollText, Puzzle } from "lucide-react";
+import { useSlotContributions } from "@lazybones/ext-sdk";
+import { ExtErrorBoundary } from "@/lib/ext/error-boundary";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -41,6 +43,8 @@ export function TaskDetail({
   const { data, isLoading } = useTask(id);
   const task = data ?? byId.get(id);
   const [tab, setTab] = useState("overview");
+  // Extension-contributed tabs (design §4.2 `task-detail.tab` slot).
+  const extTabs = useSlotContributions("task-detail.tab");
 
   // Ground the Lazybones Agent in this task while the panel is open (scope §7).
   useSetAgentContext({
@@ -89,6 +93,14 @@ export function TaskDetail({
             <TabsTrigger value="logs">
               <ScrollText className="size-3.5" /> Logs
             </TabsTrigger>
+            {extTabs.map((t) => {
+              const Icon = t.icon ?? Puzzle;
+              return (
+                <TabsTrigger key={`${t.extensionId}:${t.id}`} value={`ext:${t.extensionId}:${t.id}`}>
+                  <Icon className="size-3.5" /> {t.label}
+                </TabsTrigger>
+              );
+            })}
           </TabsList>
         </div>
 
@@ -118,6 +130,25 @@ export function TaskDetail({
             </div>
           </ScrollArea>
         </TabsContent>
+
+        {/* Extension tabs — each isolated so a broken remote can't take the
+            task panel (or the app) down with it (design §4.3). */}
+        {extTabs.map((t) => {
+          const Panel = t.component;
+          return (
+            <TabsContent
+              key={`${t.extensionId}:${t.id}`}
+              value={`ext:${t.extensionId}:${t.id}`}
+              className="min-h-0 flex-1"
+            >
+              <ScrollArea className="h-full">
+                <ExtErrorBoundary extensionId={t.extensionId} label="tab">
+                  <Panel taskId={task.id} runId={task.run_id ?? task.run ?? undefined} />
+                </ExtErrorBoundary>
+              </ScrollArea>
+            </TabsContent>
+          );
+        })}
       </Tabs>
 
       <div className="flex items-center justify-between gap-2 border-t border-border p-4">

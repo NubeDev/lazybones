@@ -17,7 +17,10 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
-    "paths": { "@/*": ["./src/*"] }
+    "paths": {
+      "@/*": ["./src/*"],
+      "@lazybones/ext-sdk": ["./packages/ext-sdk/src/index.ts"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "packages/ext-sdk/src"]
 }
