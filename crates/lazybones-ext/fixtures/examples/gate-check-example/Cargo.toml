@@ -1,0 +1,32 @@
+# Example WASM gate-check guest (design §5 P0: "author one Rust guest").
+#
+# Standalone crate — NOT a member of the lazybones workspace (it targets
+# `wasm32-wasip2`, has its own dep set, and is built into a checked-in `.wasm`
+# fixture). The empty `[workspace]` table below makes Cargo treat it as its own
+# workspace root so the parent workspace does not absorb it.
+[package]
+name = "gate-check-example"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[lib]
+# A WASI Preview 2 component is produced directly by the `wasm32-wasip2` target
+# from a cdylib (no separate `cargo component` / `wasm-tools` step needed).
+crate-type = ["cdylib"]
+
+[dependencies]
+# Guest-side bindings generator for the Component Model (mirrors the host's
+# `wasmtime::component::bindgen!`). Pinned to the same version the host workspace
+# tracks so the generated ABI matches.
+wit-bindgen = "0.58"
+
+[profile.release]
+# Small, deterministic guest: strip and optimise for size so the checked-in
+# `.wasm` fixture stays tiny.
+opt-level = "s"
+strip = true
+lto = true

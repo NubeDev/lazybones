@@ -2,11 +2,12 @@
 
 use std::path::Path;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use lazybones_api::{AppState, router};
-use lazybones_engine::EngineConfig;
-use lazybones_store::{FileBlobStore, StoreEngine, StoreHandle, sync_seeds};
+use lazybones_engine::{BlobComponentLoader, EngineConfig, ExtHooks};
+use lazybones_ext::{Dispatcher, DispatcherConfig, EngineLimits, ExtEngine, Registry};
+use lazybones_store::{BlobStore, FileBlobStore, StoreEngine, StoreHandle, sync_seeds};
 
 use crate::configure::Config;
 use crate::workfile::parse_workfile;
@@ -49,19 +50,53 @@ pub async fn serve(config: Config, engine: EngineConfig) -> anyhow::Result<()> {
     // override, else derived from the bind address (loopback for a local daemon).
     let base_url = std::env::var("LAZYBONES_BASE_URL")
         .unwrap_or_else(|_| format!("http://{}", config.bind));
-    let state = AppState::new(
+    // Asset bytes live in a content-addressed file blob store under the data dir
+    // (swappable for S3/bucket behind the `BlobStore` trait). Shared between the
+    // API (asset + extension `.wasm` uploads) and the scheduler's extension
+    // component loader.
+    let assets: Arc<dyn BlobStore> = Arc::new(FileBlobStore::new(config.data_dir.clone()));
+
+    // EXTENSION RUNTIME (design §3.1/§3.4). Build the shared registry + Wasmtime
+    // engine once and hand both halves to the API and the scheduler so an
+    // install/enable/disable via REST is immediately visible to gate-check dispatch
+    // and a circuit-breaker auto-disable is visible to the API. If the engine can't
+    // be built (a bad Wasmtime config) the daemon still serves — it just runs
+    // without extensions rather than refusing to boot.
+    let registry = Arc::new(RwLock::new(Registry::new()));
+    let ext_hooks = match ExtEngine::new(EngineLimits::default()) {
+        Ok(ext_engine) => {
+            let loader = Arc::new(BlobComponentLoader::new(assets.clone()));
+            let dispatcher = Arc::new(Dispatcher::new(
+                ext_engine.clone(),
+                registry.clone(),
+                loader,
+                DispatcherConfig::default(),
+            ));
+            (Some(ext_engine), ExtHooks::new(dispatcher))
+        }
+        Err(e) => {
+            tracing::warn!("extension engine init failed; serving without extensions: {e}");
+            (None, ExtHooks::none())
+        }
+    };
+    let (ext_engine, ext_hooks) = ext_hooks;
+
+    let mut state = AppState::new(
         store.clone(),
         config.run.clone(),
         base_url,
         config.loop_token.clone(),
     )
-    // Asset bytes live in a content-addressed file blob store under the data dir
-    // (swappable for S3/bucket behind the `BlobStore` trait).
-    .with_assets(Arc::new(FileBlobStore::new(config.data_dir.clone())));
+    .with_assets(assets);
+    if let Some(ext_engine) = ext_engine {
+        state = state.with_ext_runtime(registry, ext_engine);
+    }
     let app = router(state);
 
     // The loop is the daemon: if lazybonesd is up, the queue is being drained.
-    let sched = tokio::spawn(lazybones_engine::run(store, engine));
+    // Wired with the extension hooks so gate-check runs at the gate point and the
+    // event-reaction loop runs off the durable event stream.
+    let sched = tokio::spawn(lazybones_engine::run_with_ext(store, engine, ext_hooks));
 
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     tracing::info!(bind = %config.bind, run = %config.run, "lazybonesd serving");

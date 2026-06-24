@@ -3,6 +3,7 @@
 mod auto_pr;
 mod block;
 mod effective;
+pub mod ext;
 pub(crate) mod finish;
 mod follow_up;
 mod gate;
@@ -17,6 +18,6 @@ mod run;
 mod tick;
 mod worktree;
 
-pub use run::run;
+pub use run::{run, run_with_ext};
 
 pub(crate) use tick::tick;

@@ -45,6 +45,10 @@ use crate::chat::{ChatMessage, ChatRole, append_chat, chat_history};
 use crate::connect::{StoreEngine, open_engine};
 use crate::error::Result;
 use crate::event::{Activity, Event, EventBus, LiveEvent, run_history};
+use crate::extension::{
+    Extension, create_extension, delete_extension, get_extension, list_extensions,
+    set_extension_enabled, set_extension_grants,
+};
 use crate::follow_up::{
     FollowUp, FollowUpFilter, NewFollowUpEntry, file_follow_up, resolve_follow_up, run_follow_ups,
 };
@@ -797,6 +801,64 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
     pub async fn delete_asset(&self, id: &str) -> Result<bool> {
         delete_asset(&self.db, id).await
+    }
+
+    /// Install an extension's metadata, failing if its id is already taken. The
+    /// `.wasm` bytes are stored separately as a content-addressed blob.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_extension(&self, extension: &Extension) -> Result<Extension> {
+        create_extension(&self.db, extension).await
+    }
+
+    /// Read a single extension's metadata by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_extension(&self, id: &str) -> Result<Option<Extension>> {
+        get_extension(&self.db, id).await
+    }
+
+    /// List installed extensions; `enabled_only` narrows to the active ones.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_extensions(&self, enabled_only: bool) -> Result<Vec<Extension>> {
+        list_extensions(&self.db, enabled_only).await
+    }
+
+    /// Enable or disable an installed extension.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no such extension exists or
+    /// the write fails.
+    pub async fn set_extension_enabled(&self, id: &str, enabled: bool) -> Result<Extension> {
+        set_extension_enabled(&self.db, id, enabled).await
+    }
+
+    /// Replace an extension's granted capabilities (`granted ⊆ requested` is
+    /// validated by `lazybones-ext` before this is called).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no such extension exists or
+    /// the write fails.
+    pub async fn set_extension_grants(
+        &self,
+        id: &str,
+        granted_caps: Vec<String>,
+    ) -> Result<Extension> {
+        set_extension_grants(&self.db, id, granted_caps).await
+    }
+
+    /// Uninstall an extension's metadata row by id. Returns whether one existed.
+    /// The backing `.wasm`/frontend blob bytes are deleted separately.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_extension(&self, id: &str) -> Result<bool> {
+        delete_extension(&self.db, id).await
     }
 
     /// Create a document, failing if its id is already taken.

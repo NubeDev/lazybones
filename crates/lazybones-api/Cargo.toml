@@ -13,6 +13,10 @@ lazybones-store = { workspace = true }
 lazybones-auth = { workspace = true }
 lazybones-engine = { workspace = true }
 lazybones-gh = { workspace = true }
+# The WASM extension runtime: the `/extensions` surface installs into its
+# `Registry`, test-invokes guests through its `ExtEngine`, and mirrors grants into
+# the in-memory dispatch index (extension-system design §3.6).
+lazybones-ext = { workspace = true }
 # Pure markdown→Typst (PDF) + markdown→HTML rendering for the document export
 # route. Assembly (resolving references + fetching image bytes) stays in the API.
 lazybones-render = { workspace = true }

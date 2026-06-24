@@ -46,6 +46,12 @@ pub enum Capability {
     /// means "edit task records"): a document/asset/branding mutation — and
     /// publishing a document — is a *document* action, not a queue action.
     Document,
+    /// Install, remove, enable/disable, (re)grant capabilities to, and test-invoke
+    /// backend WASM extensions. **Loop only** — installing arbitrary sandboxed code
+    /// and granting it host capabilities is the most privileged admin action on the
+    /// surface, so (like [`Secret`](Self::Secret)) no management-agent profile ever
+    /// holds it (extension-system design §3.3/§3.6).
+    Extension,
 }
 
 impl Capability {
@@ -63,6 +69,7 @@ impl Capability {
             Capability::Secret,
             Capability::Author,
             Capability::Document,
+            Capability::Extension,
         ]
     }
 
@@ -141,6 +148,10 @@ mod tests {
         ] {
             assert!(!has(profile, Capability::Claim), "{profile:?} must not claim");
             assert!(!has(profile, Capability::Secret), "{profile:?} must not read secrets");
+            assert!(
+                !has(profile, Capability::Extension),
+                "{profile:?} must not manage extensions"
+            );
         }
     }
 }

@@ -10,6 +10,15 @@ members = [
     "crates/lazybones-gh",
     "crates/lazybones-cli",
     "crates/lazybones-render",
+    "crates/lazybones-ext",
+]
+# Example WASM guest(s): standalone crates targeting `wasm32-wasip2`, built into
+# checked-in `.wasm` fixtures. They have their own dep set and `[workspace]` table,
+# so keep them out of the main workspace build/test graph.
+exclude = [
+    "crates/lazybones-ext/fixtures/examples",
+    # End-to-end example extension (standalone wasm guest + federated UI remote).
+    "examples",
 ]
 
 [workspace.package]
@@ -25,6 +34,23 @@ lazybones-api = { version = "0.1.0", path = "crates/lazybones-api" }
 lazybones-engine = { version = "0.1.0", path = "crates/lazybones-engine" }
 lazybones-gh = { version = "0.1.0", path = "crates/lazybones-gh" }
 lazybones-render = { version = "0.1.0", path = "crates/lazybones-render" }
+lazybones-ext = { version = "0.1.0", path = "crates/lazybones-ext" }
+
+# WASM extension runtime (lazybones-ext). Pinned to the Wasmtime 46 major: per
+# the extension-system design (§2), the Component Model surface still moves, so we
+# track ONE Wasmtime major and own the WIT contract / host bindings on top of it.
+# wit-bindgen generates the host-side glue for our WIT world; wasmtime-wasi gives
+# the WASI Preview 2 capability-based sandbox the design depends on.
+wasmtime = "46"
+wasmtime-wasi = "46"
+wit-bindgen = "0.58"
+# Read the embedded `lazybones.ext.toml` manifest custom section out of an
+# extension component. Pinned to the wasmparser major Wasmtime 46 itself uses so
+# the binary-format reader stays in lock-step with the engine that loads it.
+wasmparser = "0.251"
+# Parse the embedded `lazybones.ext.toml` manifest (the source-of-truth declared
+# identity/caps/extension-points).
+toml = "0.8"
 
 # Typst PDF rendering (pure Rust, no external binary). Pinned to EXACT versions:
 # Phase 3a is a de-risk spike — the Typst API churns between releases, so the

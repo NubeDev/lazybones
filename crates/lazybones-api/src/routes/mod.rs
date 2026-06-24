@@ -23,6 +23,7 @@ mod document_sources;
 mod documents;
 mod done;
 mod engine;
+mod extensions;
 mod files;
 mod follow_ups;
 mod fs_list;
@@ -372,6 +373,30 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/secrets/:tool",
             put(secrets_put::put_secret).delete(secrets_delete::delete_secret),
+        )
+        // Backend WASM extensions (design §3.6): install (upload/url) + CRUD,
+        // enable/disable, capability grants, and a manual/test invoke. Reads are
+        // open; mutations require the loop-only `Extension` capability.
+        .route(
+            "/extensions",
+            get(extensions::list_extensions).post(extensions::install_extension),
+        )
+        .route(
+            "/extensions/:id",
+            get(extensions::get_extension).delete(extensions::delete_extension),
+        )
+        .route("/extensions/:id/enable", post(extensions::enable_extension))
+        .route(
+            "/extensions/:id/disable",
+            post(extensions::disable_extension),
+        )
+        .route("/extensions/:id/grants", post(extensions::set_grants))
+        .route("/extensions/:id/invoke", post(extensions::invoke_extension))
+        // Frontend asset proxy (design §4.3): serve an enabled extension's
+        // federated remote bundle (remoteEntry.js + chunks) from blobs. Open read.
+        .route(
+            "/extensions/:id/frontend/*path",
+            get(extensions::frontend_asset),
         )
         // Let the browser/desktop UI (a different origin) read the surface.
         .layer(cors_layer())

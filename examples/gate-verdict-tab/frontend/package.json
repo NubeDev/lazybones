@@ -1,0 +1,24 @@
+{
+  "name": "@lazybones-examples/gate-verdict-tab-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Federated UI remote for the gate-verdict-tab example extension.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@lazybones/ext-sdk": "^0.1.0",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@module-federation/vite": "^1.16.10",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}
