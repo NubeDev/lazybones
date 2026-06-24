@@ -1,0 +1,47 @@
+// lazybones extension WIT contract.
+//
+// This is the versioned guest ABI for backend WASM extensions (design §2, §3.1).
+// We own this contract and treat it as OUR semver-versioned interface on top of a
+// pinned Wasmtime major — the Component Model surface still moves underneath us.
+//
+// SKELETON ONLY: the `gate-check` interface below is a placeholder shape filled in
+// by the next task. Do NOT treat field sets here as final. P0 ships exactly one
+// extension point (gate-check) using async host functions only — no WIT-level
+// async (`stream`/`future`), per design §3.4.
+
+package lazybones:ext@0.1.0;
+
+/// Gate-check extension point (design §3.2): given a task + worktree summary the
+/// guest returns a pass/fail/skip verdict before a branch is landed. Gate checks
+/// are fail-closed. PLACEHOLDER — record fields are stubbed pending the next task.
+interface gate-check {
+    /// Verdict outcome. Gate checks fail-closed, so an absent/faulting guest is
+    /// treated as `fail` by the host, not `skip`.
+    enum verdict-kind {
+        pass,
+        fail,
+        skip,
+    }
+
+    /// Result of running a gate check. (Skeleton — to be expanded.)
+    record verdict {
+        kind: verdict-kind,
+        message: string,
+    }
+
+    /// Input handed to the guest. (Skeleton — to be expanded with task/worktree
+    /// summary + diff stat per design §3.2.)
+    record gate-input {
+        task-id: string,
+    }
+
+    /// Run the gate check against the given input.
+    run: func(input: gate-input) -> verdict;
+}
+
+/// An extension's world declares which interfaces it exports; the registry indexes
+/// extensions by exported interface so dispatch is "find all gate-check
+/// extensions, invoke in order" (design §3.2). SKELETON.
+world extension {
+    export gate-check;
+}

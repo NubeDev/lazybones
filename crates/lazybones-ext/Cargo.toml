@@ -1,0 +1,21 @@
+[package]
+name = "lazybones-ext"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+# Inherits the workspace `unsafe_code = "forbid"` lint. Wasmtime itself contains
+# unsafe internally, but that lives in its own crates — this crate (the host
+# embedding) stays safe-only, which is exactly why WASM is the chosen plugin
+# mechanism (see design §1: it's the only sandboxed option that fits forbid).
+workspace = true
+
+[dependencies]
+# WASM extension runtime. See the root Cargo.toml workspace table for the pinning
+# rationale (track one Wasmtime major; own the WIT contract on top).
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+wit-bindgen = { workspace = true }
+thiserror = { workspace = true }

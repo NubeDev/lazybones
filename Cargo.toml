@@ -10,6 +10,7 @@ members = [
     "crates/lazybones-gh",
     "crates/lazybones-cli",
     "crates/lazybones-render",
+    "crates/lazybones-ext",
 ]
 
 [workspace.package]
@@ -25,6 +26,16 @@ lazybones-api = { version = "0.1.0", path = "crates/lazybones-api" }
 lazybones-engine = { version = "0.1.0", path = "crates/lazybones-engine" }
 lazybones-gh = { version = "0.1.0", path = "crates/lazybones-gh" }
 lazybones-render = { version = "0.1.0", path = "crates/lazybones-render" }
+lazybones-ext = { version = "0.1.0", path = "crates/lazybones-ext" }
+
+# WASM extension runtime (lazybones-ext). Pinned to the Wasmtime 46 major: per
+# the extension-system design (§2), the Component Model surface still moves, so we
+# track ONE Wasmtime major and own the WIT contract / host bindings on top of it.
+# wit-bindgen generates the host-side glue for our WIT world; wasmtime-wasi gives
+# the WASI Preview 2 capability-based sandbox the design depends on.
+wasmtime = "46"
+wasmtime-wasi = "46"
+wit-bindgen = "0.58"
 
 # Typst PDF rendering (pure Rust, no external binary). Pinned to EXACT versions:
 # Phase 3a is a de-risk spike — the Typst API churns between releases, so the
