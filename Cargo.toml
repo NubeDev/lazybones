@@ -42,6 +42,13 @@ lazybones-ext = { version = "0.1.0", path = "crates/lazybones-ext" }
 wasmtime = "46"
 wasmtime-wasi = "46"
 wit-bindgen = "0.58"
+# Read the embedded `lazybones.ext.toml` manifest custom section out of an
+# extension component. Pinned to the wasmparser major Wasmtime 46 itself uses so
+# the binary-format reader stays in lock-step with the engine that loads it.
+wasmparser = "0.251"
+# Parse the embedded `lazybones.ext.toml` manifest (the source-of-truth declared
+# identity/caps/extension-points).
+toml = "0.8"
 
 # Typst PDF rendering (pure Rust, no external binary). Pinned to EXACT versions:
 # Phase 3a is a de-risk spike — the Typst API churns between releases, so the

@@ -109,4 +109,12 @@ pub enum StoreError {
     /// A source id was referenced that does not exist in the store.
     #[error("source not found: {0}")]
     SourceNotFound(String),
+
+    /// An extension id was referenced that does not exist in the store.
+    #[error("extension not found: {0}")]
+    ExtensionNotFound(String),
+
+    /// An extension was installed with an id that is already taken.
+    #[error("extension already exists: {0}")]
+    ExtensionExists(String),
 }

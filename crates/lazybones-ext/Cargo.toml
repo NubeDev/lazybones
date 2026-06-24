@@ -26,6 +26,15 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 # Drives the async host invocation (`call_async`) and the host-side call timeout.
 tokio = { workspace = true }
+# Persistence: the registry maps a validated component to a `lazybones-store`
+# `Extension` record. Design §3.1: `lazybones-ext` depends on `lazybones-store`.
+lazybones-store = { workspace = true }
+# Read the embedded manifest custom section out of the component binary and parse
+# it. The embedded (signed, eventually) section is the source of truth for
+# declared identity/caps (design §3.5).
+wasmparser = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 # Test harness drives the async host on a multi-thread runtime and asserts on the

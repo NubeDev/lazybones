@@ -64,6 +64,10 @@ DEFINE TABLE IF NOT EXISTS asset SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS project ON asset TYPE option<string>;\n\
 DEFINE INDEX IF NOT EXISTS asset_project ON asset FIELDS project;\n\
 DEFINE INDEX IF NOT EXISTS asset_sha256 ON asset FIELDS sha256;\n\
+DEFINE TABLE IF NOT EXISTS extension SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS enabled ON extension TYPE option<bool>;\n\
+DEFINE INDEX IF NOT EXISTS extension_enabled ON extension FIELDS enabled;\n\
+DEFINE INDEX IF NOT EXISTS extension_sha256 ON extension FIELDS wasm_sha256;\n\
 DEFINE TABLE IF NOT EXISTS branding SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS project ON branding TYPE option<string>;\n\
 DEFINE INDEX IF NOT EXISTS branding_project ON branding FIELDS project;\n\
