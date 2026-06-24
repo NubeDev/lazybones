@@ -37,10 +37,20 @@ use crate::management_agent::{
     get_management_agent, get_management_agent_resolved, get_management_agent_scoped,
     put_management_agent, put_management_agent_scoped,
 };
+use crate::org::{Org, create_org, get_org, list_orgs};
 use crate::preferences::{Preferences, get_preferences, put_preferences};
+use crate::project::{
+    Project, create_project, delete_project, get_project, list_projects, place_project_under_team,
+    team_projects, update_project,
+};
 use crate::skill::{
     Skill, create_skill, delete_skill, get_skill, list_skills, seed_default_skills, update_skill,
 };
+use crate::team::{
+    MemberRole, Membership, Team, add_member, create_team, get_team, list_teams, members_of,
+    org_teams, place_team_under_org, remove_member,
+};
+use crate::user::{User, create_user, get_user, list_users};
 use crate::chat::{ChatMessage, ChatRole, append_chat, chat_history};
 use crate::connect::{StoreEngine, open_engine};
 use crate::error::Result;
@@ -1125,5 +1135,186 @@ impl StoreHandle {
     /// cannot be decrypted (wrong master key).
     pub async fn secret_env(&self) -> Result<Vec<SecretEnv>> {
         secret_env(&self.db, &self.cipher).await
+    }
+
+    /// Create an org, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_org(&self, org: &Org) -> Result<Org> {
+        create_org(&self.db, org).await
+    }
+
+    /// Read a single org by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_org(&self, id: &str) -> Result<Option<Org>> {
+        get_org(&self.db, id).await
+    }
+
+    /// List every org.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_orgs(&self) -> Result<Vec<Org>> {
+        list_orgs(&self.db).await
+    }
+
+    /// Create a team, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_team(&self, team: &Team) -> Result<Team> {
+        create_team(&self.db, team).await
+    }
+
+    /// Read a single team by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_team(&self, id: &str) -> Result<Option<Team>> {
+        get_team(&self.db, id).await
+    }
+
+    /// List every team.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_teams(&self) -> Result<Vec<Team>> {
+        list_teams(&self.db).await
+    }
+
+    /// Place a team `under` an org (the containment spine). Idempotent.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::OrgNotFound`](crate::StoreError::OrgNotFound) if no
+    /// such org exists, or another [`StoreError`](crate::StoreError) if the write
+    /// fails.
+    pub async fn place_team_under_org(&self, team: &str, org: &str) -> Result<()> {
+        place_team_under_org(&self.db, team, org).await
+    }
+
+    /// The teams placed directly `under` an org.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn org_teams(&self, org: &str) -> Result<Vec<Team>> {
+        org_teams(&self.db, org).await
+    }
+
+    /// Add (or re-affirm) `user ->member_of-> team` with a per-team `role`.
+    /// Idempotent on the `(user, team)` pair.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::TeamNotFound`](crate::StoreError::TeamNotFound) if no
+    /// such team exists, or another [`StoreError`](crate::StoreError) if the write
+    /// fails.
+    pub async fn add_member(&self, user: &str, team: &str, role: MemberRole) -> Result<()> {
+        add_member(&self.db, user, team, role).await
+    }
+
+    /// Remove `user ->member_of-> team`. Returns whether a membership existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn remove_member(&self, user: &str, team: &str) -> Result<bool> {
+        remove_member(&self.db, user, team).await
+    }
+
+    /// The members of a team, each with their per-team role.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn members_of(&self, team: &str) -> Result<Vec<Membership>> {
+        members_of(&self.db, team).await
+    }
+
+    /// Create a user, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_user(&self, user: &User) -> Result<User> {
+        create_user(&self.db, user).await
+    }
+
+    /// Read a single user by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_user(&self, id: &str) -> Result<Option<User>> {
+        get_user(&self.db, id).await
+    }
+
+    /// List every user.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_users(&self) -> Result<Vec<User>> {
+        list_users(&self.db).await
+    }
+
+    /// Create a project, failing if its id is already taken.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the id exists or the write
+    /// fails.
+    pub async fn create_project(&self, project: &Project) -> Result<Project> {
+        create_project(&self.db, project).await
+    }
+
+    /// Read a single project by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_project(&self, id: &str) -> Result<Option<Project>> {
+        get_project(&self.db, id).await
+    }
+
+    /// List projects, optionally narrowed to one team (via the denormalized
+    /// `team` FK index).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_projects(&self, team: Option<&str>) -> Result<Vec<Project>> {
+        list_projects(&self.db, team).await
+    }
+
+    /// Edit an existing project, preserving its `created_at`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no project with that id
+    /// exists or the write fails.
+    pub async fn update_project(&self, project: &Project) -> Result<Project> {
+        update_project(&self.db, project).await
+    }
+
+    /// Delete a project by id. Returns whether one existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_project(&self, id: &str) -> Result<bool> {
+        delete_project(&self.db, id).await
+    }
+
+    /// Place a project `under` a team (the containment spine). Idempotent.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::TeamNotFound`](crate::StoreError::TeamNotFound) if no
+    /// such team exists, or another [`StoreError`](crate::StoreError) if the write
+    /// fails.
+    pub async fn place_project_under_team(&self, project: &str, team: &str) -> Result<()> {
+        place_project_under_team(&self.db, project, team).await
+    }
+
+    /// The projects placed directly `under` a team.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn team_projects(&self, team: &str) -> Result<Vec<Project>> {
+        team_projects(&self.db, team).await
     }
 }

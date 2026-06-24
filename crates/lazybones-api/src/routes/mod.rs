@@ -36,7 +36,9 @@ mod heartbeat;
 mod issue;
 mod list;
 mod management_agent;
+mod members;
 mod preferences;
+mod projects;
 mod promote;
 mod ready;
 mod runs;
@@ -53,6 +55,7 @@ mod stream;
 mod sync;
 mod tasks_retry;
 mod tasks_retry_policy;
+mod teams;
 mod template_attachments;
 mod templates_create;
 mod templates_delete;
@@ -212,6 +215,34 @@ pub fn router(state: AppState) -> Router {
             get(branding::get_branding)
                 .put(branding::update_branding)
                 .delete(branding::delete_branding),
+        )
+        // Team graph: projects (ownership/authz root), teams (mid container), and
+        // membership. Reads open; mutations require `Author` + the org-graph role
+        // guard (admin / team-manager). The guard no-ops in local single-operator
+        // mode (no `[server]` config → no roles).
+        .route(
+            "/projects",
+            get(projects::list_projects).post(projects::create_project),
+        )
+        .route(
+            "/projects/:id",
+            get(projects::get_project).put(projects::update_project),
+        )
+        // Archive (status → archived), the project counterpart to workflow stop:
+        // the row is kept for history rather than hard-deleted.
+        .route("/projects/:id/archive", post(projects::archive_project))
+        .route("/teams", get(teams::list_teams).post(teams::create_team))
+        .route("/teams/:id", get(teams::get_team))
+        // A team's projects, via the `under` containment traversal.
+        .route("/teams/:id/projects", get(teams::list_team_projects))
+        // Membership (`user ->member_of-> team`) with a per-team role; admin-gated.
+        .route(
+            "/teams/:id/members",
+            get(members::list_members).post(members::add_member),
+        )
+        .route(
+            "/teams/:id/members/:user",
+            delete(members::remove_member),
         )
         // Skills: reusable blocks of agent instructions (global, stateless).
         .route(

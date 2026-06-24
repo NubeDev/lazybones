@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils/cn";
 import { NAV_ITEMS, type View } from "@/app/navigation";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useRole } from "@/lib/hooks/use-role";
 
 /** The left rail: brand mark + primary navigation. */
 export function Sidebar({
@@ -10,11 +11,20 @@ export function Sidebar({
   view: View;
   onNavigate: (v: View) => void;
 }) {
+  const { canSeeTeam, canSeeAdmin } = useRole();
+  // Gate the role-scoped entries (Team = manager+, Admin = admin). In operator
+  // mode (no roles configured) both gates open — matching the backend's local
+  // single-operator passthrough.
+  const items = NAV_ITEMS.filter((item) => {
+    if (item.gate === "manager") return canSeeTeam;
+    if (item.gate === "admin") return canSeeAdmin;
+    return true;
+  });
   return (
     <aside className="flex w-16 shrink-0 flex-col items-center gap-1 border-r border-border bg-surface py-4 lg:w-56 lg:items-stretch lg:px-3">
       <Brand />
       <nav className="mt-6 flex flex-1 flex-col gap-1">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const active = view === item.view;
           const Icon = item.icon;
           return (

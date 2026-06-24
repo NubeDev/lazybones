@@ -709,6 +709,89 @@ pub struct AgentChatPosted {
     pub message: lazybones_store::AgentMessage,
 }
 
+// ---- team graph (projects, teams, membership) --------------------------------
+
+/// `?team=` filter for the project listing — narrow to one team, or all teams when
+/// omitted (mirrors the denormalized `project.team` index read).
+#[derive(Debug, Default, Deserialize)]
+pub struct TeamQuery {
+    /// Restrict the listing to one team's projects; all teams when omitted.
+    #[serde(default)]
+    pub team: Option<String>,
+}
+
+/// `POST /projects` body: a new project (ownership/authz root for a team's work).
+#[derive(Debug, Deserialize)]
+pub struct CreateProjectBody {
+    /// The unique project id; `409` if it is already taken.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+    /// The owning team. Placed `under` that team (and denormalized onto the row);
+    /// a manager of this team — or an admin — may create it. Omit for a teamless
+    /// project (admin-only).
+    #[serde(default)]
+    pub team: Option<String>,
+    /// The repo target(s) this project's work spans (config form of the `repo:*`
+    /// tags); empty when none are pinned.
+    #[serde(default)]
+    pub repos: Vec<String>,
+}
+
+/// `PUT /projects/:id` body: overwrite a project's authored fields. `status` is
+/// not editable here — use `POST /projects/:id/archive`. `created_at` and the
+/// owning `team` are preserved.
+#[derive(Debug, Deserialize)]
+pub struct UpdateProjectBody {
+    /// New human title.
+    pub title: String,
+    /// New repo target(s); replaces the stored list.
+    #[serde(default)]
+    pub repos: Vec<String>,
+}
+
+/// `POST /teams` body: a new (or re-affirmed) team. Idempotent on the id.
+#[derive(Debug, Deserialize)]
+pub struct CreateTeamBody {
+    /// The unique team id.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+}
+
+/// `POST /teams/:id/members` body: add (or re-affirm) a member with a per-team
+/// role.
+#[derive(Debug, Deserialize)]
+pub struct AddMemberBody {
+    /// The user id to place on the team.
+    pub user: String,
+    /// The member's per-team role (`manager` | `member`); defaults to `member`.
+    #[serde(default)]
+    pub role: MemberRoleBody,
+}
+
+/// The wire form of a [`MemberRole`](lazybones_store::MemberRole) on a membership
+/// request body. Kept local to the DTO layer so the body owns its own `serde`
+/// default (a plain member) without leaning on the store enum's representation.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemberRoleBody {
+    /// Creates/archives projects, assigns workflows, sees all team status.
+    Manager,
+    /// Works what's assigned; drives their own tasks.
+    #[default]
+    Member,
+}
+
+impl From<MemberRoleBody> for lazybones_store::MemberRole {
+    fn from(role: MemberRoleBody) -> Self {
+        match role {
+            MemberRoleBody::Manager => lazybones_store::MemberRole::Manager,
+            MemberRoleBody::Member => lazybones_store::MemberRole::Member,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

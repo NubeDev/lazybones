@@ -137,13 +137,13 @@ lazybones/{org}/{team}/{project}/channel/{kind}/{chanId}/msg/*     # project-sco
    manager/member on the `member_of` edge.
 4. **One role-gated UI** reusing `ui/`, not a second frontend.
 
-## Open questions
+## Open questions — RESOLVED
 
-- Does a **project target one repo or many**? (Leans many — a project is an
-  org/ownership noun; the repo is a technical target carried as project config or a
-  `repo:*` tag.) Distinct from the existing repo/worktree concept.
-- Can a **workflow be assigned to more than one member** (co-run), or strictly one
-  edge? (Leans one, to keep `scoped_to` single-cardinality; collaboration happens
-  at the project/channel level, not by multi-homing a workflow.)
-- **Project-level roles** (a per-project lead) — needed, or is team-manager
-  granularity enough for v1? (Leans team-level for v1.)
+Ratified in [projects-decisions.md](projects-decisions.md):
+
+- **Project targets many repos** — carried as project config and/or `repo:*` tags,
+  distinct from the existing repo/worktree concept. *(decisions §1 Q1)*
+- **Workflow is assigned to one edge** — single-cardinality `scoped_to`, no co-run;
+  collaboration lives at the project/channel level. *(decisions §1 Q2)*
+- **Team-level roles for v1** — no per-project lead; a team-manager already owns
+  every project in their team via the `under` traversal. *(decisions §1 Q3)*
