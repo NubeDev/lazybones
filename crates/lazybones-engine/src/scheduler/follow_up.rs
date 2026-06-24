@@ -105,6 +105,37 @@ fn classify(reason: &str) -> Option<(&'static str, String, String)> {
         ));
     }
 
+    // The gate command can't structurally run against this repo (e.g.
+    // `cargo test --workspace` against a repo with no `[workspace]` root: cargo
+    // errors "could not find `Cargo.toml`" before any test runs). The preflight
+    // emits "gate misconfigured: …"; a raw cargo error is caught too, for the path
+    // where no preflight ran (a standalone task on an un-fixable repo). Unlike an
+    // ordinary red gate, NO retry or code fix clears this — the gate itself is
+    // wrong for the repo, so it needs an operator to set the right one.
+    if lower.contains("gate misconfigured")
+        || lower.contains("not a cargo workspace")
+        || lower.contains("could not find `cargo.toml`")
+        || lower.contains("could not find cargo.toml")
+    {
+        return Some((
+            "gate-config",
+            "Gate command can't run against this repo".to_owned(),
+            format!(
+                "The green-build gate is misconfigured for this repo, so it fails \
+                 before testing any code — and no retry or code fix can clear it.\n\n\
+                 **Block reason:** {reason}\n\n\
+                 This usually means the default `cargo … --workspace` gate is pointed \
+                 at a repo whose crates are independent (no root `Cargo.toml` with a \
+                 `[workspace]` table). lazybones auto-rewrites that to per-crate \
+                 `cargo … --manifest-path <crate>/Cargo.toml` commands when it can \
+                 find member crates; this fired because it couldn't (or the gate isn't \
+                 a cargo gate at all).\n\n\
+                 **Fix:** set a gate that fits this repo via `PATCH /workflows/:id` \
+                 (the workspace `gate` field), then resolve this follow-up and retry.",
+            ),
+        ));
+    }
+
     if lower.contains("spawn failed") {
         return Some((
             "spawn",
@@ -172,5 +203,21 @@ mod tests {
     fn ordinary_work_failure_does_not_classify() {
         assert!(classify("gate red: cargo test failed (3 failures)").is_none());
         assert!(classify("merge failed: conflict in src/main.rs").is_none());
+    }
+
+    #[test]
+    fn misconfigured_gate_classifies() {
+        // The preflight's own block reason.
+        let (kind, _, _) = classify(
+            "gate misconfigured: gate uses `cargo … --workspace` but /repo is not a \
+             cargo workspace and no member crates were found",
+        )
+        .unwrap();
+        assert_eq!(kind, "gate-config");
+        // And the raw cargo error, for the no-preflight path.
+        let (kind, _, _) =
+            classify("`cargo test --workspace` failed:\nerror: could not find `Cargo.toml`")
+                .unwrap();
+        assert_eq!(kind, "gate-config");
     }
 }

@@ -6,6 +6,7 @@ mod effective;
 pub(crate) mod finish;
 mod follow_up;
 mod gate;
+mod gate_preflight;
 mod git;
 mod hcom_tail;
 pub mod issue;

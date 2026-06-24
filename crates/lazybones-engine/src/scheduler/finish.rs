@@ -16,7 +16,7 @@ use crate::hcom::Hcom;
 
 use super::block::block;
 use super::effective::EffectiveGit;
-use super::{gate, issue, merge, worktree};
+use super::{gate, gate_preflight, issue, merge, worktree};
 
 /// The actor recorded on transitions this module drives.
 const ACTOR: &str = "scheduler:finish";
@@ -297,9 +297,31 @@ fn blocked_reason(text: &str) -> String {
 /// Run the gate; on green, merge + record `done` + teardown; on red, block.
 async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveGit, task: &Task) {
     let worktree_path = task.worktree.clone().unwrap_or_default();
+    let wt = std::path::Path::new(&worktree_path);
+
+    // Preflight the gate against the *worktree* — the agent's work is in it now, so
+    // a foundation task that just created a root `[workspace]` Cargo.toml makes the
+    // default `cargo … --workspace` gate valid (no rewrite), while a repo that
+    // genuinely isn't a workspace gets the gate rewritten to per-crate commands
+    // against the crates that actually exist here. Checking the worktree (not the
+    // base repo) is what keeps this from fighting the task or targeting phantom /
+    // not-checked-out submodule crates. Unfixable → block with a `gate-config`
+    // reason instead of running a doomed command.
+    let gate_cmds = match gate_preflight::check(wt, &eff.gate) {
+        gate_preflight::Preflight::Ok => eff.gate.clone(),
+        gate_preflight::Preflight::Fixed { gate, note } => {
+            tracing::info!(task = %task.id, "gate preflight auto-fix: {note}");
+            gate
+        }
+        gate_preflight::Preflight::Unfixable { reason } => {
+            block(store, task, format!("gate misconfigured: {reason}"), ACTOR).await;
+            return;
+        }
+    };
+
     // The effective gate is workspace ?? global; an empty list is an explicit
     // no-gate and `gate::run` returns Green over zero commands, landing on DONE.
-    let outcome = match gate::run(std::path::Path::new(&worktree_path), &eff.gate).await {
+    let outcome = match gate::run(wt, &gate_cmds).await {
         Ok(o) => o,
         Err(e) => {
             block(store, task, format!("gate could not run: {e}"), ACTOR).await;
@@ -314,7 +336,6 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
             // relied on to have run `git commit`. A green gate with a clean tree
             // *and* no commits ahead of base is a real no-op task (the agent did
             // nothing): block it rather than land empty work.
-            let wt = std::path::Path::new(&worktree_path);
             let progress = workflow_progress(store, task).await;
             match merge::commit_worktree(wt, task, progress).await {
                 Ok(Some(_sha)) => {} // committed; fall through to land the new head
