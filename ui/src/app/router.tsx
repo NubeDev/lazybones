@@ -9,6 +9,7 @@ import { TasksPage } from "@/features/tasks/tasks-page";
 import { RunsPage } from "@/features/runs/runs-page";
 import { DocumentsPage } from "@/features/documents/documents-page";
 import { BrandingPage } from "@/features/branding/branding-page";
+import { ExtensionsPage } from "@/features/extensions/extensions-page";
 import { SettingsPage } from "@/features/settings/settings-page";
 
 /** A tiny in-memory router — no URLs to keep desktop + browser identical.
@@ -46,6 +47,8 @@ export function ViewRenderer({
       return <DocumentsPage />;
     case "branding":
       return <BrandingPage />;
+    case "extensions":
+      return <ExtensionsPage />;
     case "settings":
       return <SettingsPage />;
   }
