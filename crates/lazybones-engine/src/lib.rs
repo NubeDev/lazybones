@@ -12,8 +12,9 @@ mod scheduler;
 
 pub use config::{EngineConfig, MergeMode};
 pub use management::{TurnContext, chat_turn, page_context_workflow_id, render_page_context};
+pub use scheduler::ext::{BlobComponentLoader, ExtHooks};
 pub use scheduler::issue::IssueError;
-pub use scheduler::run;
+pub use scheduler::{run, run_with_ext};
 
 use hcom::Hcom;
 use lazybones_gh::Gh;
@@ -226,15 +227,33 @@ pub mod harness {
         /// Passes a non-due tick counter so the coarse-cadence reverse issue-sync
         /// (which would shell out to `gh`) never fires in a single-tick test;
         /// tests that exercise the sync call [`tick_n`](Self::tick_n) directly.
+        ///
+        /// Extensions are not wired in the test harness ([`ExtHooks::none`]), so a
+        /// tick behaves exactly as the extension-free daemon.
         pub async fn tick(&self) {
-            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, 1, &self.driving).await;
+            crate::scheduler::tick(
+                &self.store,
+                &self.hcom,
+                &self.cfg,
+                1,
+                &self.driving,
+                &crate::ExtHooks::none(),
+            )
+            .await;
         }
 
         /// Run one tick with an explicit `tick_count` — lets a test drive the
         /// Nth-tick reverse issue-sync deterministically.
         pub async fn tick_n(&self, tick_count: u64) {
-            crate::scheduler::tick(&self.store, &self.hcom, &self.cfg, tick_count, &self.driving)
-                .await;
+            crate::scheduler::tick(
+                &self.store,
+                &self.hcom,
+                &self.cfg,
+                tick_count,
+                &self.driving,
+                &crate::ExtHooks::none(),
+            )
+            .await;
         }
     }
 

@@ -16,6 +16,7 @@ use crate::hcom::Hcom;
 
 use super::block::block;
 use super::effective::EffectiveGit;
+use super::ext::ExtHooks;
 use super::{gate, gate_preflight, issue, merge, worktree};
 
 /// The actor recorded on transitions this module drives.
@@ -59,6 +60,7 @@ pub fn spawn_resume(
     eff: EffectiveGit,
     task: Task,
     driving: Driving,
+    ext: ExtHooks,
 ) {
     {
         let mut set = driving.lock().expect("driving set poisoned");
@@ -71,7 +73,7 @@ pub fn spawn_resume(
             driving: driving.clone(),
             id: task.id.clone(),
         };
-        resume(store, hcom, cfg, eff, task).await;
+        resume(store, hcom, cfg, eff, task, ext).await;
     });
 }
 
@@ -87,11 +89,12 @@ async fn resume(
     cfg: EngineConfig,
     eff: EffectiveGit,
     task: Task,
+    ext: ExtHooks,
 ) {
     if task.status == Status::Gating {
-        gate_and_land(&store, &cfg, &eff, &task).await;
+        gate_and_land(&store, &cfg, &eff, &task, &ext).await;
     } else {
-        drive(store, hcom, cfg, eff, task).await;
+        drive(store, hcom, cfg, eff, task, ext).await;
     }
 }
 
@@ -129,6 +132,7 @@ pub async fn drive(
     cfg: EngineConfig,
     eff: EffectiveGit,
     task: Task,
+    ext: ExtHooks,
 ) {
     let signal = match await_signal(&hcom, &task.id).await {
         Ok(s) => s,
@@ -154,7 +158,7 @@ pub async fn drive(
                 tracing::warn!(task = %task.id, "gate transition failed: {e}");
                 return;
             }
-            gate_and_land(&store, &cfg, &eff, &task).await;
+            gate_and_land(&store, &cfg, &eff, &task, &ext).await;
         }
         Signal::Blocked(reason) => block(&store, &task, reason, ACTOR).await,
         Signal::Timeout => {
@@ -295,7 +299,13 @@ fn blocked_reason(text: &str) -> String {
 }
 
 /// Run the gate; on green, merge + record `done` + teardown; on red, block.
-async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveGit, task: &Task) {
+async fn gate_and_land(
+    store: &StoreHandle,
+    cfg: &EngineConfig,
+    eff: &EffectiveGit,
+    task: &Task,
+    ext: &ExtHooks,
+) {
     let worktree_path = task.worktree.clone().unwrap_or_default();
     let wt = std::path::Path::new(&worktree_path);
 
@@ -332,6 +342,24 @@ async fn gate_and_land(store: &StoreHandle, cfg: &EngineConfig, eff: &EffectiveG
     match outcome {
         gate::GateOutcome::Red(reason) => block(store, task, reason, ACTOR).await,
         gate::GateOutcome::Green => {
+            // EXTENSION GATE-CHECK (design §3.2, FAIL-CLOSED): layer the installed
+            // gate-check extensions on top of the green command gate. They reason
+            // over the candidate worktree's diff; any extension that blocks (or
+            // faults — fail-closed maps a fault to a block) stops the land, exactly
+            // like a red command gate. A faulting extension cannot wedge the tick:
+            // the dispatcher catches every guest fault at the host boundary and the
+            // per-extension circuit breaker auto-disables a persistently-bad gate.
+            // No-op (Pass) when no extensions are wired.
+            if let lazybones_ext::GateDecision::Block(reason) = ext.gate_check(task, wt).await {
+                block(
+                    store,
+                    task,
+                    format!("gate-check extension blocked the land: {reason}"),
+                    ACTOR,
+                )
+                .await;
+                return;
+            }
             // Auto-commit any uncommitted work BEFORE landing — the agent is not
             // relied on to have run `git commit`. A green gate with a clean tree
             // *and* no commits ahead of base is a real no-op task (the agent did

@@ -106,6 +106,22 @@ impl AppState {
         self
     }
 
+    /// Share an externally-built extension registry **and** engine (builder style).
+    ///
+    /// Called by `serve.rs` so the `/extensions` routes and the scheduler's
+    /// [`Dispatcher`](lazybones_ext::Dispatcher) operate on the **same** registry —
+    /// an install/enable/disable/grant via REST is immediately visible to gate-check
+    /// dispatch, and a breaker auto-disable is visible to the API. The store stays
+    /// authoritative; both are rebuilt from it on boot. The pre-built engine is also
+    /// shared so the process has exactly one Wasmtime engine + epoch ticker.
+    #[must_use]
+    pub fn with_ext_runtime(mut self, registry: Arc<RwLock<Registry>>, engine: ExtEngine) -> Self {
+        self.extensions = registry;
+        // `set` only fails if already initialised; a fresh `AppState` never is.
+        let _ = self.ext_engine.set(engine);
+        self
+    }
+
     /// Mint and register a scoped management-agent token for a conversation,
     /// returning the bearer string. The grant comes from the permission profile
     /// (read-only ⇒ `[Read]`, author ⇒ `[Read, Author]`, manage ⇒

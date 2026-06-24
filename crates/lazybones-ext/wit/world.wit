@@ -64,9 +64,72 @@ interface gate-check {
     run: func(input: gate-input) -> verdict;
 }
 
+/// Event-reaction extension point (design §3.2): the guest subscribes to durable
+/// lifecycle events (the `Transition`/SSE stream) and returns follow-up actions.
+/// Event reactions are FAIL-OPEN — a faulting/absent guest is logged and the event
+/// proceeds (the dispatcher's policy, not encoded here). The host CYCLE-GUARDS the
+/// stream: every extension-emitted event carries an origin tag + emission depth,
+/// re-entry beyond a small depth is dropped, and each extension has a per-window
+/// emit rate limit (design §3.4) — so a reaction loop cannot infinite-spawn.
+interface event-reaction {
+    /// A durable lifecycle event handed to a reaction guest.
+    record ext-event {
+        /// Event kind: a host lifecycle transition (`transition`) or an
+        /// extension-emitted kind (`ext:<id>:<name>`).
+        kind: string,
+        /// The task the event concerns (empty for non-task events).
+        task-id: string,
+        /// The run/workflow the task belongs to (empty if standalone/none).
+        run-id: string,
+        /// For a transition event: the lifecycle edge.
+        from-status: string,
+        to-status: string,
+        /// The CYCLE GUARD's origin tag: the extension id that emitted this event,
+        /// or empty for a host-origin event off the real transition stream.
+        origin: string,
+        /// The CYCLE GUARD's emission depth: 0 for a host-origin event, parent + 1
+        /// for each extension emission along the causal chain.
+        depth: u32,
+    }
+
+    /// What a reaction guest asks the host to do next.
+    enum action-kind {
+        /// Emit a new extension-namespaced event. It re-enters the event stream
+        /// subject to the host's cycle guard (depth) and per-window rate limit.
+        emit-event,
+        /// Surface a notification to the operator.
+        notify,
+        /// Do nothing.
+        none,
+    }
+
+    /// One follow-up action a reaction returns.
+    record ext-action {
+        /// Which action to take.
+        kind: action-kind,
+        /// For `emit-event`: the kind of the emitted event.
+        event-kind: string,
+        /// Human-readable text (notification body / emitted-event note). May be
+        /// empty.
+        message: string,
+    }
+
+    /// React to one event, returning zero or more follow-up actions.
+    react: func(event: ext-event) -> list<ext-action>;
+}
+
 /// An extension's world declares which interfaces it exports; the registry indexes
 /// extensions by exported interface so dispatch is "find all gate-check
-/// extensions, invoke in order" (design §3.2).
+/// extensions, invoke in order" (design §3.2). A guest implements the world for
+/// the extension point(s) it provides — `extension` for a gate check, `reactor`
+/// for an event reaction.
 world extension {
     export gate-check;
+}
+
+/// The event-reaction world (design §3.2). Kept separate from [`extension`] so a
+/// gate-check guest need not implement event reactions and vice-versa; the
+/// registry's by-export index dispatches each point independently.
+world reactor {
+    export event-reaction;
 }

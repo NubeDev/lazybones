@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 lazybones-store = { workspace = true }
 lazybones-gh = { workspace = true }
+lazybones-ext = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }

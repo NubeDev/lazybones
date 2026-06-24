@@ -3330,6 +3330,7 @@ dependencies = [
  "lazybones-api",
  "lazybones-auth",
  "lazybones-engine",
+ "lazybones-ext",
  "lazybones-store",
  "serde",
  "serde_yaml",
@@ -3344,6 +3345,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "lazybones-ext",
  "lazybones-gh",
  "lazybones-store",
  "serde",

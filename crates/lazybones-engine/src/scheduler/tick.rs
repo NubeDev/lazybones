@@ -13,6 +13,7 @@ use crate::hcom::Hcom;
 
 use super::block::block;
 use super::effective::{self, EffectiveGit};
+use super::ext::ExtHooks;
 use super::{auto_pr, finish, hcom_tail, issue, prompt, reclaim, worktree};
 
 /// The actor recorded on transitions the tick drives.
@@ -29,6 +30,7 @@ pub async fn tick(
     cfg: &EngineConfig,
     tick_count: u64,
     driving: &finish::Driving,
+    ext: &ExtHooks,
 ) {
     reclaim::reconcile(store, hcom, cfg).await;
     // RECOVERY: re-attach a drive loop to any in-flight task this process isn't
@@ -36,9 +38,9 @@ pub async fn tick(
     // lost their in-memory drive loops. Runs after reclaim (which handles the
     // no-live-agent case) and before claim, so an orphaned task is resumed rather
     // than left `running` forever behind a parked agent.
-    reattach_orphans(store, hcom, cfg, driving).await;
+    reattach_orphans(store, hcom, cfg, driving, ext).await;
     promote(store).await;
-    claim_and_spawn(store, hcom, cfg, driving).await;
+    claim_and_spawn(store, hcom, cfg, driving, ext).await;
     // AUTO-PR: for any opt-in workflow whose every task is now done and has no PR
     // yet, spawn the configured agent to summarize and `gh pr create`. Best-effort,
     // idempotent (guarded by `run.pr_url`); never blocks claim/spawn.
@@ -96,6 +98,7 @@ async fn reattach_orphans(
     hcom: &Hcom,
     cfg: &EngineConfig,
     driving: &finish::Driving,
+    ext: &ExtHooks,
 ) {
     let mut runs: HashMap<String, Option<Run>> = HashMap::new();
     for status in [Status::Running, Status::Gating] {
@@ -121,6 +124,7 @@ async fn reattach_orphans(
                 eff,
                 task,
                 driving.clone(),
+                ext.clone(),
             );
         }
     }
@@ -132,6 +136,7 @@ async fn claim_and_spawn(
     hcom: &Hcom,
     cfg: &EngineConfig,
     driving: &finish::Driving,
+    ext: &ExtHooks,
 ) {
     let budget = match budget(store, cfg).await {
         Ok(b) => b,
@@ -323,6 +328,7 @@ async fn claim_and_spawn(
             eff,
             claimed,
             driving.clone(),
+            ext.clone(),
         );
     }
 }
