@@ -17,6 +17,8 @@ members = [
 # so keep them out of the main workspace build/test graph.
 exclude = [
     "crates/lazybones-ext/fixtures/examples",
+    # End-to-end example extension (standalone wasm guest + federated UI remote).
+    "examples",
 ]
 
 [workspace.package]

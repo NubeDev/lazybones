@@ -1,0 +1,27 @@
+# Extension manifest — the source of truth for this extension's declared identity,
+# extension points, capabilities, and frontend remote (design §3.5). It is
+# **embedded into the .wasm component as a custom section** named
+# `lazybones.ext.toml` (see backend/embed-manifest.py) and mirrored into the store
+# record on install. On any conflict the embedded section wins.
+
+name = "gate-verdict-tab"
+version = "0.1.0"
+
+# The WIT world the backend component targets and the extension points (exported
+# WIT interfaces) it implements. The registry indexes by these for dispatch.
+wit-world = "extension"
+extension-points = ["gate-check"]
+
+# Capabilities the extension requests (its declared import surface). `log` is the
+# only capability the gate guest needs; it is always granted. The frontend reads
+# verdicts through the operator's REST session, not a guest capability.
+capabilities = ["log"]
+
+# The frontend half: a Module Federation remote served by the daemon under
+# `GET /extensions/:id/frontend/*`. The host fetches `entry`, imports
+# `exposed-module`, and calls its default mount once (design §4.3).
+[frontend]
+entry = "remoteEntry.js"
+exposed-module = "./mount"
+sdk-range = "^0.1.0"
+slots = ["task-detail.tab"]
