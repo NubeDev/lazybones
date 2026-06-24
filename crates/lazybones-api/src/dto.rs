@@ -30,9 +30,6 @@ pub struct CreateDocumentBody {
     /// The brand profile to render with; `None` falls back to the default.
     #[serde(default)]
     pub branding_id: Option<String>,
-    /// The markdown body.
-    #[serde(default)]
-    pub body: String,
     /// Optional project scope; always `None` today.
     #[serde(default)]
     pub project: Option<String>,
@@ -50,9 +47,36 @@ pub struct UpdateDocumentBody {
     /// New branding id (or `None` to clear).
     #[serde(default)]
     pub branding_id: Option<String>,
+}
+
+/// `POST /documents/:id/pages` body: append (or insert) a page into a document.
+#[derive(Debug, Deserialize)]
+pub struct CreatePageBody {
+    /// Page title / running header.
+    #[serde(default)]
+    pub title: String,
+    /// The page body (markdown).
+    #[serde(default)]
+    pub body: String,
+    /// Explicit fractional sort position. Omit to append after the last page; set
+    /// it to the midpoint of two neighbours (e.g. via the client) to insert.
+    #[serde(default)]
+    pub position: Option<f64>,
+}
+
+/// `PUT /documents/:id/pages/:pid` body: overwrite a page's authored fields and/or
+/// move it. `created_at` is preserved server-side.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePageBody {
+    /// New title.
+    #[serde(default)]
+    pub title: String,
     /// New markdown body.
     #[serde(default)]
     pub body: String,
+    /// New fractional sort position; omit to leave the page where it is.
+    #[serde(default)]
+    pub position: Option<f64>,
 }
 
 /// `PUT /documents/:id/repo` body: set the GitHub publishing target. The
@@ -416,6 +440,12 @@ pub struct WorkspaceBody {
     /// Default git mode for this workflow's tasks.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
+    /// Names the shared worktree dir + branch (for `New`/`Shared` modes),
+    /// overriding the id-derived default. Omitted keeps today's behaviour. Set the
+    /// same name on two workflows to make them build in **one** shared tree;
+    /// reuse an existing worktree's name to attach to it.
+    #[serde(default)]
+    pub worktree_name: Option<String>,
     /// Default agent tool for this workflow's tasks; omitted inherits the global.
     #[serde(default)]
     pub tool: Option<String>,
@@ -723,6 +753,7 @@ mod tests {
                 base_branch: None,
                 branch_prefix: None,
                 worktree_mode: WorktreeMode::New,
+                worktree_name: None,
                 tool: None,
                 model: None,
                 effort: None,

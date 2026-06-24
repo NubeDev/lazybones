@@ -43,7 +43,6 @@ mod tests {
             "quote-1",
             "Quote for Acme",
             DocKind::Document,
-            "# Quote\n\nLine items…",
             "2026-01-01T00:00:00Z",
         )
     }
@@ -54,7 +53,6 @@ mod tests {
         let created = create_document(&db, &sample()).await.unwrap();
         assert_eq!(created.id, "quote-1");
         assert_eq!(created.kind, DocKind::Document);
-        assert!(created.body.contains("Quote"));
         assert_eq!(created.project, None);
 
         let got = get_document(&db, "quote-1").await.unwrap().unwrap();
@@ -76,7 +74,6 @@ mod tests {
             "tncs",
             "Terms & Conditions",
             DocKind::Reference,
-            "Standard T&C…",
             "2026-01-01T00:00:00Z",
         )
         .with_repo(DocRepo {
@@ -115,7 +112,6 @@ mod tests {
             "quote-1",
             "Quote for Acme (rev 2)",
             DocKind::Document,
-            "# Quote\n\nRevised line items.",
             "2026-02-02T00:00:00Z",
         );
         // Fill in the GitHub linkage that an action would persist over time.

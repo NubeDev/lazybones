@@ -23,6 +23,7 @@ mod hcom_log;
 mod init_schema;
 mod run;
 mod management_agent;
+mod page;
 mod preferences;
 mod secret;
 mod skill;
@@ -48,6 +49,7 @@ pub use hcom_log::{HcomLogEntry, HcomLogFilter, NewHcomLogEntry};
 pub use management_agent::{
     ManagementAgentConfig, ManagementAgentScope, PermissionProfile, SessionMode,
 };
+pub use page::{Page, append_position, position_between};
 pub use preferences::Preferences;
 pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};

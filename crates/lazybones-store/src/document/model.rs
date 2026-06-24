@@ -1,9 +1,11 @@
-//! The durable `Document` document — an authored, branded markdown document.
+//! The durable `Document` document — an authored, branded *book*.
 //!
-//! A document carries its markdown `body`, an optional `branding_id` (resolved
-//! against the standalone [`branding`](crate::branding) catalogue at render time),
+//! A document is a container: its content lives in its ordered
+//! [`page`](crate::page) rows (the book's pages), assembled in `position` order at
+//! render time. The document itself carries an optional `branding_id` (resolved
+//! against the standalone [`branding`](crate::branding) catalogue at render time)
 //! and an optional [`DocRepo`] GitHub target. Its [`kind`](DocKind) distinguishes
-//! a normal `Document` from a `Reference` — a reusable page (e.g. Terms &
+//! a normal `Document` from a `Reference` — a reusable document (e.g. Terms &
 //! Conditions) merged into other documents' rendered output via the generic
 //! [`attachment`](crate::attachment) seam (`thing_kind="reference"`).
 //!
@@ -90,9 +92,6 @@ pub struct Document {
     /// [`branding`](crate::branding) catalogue. `None` falls back to the default.
     #[serde(default)]
     pub branding_id: Option<String>,
-    /// The document body (markdown).
-    #[serde(default)]
-    pub body: String,
     /// The optional GitHub publishing target + linkage.
     #[serde(default)]
     pub repo: Option<DocRepo>,
@@ -104,13 +103,12 @@ pub struct Document {
 
 impl Document {
     /// A freshly authored document stamped `created_at == updated_at == now`, of
-    /// the given `kind`, with no branding/repo.
+    /// the given `kind`, with no branding/repo and no pages yet.
     #[must_use]
     pub fn new(
         id: impl Into<String>,
         title: impl Into<String>,
         kind: DocKind,
-        body: impl Into<String>,
         now: impl Into<String>,
     ) -> Self {
         let now = now.into();
@@ -120,7 +118,6 @@ impl Document {
             project: None,
             kind,
             branding_id: None,
-            body: body.into(),
             repo: None,
             created_at: now.clone(),
             updated_at: now,

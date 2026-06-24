@@ -31,6 +31,13 @@ export interface WorkspaceDraft {
   base_branch: string | null;
   branch_prefix: string | null;
   worktree_mode: WorktreeMode;
+  /**
+   * Names the shared worktree dir + branch (New/Shared modes), overriding the
+   * id-derived default. null keeps today's behaviour. Two workflows with the
+   * same name build in ONE tree — pick an existing worktree's name to attach to
+   * it, or a fresh name to create one.
+   */
+  worktree_name?: string | null;
   /** Default agent triple for the workflow's tasks; null inherits the global. */
   tool: string | null;
   model: string | null;

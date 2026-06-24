@@ -7,11 +7,19 @@
 //! in no Typst machinery, so the export route can always serve a preview even if
 //! PDF rendering has a problem.
 
-use pulldown_cmark::{Options, Parser, html};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, html};
 
-use crate::model::Assembled;
+use crate::model::{Assembled, ImageAsset};
 
 /// Render an assembled document to a self-contained HTML page with brand CSS.
+///
+/// The logo and any inline images are embedded as `data:` URIs (their bytes
+/// travel in [`Assembled`]). The in-UI preview shows them in an iframe rendered
+/// from `srcDoc`, which has no base URL — relative `/assets/<id>` paths would not
+/// resolve — so inlining is what makes the brand logo and images actually visible
+/// in the preview.
 #[must_use]
 pub fn render_html(assembled: &Assembled) -> String {
     let mut options = Options::empty();
@@ -19,8 +27,28 @@ pub fn render_html(assembled: &Assembled) -> String {
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_TASKLISTS);
 
+    // Rewrite each inline image `src` to a data URI so it renders in the iframe.
+    let parser = Parser::new_ext(&assembled.markdown, options).map(|event| match event {
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => {
+            let dest_url = data_uri_for_src(&assembled.images, &dest_url)
+                .map_or(dest_url, CowStr::from);
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            })
+        }
+        other => other,
+    });
+
     let mut body = String::new();
-    html::push_html(&mut body, Parser::new_ext(&assembled.markdown, options));
+    html::push_html(&mut body, parser);
 
     let c = &assembled.brand.colors;
     let f = &assembled.brand.fonts;
@@ -36,6 +64,12 @@ pub fn render_html(assembled: &Assembled) -> String {
         sections.push_str(&format!(
             "<header>{}</header>\n",
             escape_html(&assembled.brand.header_text)
+        ));
+    }
+    if let Some(logo) = &assembled.logo {
+        sections.push_str(&format!(
+            "<img class=\"brand-logo\" src=\"{}\" alt=\"\">\n",
+            data_uri(logo)
         ));
     }
     sections.push_str(&format!("<h1 class=\"doc-title\">{}</h1>\n", escape_html(&assembled.title)));
@@ -62,9 +96,42 @@ blockquote{{border-left:3px solid {primary};margin-left:0;padding-left:1rem;opac
 table{{border-collapse:collapse;}}\n\
 th,td{{border:1px solid rgba(0,0,0,0.2);padding:0.4rem 0.7rem;}}\n\
 header,footer{{opacity:0.65;font-size:0.85rem;}}\n\
-img{{max-width:100%;}}\n</style>\n</head>\n<body>\n{sections}</body></html>",
+img{{max-width:100%;}}\n\
+.brand-logo{{max-height:3.2rem;width:auto;margin-bottom:1rem;}}\n</style>\n</head>\n<body>\n{sections}</body></html>",
         title = escape_html(&assembled.title),
     )
+}
+
+/// The `data:` URI for the inline image whose `src` matches `src`, or `None` if
+/// no resolved image satisfies it (the original `src` is then kept as-is).
+fn data_uri_for_src(images: &[ImageAsset], src: &str) -> Option<String> {
+    images.iter().find(|i| i.src == src).map(data_uri)
+}
+
+/// Encode a resolved image as a `data:<mime>;base64,...` URI.
+fn data_uri(image: &ImageAsset) -> String {
+    format!(
+        "data:{};base64,{}",
+        mime_for(&image.filename),
+        BASE64.encode(&image.bytes)
+    )
+}
+
+/// The image MIME type keyed off a filename's extension; defaults to `image/png`.
+fn mime_for(filename: &str) -> &'static str {
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .filter(|e| !e.is_empty() && *e != filename)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        _ => "image/png",
+    }
 }
 
 /// A CSS value, or `fallback` when the brand left the field blank.
@@ -89,7 +156,7 @@ fn escape_html(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Brand, Colors};
+    use crate::model::{Brand, Colors, ImageAsset};
 
     #[test]
     fn renders_markdown_body_into_html() {
@@ -118,6 +185,25 @@ mod tests {
         assert!(html.contains("#db2777"));
         assert!(html.contains("<header>Confidential</header>"));
         assert!(html.contains("<footer>&copy; ACME</footer>") || html.contains("<footer>© ACME</footer>"));
+    }
+
+    #[test]
+    fn embeds_the_logo_as_a_data_uri() {
+        let assembled = Assembled::new("Branded", "Body")
+            .with_logo(ImageAsset::new("", "logo.png", vec![1, 2, 3, 4]));
+        let html = render_html(&assembled);
+        assert!(html.contains("class=\"brand-logo\""));
+        assert!(html.contains("src=\"data:image/png;base64,"));
+    }
+
+    #[test]
+    fn rewrites_inline_image_src_to_a_data_uri() {
+        let assembled = Assembled::new("Doc", "![alt](/assets/abc)")
+            .with_image(ImageAsset::new("/assets/abc", "pic.jpg", vec![9, 9, 9]));
+        let html = render_html(&assembled);
+        assert!(html.contains("data:image/jpeg;base64,"));
+        // The unresolved server path must not leak into the preview.
+        assert!(!html.contains("/assets/abc"));
     }
 
     #[test]

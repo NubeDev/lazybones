@@ -11,6 +11,12 @@
 //!
 //! `worktrees == false` forces `Branch` semantics (the serial fallback).
 //!
+//! For `New`/`Shared`, a workspace-level `worktree_name` overrides the key in the
+//! path + branch (the `<id>`/`<run_id>` column above), so a workflow can name its
+//! tree explicitly. Two workflows that pick the **same** name land in the **same**
+//! tree on the **same** branch — the supported way to share one worktree across
+//! workflows. `Reuse`/`Branch` ignore it (they don't create an id-keyed tree).
+//!
 //! `Shared` is the "one feature, many tasks, one PR" mode: every task in a
 //! workflow run claims the *same* worktree on the *same* branch (named from the
 //! run id), so they build on each other in one tree and the run produces a single
@@ -98,14 +104,19 @@ pub async fn provision(
 
     match mode {
         WorktreeMode::New | WorktreeMode::Shared => {
-            // New: per-task key (`task.id`). Shared: per-run key (`run_id`), so
-            // every task in the run lands in the same tree on the same branch.
-            let key: &str = match mode {
-                WorktreeMode::Shared => task
-                    .run_id
-                    .as_deref()
-                    .expect("run_id present (Shared without it degraded to New above)"),
-                _ => &task.id,
+            // The worktree+branch key. An explicit workspace `worktree_name` wins
+            // (so a workflow can name its tree, and two workflows sharing a name
+            // build in ONE tree). Otherwise: New keys per-task (`task.id`), Shared
+            // keys per-run (`run_id`) so every task in the run shares one tree.
+            let key: &str = match eff.worktree_name.as_deref() {
+                Some(name) => name,
+                None => match mode {
+                    WorktreeMode::Shared => task
+                        .run_id
+                        .as_deref()
+                        .expect("run_id present (Shared without it degraded to New above)"),
+                    _ => &task.id,
+                },
             };
             let branch = format!("{}{}", eff.branch_prefix, key);
             let path: PathBuf = repo.join(&cfg.worktree_root).join(key);
@@ -352,6 +363,7 @@ mod tests {
             base_branch: "main".into(),
             branch_prefix: "lazy/".into(),
             worktree_mode: mode,
+            worktree_name: None,
             tool: "claude".into(),
             model: None,
             effort: None,
@@ -499,6 +511,48 @@ mod tests {
         let p = provision(&task, &eff, &cfg, None).await.unwrap();
         assert_eq!(p.branch, "lazy/solo");
         assert!(p.worktree.ends_with(".lazy/wt/solo"));
+    }
+
+    #[tokio::test]
+    async fn worktree_name_overrides_key_and_is_shared_across_runs() {
+        // A workspace `worktree_name` names the tree + branch, overriding the
+        // id-derived key. Two tasks from DIFFERENT runs that carry the same name
+        // must land in ONE tree on ONE branch — the cross-workflow shared-tree
+        // contract. (We model the two workflows as two tasks with distinct
+        // run_ids but the same `worktree_name`.)
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let mut eff = eff_for(dir.path(), WorktreeMode::Shared);
+        eff.worktree_name = Some("checkout-api".into());
+
+        let mut t1 = Task::seed("wf-a-01", "wf-a", "t", "s", vec![], vec![], None);
+        t1.run_id = Some("workflow-a".into());
+        let mut t2 = Task::seed("wf-b-01", "wf-b", "t", "s", vec![], vec![], None);
+        t2.run_id = Some("workflow-b".into());
+
+        let p1 = provision(&t1, &eff, &cfg, None).await.unwrap();
+        let p2 = provision(&t2, &eff, &cfg, None).await.unwrap();
+
+        // Both keyed by the NAME, not their run ids — one tree, one branch.
+        assert_eq!(p1.branch, "lazy/checkout-api");
+        assert_eq!(p2.branch, p1.branch);
+        assert_eq!(p2.worktree, p1.worktree);
+        assert!(p1.worktree.ends_with(".lazy/wt/checkout-api"));
+    }
+
+    #[tokio::test]
+    async fn worktree_name_keys_a_new_mode_tree() {
+        // In New mode (standalone-style), a name still overrides the per-task key.
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let cfg = cfg_for(dir.path());
+        let mut eff = eff_for(dir.path(), WorktreeMode::New);
+        eff.worktree_name = Some("spike".into());
+        let task = Task::seed("auth", "r", "t", "s", vec![], vec![], None);
+        let p = provision(&task, &eff, &cfg, None).await.unwrap();
+        assert_eq!(p.branch, "lazy/spike");
+        assert!(p.worktree.ends_with(".lazy/wt/spike"));
     }
 
     #[tokio::test]

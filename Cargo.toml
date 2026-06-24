@@ -43,6 +43,12 @@ lazybones-ext = { version = "0.1.0", path = "crates/lazybones-ext" }
 # the WASI Preview 2 capability-based sandbox the design depends on.
 wasmtime = "46"
 wasmtime-wasi = "46"
+# Outbound HTTP for guests holding the `http-fetch` grant (design §3.3): wires
+# `wasi:http/outgoing-handler` into the host linker. Same Wasmtime major.
+wasmtime-wasi-http = "46"
+# Named only to type the `wasi:http` allowlist hook (`hyper::Request`); the
+# version tracks what `wasmtime-wasi-http` 46 itself depends on.
+hyper = "1"
 wit-bindgen = "0.58"
 # Read the embedded `lazybones.ext.toml` manifest custom section out of an
 # extension component. Pinned to the wasmparser major Wasmtime 46 itself uses so

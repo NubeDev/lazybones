@@ -10,12 +10,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/client";
 import { useCreateWorkflow } from "@/lib/hooks/use-workflows";
-import { useGhRepo } from "@/lib/hooks/use-gh";
+import { useGhRepo, useGhWorktrees } from "@/lib/hooks/use-gh";
 import { WorktreeModePicker } from "@/features/tasks/worktree-mode";
 import { RepoPicker } from "./repo-picker";
 import { BranchField } from "./branch-field";
 import { AgentPicker } from "@/features/agents/agent-picker";
 import type { WorkspaceDraft } from "@/lib/api/workflows";
+import type { WorktreeMode } from "@/types/task";
 
 const EMPTY: WorkspaceDraft = {
   repo: "",
@@ -24,11 +25,15 @@ const EMPTY: WorkspaceDraft = {
   // Default to one-branch-one-PR for the whole workflow (matches the backend
   // default); switch to Isolated for independent parallel tasks.
   worktree_mode: "shared",
+  worktree_name: null,
   tool: null,
   model: null,
   effort: null,
   auto_pr: false,
 };
+
+/** Modes that create an id-keyed worktree, so a name can override the key. */
+const NAMEABLE_MODES = new Set<WorktreeMode>(["new", "shared"]);
 
 /** Create a workflow: id, title, and a workspace block (repo + git config).
  *  Surfaces a `409` inline as "id taken". */
@@ -73,8 +78,14 @@ export function WorkflowDialog({
   function submit() {
     const tid = id.trim();
     if (!tid || !title.trim() || !ws.repo.trim()) return;
+    // Normalise a blank name to null (the engine treats "" as unset anyway).
+    const name = ws.worktree_name?.trim() || null;
     create.mutate(
-      { id: tid, title: title.trim(), workspace: { ...ws, repo: ws.repo.trim() } },
+      {
+        id: tid,
+        title: title.trim(),
+        workspace: { ...ws, repo: ws.repo.trim(), worktree_name: name },
+      },
       {
         onSuccess: () => {
           setOpen(false);
@@ -189,9 +200,25 @@ export function WorkflowDialog({
             <Field label="Worktree mode">
               <WorktreeModePicker
                 value={ws.worktree_mode}
-                onChange={(m) => setWs({ ...ws, worktree_mode: m })}
+                onChange={(m) =>
+                  setWs((prev) => ({
+                    ...prev,
+                    worktree_mode: m,
+                    // A name only applies to id-keyed modes; drop it otherwise so
+                    // we don't silently send a name that Reuse/Branch ignore.
+                    worktree_name: NAMEABLE_MODES.has(m) ? prev.worktree_name : null,
+                  }))
+                }
               />
             </Field>
+
+            {NAMEABLE_MODES.has(ws.worktree_mode) && (
+              <WorktreeNameField
+                dir={dir}
+                value={ws.worktree_name ?? null}
+                onChange={(n) => setWs((prev) => ({ ...prev, worktree_name: n }))}
+              />
+            )}
 
             <AgentPicker
               tool={ws.tool ?? ""}
@@ -263,5 +290,104 @@ function Field({
       {children}
       {hint && <span className="block text-[10px] text-muted-foreground">{hint}</span>}
     </label>
+  );
+}
+
+/** The trailing path component — a git worktree's on-disk dir name, which is the
+ *  key the engine uses (`.lazy/wt/<name>`). */
+function baseName(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  const i = trimmed.lastIndexOf("/");
+  return i === -1 ? trimmed : trimmed.slice(i + 1);
+}
+
+/**
+ * Choose how this workflow's worktree is named: **Auto** (the engine keys it by
+ * the workflow/task id — today's behaviour) or **Named**, where you type a fresh
+ * name to create a tree or pick an existing one to build in it. The suggestions
+ * are the repo's live git worktrees (`GET /gh/worktrees`), so selecting one makes
+ * this workflow share that tree. Only shown for the id-keyed modes (Isolated /
+ * Shared); Reuse/Main ignore the name.
+ */
+function WorktreeNameField({
+  dir,
+  value,
+  onChange,
+}: {
+  dir: string | null;
+  value: string | null;
+  onChange: (name: string | null) => void;
+}) {
+  const named = value !== null;
+  // Live worktrees under the chosen repo, minus the main checkout (you can't
+  // target that as a named worktree). Deduped by dir name.
+  const wts = useGhWorktrees(dir);
+  const existing = Array.from(
+    new Set(
+      (wts.data ?? [])
+        .filter((w) => !w.is_main)
+        .map((w) => baseName(w.path))
+        .filter(Boolean),
+    ),
+  ).sort();
+  const matchesExisting = named && existing.includes(value.trim());
+
+  return (
+    <Field
+      label="Worktree"
+      hint={
+        named
+          ? matchesExisting
+            ? "Reuses an existing worktree — this workflow builds in that tree (shared with whatever already uses it)."
+            : "Creates a worktree with this name. Reuse the same name on another workflow to share one tree."
+          : "Auto: the engine names the worktree after the workflow (Shared) or task (Isolated)."
+      }
+    >
+      <div className="space-y-1.5">
+        <div className="flex gap-1 rounded-md border border-border bg-surface p-0.5">
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className={
+              "flex-1 rounded px-2 py-1 text-[11px] font-medium transition-colors " +
+              (!named
+                ? "bg-accent-soft/60 text-accent"
+                : "text-muted-foreground hover:text-foreground")
+            }
+          >
+            Auto
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange(value ?? "")}
+            className={
+              "flex-1 rounded px-2 py-1 text-[11px] font-medium transition-colors " +
+              (named
+                ? "bg-accent-soft/60 text-accent"
+                : "text-muted-foreground hover:text-foreground")
+            }
+          >
+            Name / pick existing
+          </button>
+        </div>
+
+        {named && (
+          <>
+            <Input
+              list="lazybones-worktree-names"
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              placeholder="checkout-api"
+              className="font-mono"
+            />
+            <datalist id="lazybones-worktree-names">
+              {existing.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </>
+        )}
+      </div>
+    </Field>
   );
 }

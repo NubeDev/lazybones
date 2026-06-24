@@ -60,7 +60,6 @@ pub(crate) struct DocumentRow {
     /// `Document`.
     pub(crate) kind: Option<String>,
     pub(crate) branding_id: Option<String>,
-    pub(crate) body: Option<String>,
     pub(crate) repo: Option<DocRepoRow>,
     pub(crate) created_at: Option<String>,
     pub(crate) updated_at: Option<String>,
@@ -75,7 +74,6 @@ impl DocumentRow {
             project: d.project.clone(),
             kind: Some(d.kind.as_str().to_owned()),
             branding_id: d.branding_id.clone(),
-            body: Some(d.body.clone()),
             repo: d.repo.as_ref().map(DocRepoRow::from_repo),
             created_at: Some(d.created_at.clone()),
             updated_at: Some(d.updated_at.clone()),
@@ -90,7 +88,6 @@ impl DocumentRow {
             project: self.project,
             kind: DocKind::parse(self.kind.as_deref()),
             branding_id: self.branding_id,
-            body: self.body.unwrap_or_default(),
             repo: self.repo.map(DocRepoRow::into_repo),
             created_at: self.created_at.unwrap_or_default(),
             updated_at: self.updated_at.unwrap_or_default(),

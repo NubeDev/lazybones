@@ -35,6 +35,7 @@ pub mod manifest;
 pub mod reaction;
 pub mod registry;
 pub mod views;
+pub mod weather;
 
 pub use breaker::{BreakerAlert, CircuitBreaker};
 pub use capability::{Capability, GrantError, validate_grant};
@@ -51,3 +52,4 @@ pub use manifest::{Manifest, ManifestError, MANIFEST_SECTION};
 pub use reaction::{ActionKind, ExtAction, ExtEvent, ReactionHost};
 pub use registry::{ExtensionRecord, InstallRequest, RecordClaims, Registry, RegistryError};
 pub use views::{ExtRunView, ExtTaskView, STORE_VIEW_VERSION};
+pub use weather::{WeatherHost, WeatherOutcome, WeatherQuery, WeatherResult};

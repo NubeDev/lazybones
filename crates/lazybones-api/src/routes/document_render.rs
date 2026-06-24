@@ -9,42 +9,74 @@
 //! that pure value into HTML (preview) or a branded Typst PDF. Both reads are
 //! open, like the rest of `/tasks`.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{Html, IntoResponse, Response};
 use lazybones_render::{Assembled, Brand, Colors, Fonts, ImageAsset};
 use lazybones_store::{Branding, Document};
+use serde::Deserialize;
 
 use crate::error::ApiResult;
 use crate::routes::documents::{REFERENCE_KIND, require_document};
 use crate::state::AppState;
 
-/// Assemble a document's renderable markdown: its body followed by each attached
-/// `reference` document's body, in attach order (`list_attachments` returns
-/// newest-first, so we reverse). Shared with the GitHub commit route.
+/// Assemble a document's renderable markdown: its own pages (in `position`
+/// order) followed by each attached `reference` document's pages, in attach order
+/// (`list_attachments` returns newest-first, so we reverse). Pages are joined with
+/// a blank line; the render layer turns each page boundary into a PDF page break.
+/// Shared with the GitHub commit route.
 pub(crate) async fn assemble_markdown(state: &AppState, doc: &Document) -> ApiResult<String> {
-    let mut markdown = doc.body.clone();
+    let mut markdown = pages_markdown(state, &doc.id).await?;
+
     let mut refs = state
         .store
         .list_attachments("document", &doc.id, Some(REFERENCE_KIND))
         .await?;
     refs.reverse(); // attach order: oldest first
     for att in refs {
-        if let Some(reference) = state.store.get_document(&att.thing_id).await? {
-            markdown.push_str("\n\n");
-            markdown.push_str(&reference.body);
+        if state.store.get_document(&att.thing_id).await?.is_some() {
+            let reference_md = pages_markdown(state, &att.thing_id).await?;
+            if !reference_md.is_empty() {
+                if !markdown.is_empty() {
+                    markdown.push_str("\n\n");
+                }
+                markdown.push_str(&reference_md);
+            }
         }
     }
     Ok(markdown)
 }
 
+/// Concatenate a document's pages (in render order) into one markdown blob,
+/// joined by a blank line.
+async fn pages_markdown(state: &AppState, document: &str) -> ApiResult<String> {
+    let pages = state.store.list_pages(document).await?;
+    let bodies: Vec<String> = pages.into_iter().map(|p| p.body).collect();
+    Ok(bodies.join("\n\n"))
+}
+
+/// Which brand to render with. `None` ⇒ the document's saved `branding_id`;
+/// `Some` ⇒ a live override (the editor's current, possibly-unsaved selection),
+/// where an empty/blank value means "the default brand" (no profile).
+type BrandOverride<'a> = Option<&'a str>;
+
 /// Resolve a document into the render crate's pure [`Assembled`] input: assembled
 /// markdown, the resolved brand values, and the logo + inline image bytes pulled
 /// from the blob store.
-async fn assemble(state: &AppState, doc: &Document) -> ApiResult<Assembled> {
+async fn assemble(
+    state: &AppState,
+    doc: &Document,
+    brand_override: BrandOverride<'_>,
+) -> ApiResult<Assembled> {
     let markdown = assemble_markdown(state, doc).await?;
 
-    let branding = match doc.branding_id.as_deref() {
+    // The effective brand id: a live override (blank ⇒ default) wins over the
+    // saved one, so the preview tracks the picker before the document is saved.
+    let branding_id = match brand_override {
+        Some(raw) => Some(raw.trim()).filter(|s| !s.is_empty()).map(str::to_owned),
+        None => doc.branding_id.clone(),
+    };
+    let branding = match branding_id.as_deref() {
         Some(id) => state.store.get_branding(id).await?,
         None => None,
     };
@@ -123,14 +155,27 @@ fn to_brand(b: &Branding) -> Brand {
     }
 }
 
+/// Query for the render preview: an optional live `branding_id` override so the
+/// editor can preview the currently-picked brand before the document is saved.
+#[derive(Debug, Deserialize)]
+pub struct RenderQuery {
+    /// The brand to preview with (blank ⇒ default brand). Absent ⇒ the saved one.
+    #[serde(default)]
+    branding_id: Option<String>,
+}
+
 /// `GET /documents/:id/render` — the assembled HTML preview (body + merged
-/// references), with brand colors/fonts applied as CSS. `404` if unknown.
+/// references), with brand colors/fonts/logo applied. `404` if unknown.
+///
+/// An optional `?branding_id=` query previews a brand other than the saved one
+/// (the editor passes its current picker value so the preview is live).
 pub async fn render_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<RenderQuery>,
 ) -> ApiResult<Html<String>> {
     let doc = require_document(&state, &id).await?;
-    let assembled = assemble(&state, &doc).await?;
+    let assembled = assemble(&state, &doc, q.branding_id.as_deref()).await?;
     Ok(Html(lazybones_render::render_html(&assembled)))
 }
 
@@ -141,7 +186,8 @@ pub async fn export_pdf(
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     let doc = require_document(&state, &id).await?;
-    let assembled = assemble(&state, &doc).await?;
+    // Export always uses the document's saved brand (no live override).
+    let assembled = assemble(&state, &doc, None).await?;
     let pdf = lazybones_render::render_pdf(&assembled)?;
     Ok(([(CONTENT_TYPE, "application/pdf")], pdf).into_response())
 }

@@ -32,6 +32,7 @@ use crate::document::{
 use crate::source::{
     Source, create_source, delete_source, get_source, list_sources, update_source,
 };
+use crate::page::{Page, create_page, delete_page, get_page, list_pages, update_page};
 use crate::management_agent::{
     ManagementAgentConfig, ManagementAgentScope, delete_management_agent_scoped,
     get_management_agent, get_management_agent_resolved, get_management_agent_scoped,
@@ -945,6 +946,48 @@ impl StoreHandle {
     /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
     pub async fn delete_source(&self, id: &str) -> Result<bool> {
         delete_source(&self.db, id).await
+    }
+
+    /// Create a page (one ordered section of a document/book).
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the write fails.
+    pub async fn create_page(&self, page: &Page) -> Result<Page> {
+        create_page(&self.db, page).await
+    }
+
+    /// Read a single page by id.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the read fails.
+    pub async fn get_page(&self, id: &str) -> Result<Option<Page>> {
+        get_page(&self.db, id).await
+    }
+
+    /// List the pages of a document in ascending `position` (render) order.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the query fails.
+    pub async fn list_pages(&self, document: &str) -> Result<Vec<Page>> {
+        list_pages(&self.db, document).await
+    }
+
+    /// Edit an existing page (its body/title, or move it by writing a new
+    /// `position`), preserving its `created_at`.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if no page with that id exists
+    /// or the write fails.
+    pub async fn update_page(&self, page: &Page) -> Result<Page> {
+        update_page(&self.db, page).await
+    }
+
+    /// Delete a page by id. Returns whether one existed.
+    ///
+    /// # Errors
+    /// Returns a [`StoreError`](crate::StoreError) if the delete fails.
+    pub async fn delete_page(&self, id: &str) -> Result<bool> {
+        delete_page(&self.db, id).await
     }
 
     /// Attach a polymorphic thing `(thing_kind, thing_id)` to an owner

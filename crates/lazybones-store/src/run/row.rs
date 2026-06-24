@@ -20,6 +20,9 @@ pub(crate) struct WorkspaceRow {
     pub(crate) base_branch: Option<String>,
     pub(crate) branch_prefix: Option<String>,
     pub(crate) worktree_mode: Option<String>,
+    /// Names the shared worktree dir + branch, overriding the id-derived default.
+    /// `Option` so rows written before this column read back as `None`.
+    pub(crate) worktree_name: Option<String>,
     /// Default agent triple for the workflow's tasks; `Option` so rows written
     /// before these columns read back as `None` (inherit the global).
     pub(crate) tool: Option<String>,
@@ -65,6 +68,7 @@ impl RunRow {
                 base_branch: run.workspace.base_branch.clone(),
                 branch_prefix: run.workspace.branch_prefix.clone(),
                 worktree_mode: Some(run.workspace.worktree_mode.as_str().to_owned()),
+                worktree_name: run.workspace.worktree_name.clone(),
                 tool: run.workspace.tool.clone(),
                 model: run.workspace.model.clone(),
                 effort: run.workspace.effort.clone(),
@@ -90,6 +94,7 @@ impl RunRow {
                 base_branch: self.workspace.base_branch,
                 branch_prefix: self.workspace.branch_prefix,
                 worktree_mode: WorktreeMode::parse(self.workspace.worktree_mode.as_deref()),
+                worktree_name: self.workspace.worktree_name,
                 tool: self.workspace.tool,
                 model: self.workspace.model,
                 effort: self.workspace.effort,

@@ -22,6 +22,11 @@ workspace = true
 # to compile guests at load time.
 wasmtime = { workspace = true, features = ["async", "component-model", "cranelift"] }
 wasmtime-wasi = { workspace = true }
+# Outbound HTTP for guests holding the `http-fetch` grant (design §3.3): the
+# `wasi:http/outgoing-handler` host impl the `weather-provider` world imports.
+wasmtime-wasi-http = { workspace = true }
+# Types the `wasi:http` allowlist hook signature (`hyper::Request`).
+hyper = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 # Drives the async host invocation (`call_async`) and the host-side call timeout.

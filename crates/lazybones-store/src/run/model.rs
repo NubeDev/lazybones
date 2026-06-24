@@ -72,6 +72,15 @@ pub struct Workspace {
     /// The default git mode for this workflow's tasks.
     #[serde(default)]
     pub worktree_mode: WorktreeMode,
+    /// Names the worktree dir + branch for `New`/`Shared` modes, overriding the
+    /// id-derived default (`run_id` for Shared, `task.id` for New). `None` keeps
+    /// today's behaviour. Two workflows that set the **same** name land in the
+    /// **same** tree on the **same** branch — the supported way for several
+    /// workflows to build in one shared worktree. Pick an existing worktree's
+    /// name to attach to it, or a fresh name to create one. Ignored by
+    /// `Reuse`/`Branch` modes (they don't create an id-keyed tree).
+    #[serde(default)]
+    pub worktree_name: Option<String>,
     /// Default agent tool for this workflow's tasks; `None` inherits the global
     /// `EngineConfig`. A task's own `tool` still wins.
     #[serde(default)]

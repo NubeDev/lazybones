@@ -110,6 +110,10 @@ pub enum StoreError {
     #[error("source not found: {0}")]
     SourceNotFound(String),
 
+    /// A page id was referenced that does not exist in the store.
+    #[error("page not found: {0}")]
+    PageNotFound(String),
+
     /// An extension id was referenced that does not exist in the store.
     #[error("extension not found: {0}")]
     ExtensionNotFound(String),

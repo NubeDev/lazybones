@@ -366,6 +366,7 @@ mod tests {
             base_branch: Some("main".into()),
             branch_prefix: Some("lazy/".into()),
             worktree_mode: WorktreeMode::Shared,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,

@@ -71,6 +71,12 @@ DEFINE INDEX IF NOT EXISTS extension_sha256 ON extension FIELDS wasm_sha256;\n\
 DEFINE TABLE IF NOT EXISTS branding SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS project ON branding TYPE option<string>;\n\
 DEFINE INDEX IF NOT EXISTS branding_project ON branding FIELDS project;\n\
+DEFINE TABLE IF NOT EXISTS page SCHEMALESS;\n\
+DEFINE FIELD IF NOT EXISTS project ON page TYPE option<string>;\n\
+DEFINE FIELD IF NOT EXISTS document ON page TYPE string;\n\
+DEFINE FIELD IF NOT EXISTS position ON page TYPE option<float>;\n\
+DEFINE INDEX IF NOT EXISTS page_project ON page FIELDS project;\n\
+DEFINE INDEX IF NOT EXISTS page_document ON page FIELDS document;\n\
 DEFINE TABLE IF NOT EXISTS source SCHEMALESS;\n\
 DEFINE FIELD IF NOT EXISTS project ON source TYPE option<string>;\n\
 DEFINE FIELD IF NOT EXISTS document ON source TYPE string;\n\

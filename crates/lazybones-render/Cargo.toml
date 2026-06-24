@@ -19,4 +19,7 @@ comemo = { workspace = true }
 # Markdown → Typst markup (the main Phase 3b risk) and markdown → HTML preview
 # (the `html` feature provides the preview writer).
 pulldown-cmark = { workspace = true, features = ["html"] }
+# Embed the logo + inline images as data URIs in the HTML preview (the iframe
+# uses `srcDoc`, so relative `/assets/<id>` URLs can't resolve — inline the bytes).
+base64 = { workspace = true }
 thiserror = { workspace = true }

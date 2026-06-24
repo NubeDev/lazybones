@@ -49,7 +49,7 @@ pub async fn create_document(
     Json(body): Json<CreateDocumentBody>,
 ) -> ApiResult<Json<Document>> {
     session.require(Capability::Document, "document", &body.id)?;
-    let mut document = Document::new(&body.id, &body.title, body.kind, &body.body, state.store.now());
+    let mut document = Document::new(&body.id, &body.title, body.kind, state.store.now());
     document.branding_id = body.branding_id;
     document.project = body.project;
     Ok(Json(state.store.create_document(&document).await?))
@@ -75,22 +75,27 @@ pub async fn update_document(
     // Carry forward the GitHub linkage (set via `/repo` + filled by `gh/*`) — it
     // is not an authored field, so a content edit must not clear it.
     let existing = require_document(&state, &id).await?;
-    let mut document =
-        Document::new(&id, &body.title, body.kind, &body.body, state.store.now());
+    let mut document = Document::new(&id, &body.title, body.kind, state.store.now());
     document.branding_id = body.branding_id;
     document.project = existing.project;
     document.repo = existing.repo;
     Ok(Json(state.store.update_document(&document).await?))
 }
 
-/// `DELETE /documents/:id` — remove a document. Requires `Document`. Returns
-/// whether it existed. Does not cascade to attached references/sources (no FK).
+/// `DELETE /documents/:id` — remove a document and its pages. Requires
+/// `Document`. Returns whether the document existed. The document's own
+/// [`page`](lazybones_store::Page) rows are its content, so they are cascaded
+/// here; loosely-attached references/sources are not (no FK).
 pub async fn delete_document(
     State(state): State<AppState>,
     session: Session,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     session.require(Capability::Document, "document", &id)?;
+    // Cascade the document's pages (its content) before dropping the document.
+    for page in state.store.list_pages(&id).await? {
+        state.store.delete_page(&page.id).await?;
+    }
     let existed = state.store.delete_document(&id).await?;
     Ok(Json(serde_json::json!({ "deleted": existed })))
 }

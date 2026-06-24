@@ -90,6 +90,7 @@ async fn tail_ingests_event_and_advances_cursor() {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,

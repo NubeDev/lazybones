@@ -1,0 +1,33 @@
+# The `weather` example extension manifest (design §3.5). This is the source of
+# truth for the extension's declared identity/caps/extension-points; it is
+# embedded into the component as a `lazybones.ext.toml` custom section on build
+# (see backend/build.sh) and mirrored into the daemon's Extension record on
+# install.
+name = "weather"
+version = "0.1.0"
+wit-world = "weather-provider"        # the WIT world the guest implements
+
+# The WIT interfaces the component exports — the dispatch keys (design §3.2).
+# This guest exports the `weather` extension point.
+extension-points = ["weather"]
+
+# The host import surface this extension REQUESTS (design §3.3). `log` is always
+# granted; `http-fetch` is what lets the WASM guest dial Open-Meteo itself — it is
+# default-deny and an admin must grant it at install (and it is bounded to an
+# allowlist host-side). THE BACKEND DOES THE FETCH: the frontend never calls the
+# weather API, it only renders what this guest returns.
+capabilities = ["log", "http-fetch"]
+
+# The frontend half — a Module Federation remote (design §4). It registers a
+# top-level "Weather" route (a nav page) that calls the backend's `weather` export
+# over REST and renders the result with shadcn UI.
+[frontend]
+# Point the host at the Module Federation manifest (emitted by
+# `@module-federation/vite` with `manifest: true`). Registering the remote by its
+# manifest makes the MF runtime load `remoteEntry.js` as an ES module; a bare
+# `remoteEntry.js` entry is injected as a classic script and throws
+# "Cannot use import statement outside a module".
+entry = "mf-manifest.json"
+exposed-module = "./mount"
+sdk-range = "^0.1.0"
+slots = ["route"]

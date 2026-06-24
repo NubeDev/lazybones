@@ -170,7 +170,7 @@ function DocCard({ doc, onOpen }: { doc: Document; onOpen: () => void }) {
       </div>
       <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{doc.id}</p>
       <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
-        {doc.body.trim() ? doc.body.slice(0, 160) : "Empty document."}
+        {doc.kind === "reference" ? "Reusable reference page." : "Document"}
       </p>
       <div className="mt-3 flex items-center justify-between">
         {brand ? <BrandSwatch brand={brand} /> : <span className="text-[10px] text-muted-foreground">Default brand</span>}

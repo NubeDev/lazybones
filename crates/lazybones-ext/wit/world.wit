@@ -118,6 +118,47 @@ interface event-reaction {
     react: func(event: ext-event) -> list<ext-action>;
 }
 
+/// Weather extension point (an `http-fetch` example, design §3.2/§3.3): the host
+/// hands the guest a free-text location and the guest returns current conditions.
+/// Unlike `gate-check`/`event-reaction`, a weather guest does REAL OUTBOUND WORK —
+/// it imports `wasi:http/outgoing-handler` (the `weather-provider` world, below)
+/// and calls a keyless weather API itself. This is the extension point that
+/// exercises the `http-fetch` capability end-to-end: the guest does 100% of the
+/// fetch + parse, the host only grants the (allowlisted) outbound HTTP authority.
+interface weather {
+    /// What the host asks the guest to report on.
+    record weather-query {
+        /// Free-text place name to resolve + report (e.g. "Berlin", "Tokyo").
+        location: string,
+    }
+
+    /// Current conditions the guest resolved for the query, or an `error`.
+    record weather-result {
+        /// The resolved, canonical place name (may differ from the query).
+        location: string,
+        /// Resolved latitude / longitude (the geocode the guest used).
+        latitude: f64,
+        longitude: f64,
+        /// Current air temperature, in degrees Celsius.
+        temperature-c: f64,
+        /// Current wind speed, in km/h.
+        wind-kph: f64,
+        /// WMO weather interpretation code (0 = clear, …).
+        weather-code: u32,
+        /// Human-readable description mapped from `weather-code`.
+        description: string,
+        /// ISO-8601 observation timestamp reported by the upstream API.
+        observed-at: string,
+        /// Set (with the others left at defaults) when the guest could not
+        /// resolve the query — e.g. unknown place or an upstream failure.
+        error: option<string>,
+    }
+
+    /// Resolve + report current weather for the query. The guest performs the
+    /// outbound HTTP itself via the imported `wasi:http/outgoing-handler`.
+    get-weather: func(query: weather-query) -> weather-result;
+}
+
 /// An extension's world declares which interfaces it exports; the registry indexes
 /// extensions by exported interface so dispatch is "find all gate-check
 /// extensions, invoke in order" (design §3.2). A guest implements the world for
@@ -125,6 +166,18 @@ interface event-reaction {
 /// for an event reaction.
 world extension {
     export gate-check;
+}
+
+/// The weather-provider world (design §3.2/§3.3). It both EXPORTS the `weather`
+/// extension point AND IMPORTS `wasi:http/outgoing-handler` — the guest dials the
+/// upstream weather API itself. The host only links that import when the
+/// extension holds the `http-fetch` grant, and a `HostAllowlist` bounds which
+/// hosts the guest may actually reach (design §3.3: `http-fetch` is the
+/// exfiltration-sensitive cap). Plain synchronous WIT — async HOST functions only
+/// (design §3.4), no WIT-level async.
+world weather-provider {
+    import wasi:http/outgoing-handler@0.2.12;
+    export weather;
 }
 
 /// The event-reaction world (design §3.2). Kept separate from [`extension`] so a

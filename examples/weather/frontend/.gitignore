@@ -1,0 +1,4 @@
+/node_modules
+/dist
+# Module Federation build cache/diagnostics (emitted by @module-federation/vite).
+/.mf

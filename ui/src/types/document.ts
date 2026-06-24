@@ -14,15 +14,29 @@ export interface DocRepo {
   pr_url?: string | null;
 }
 
-/** Mirror of `lazybones_store::Document` — an authored, branded markdown doc. */
+/** Mirror of `lazybones_store::Document` — a branded *book*: a container whose
+ *  content lives in its ordered {@link Page} rows. */
 export interface Document {
   id: string;
   title: string;
   project?: string | null;
   kind: DocKind;
   branding_id?: string | null;
-  body: string;
   repo?: DocRepo | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Mirror of `lazybones_store::Page` — one ordered section (page) of a document.
+ *  Pages render in ascending `position`; each is a page-break boundary in the
+ *  exported PDF. */
+export interface Page {
+  id: string;
+  document: string;
+  project?: string | null;
+  title: string;
+  body: string;
+  position: number;
   created_at: string;
   updated_at: string;
 }

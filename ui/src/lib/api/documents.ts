@@ -1,14 +1,22 @@
 import { apiBase, loopToken } from "./config";
 import { ApiError, request } from "./client";
-import type { DocKind, DocRepo, Document, Source } from "@/types/document";
+import type { DocKind, DocRepo, Document, Page, Source } from "@/types/document";
 import type { Attachment } from "@/types/skill";
 
-/** The authored fields of a document (everything the editor controls). */
+/** The authored fields of a document (everything the document header controls).
+ *  Page content is managed separately via the pages API. */
 export interface DocumentDraft {
   title: string;
   kind: DocKind;
   branding_id?: string | null;
+}
+
+/** The authored fields of a page. `position` is optional: omit on create to
+ *  append after the last page, or pass an explicit value to insert/reorder. */
+export interface PageDraft {
+  title: string;
   body: string;
+  position?: number | null;
 }
 
 /** `GET /documents` — list documents (open read), optionally `?project=`. */
@@ -47,6 +55,40 @@ export function deleteDocument(id: string): Promise<{ deleted: boolean }> {
     method: "DELETE",
     auth: true,
   });
+}
+
+// ---- pages (the ordered content of a document/book) -------------------------
+
+/** `GET /documents/:id/pages` — list a document's pages in render order. */
+export function listPages(id: string, signal?: AbortSignal): Promise<Page[]> {
+  return request<Page[]>(`/documents/${encodeURIComponent(id)}/pages`, { signal });
+}
+
+/** `POST /documents/:id/pages` — append (or insert) a page. Omit `position` to
+ *  append after the last page. */
+export function createPage(id: string, draft: PageDraft): Promise<Page> {
+  return request<Page>(`/documents/${encodeURIComponent(id)}/pages`, {
+    method: "POST",
+    auth: true,
+    body: draft,
+  });
+}
+
+/** `PUT /documents/:id/pages/:pid` — overwrite a page's fields and/or move it
+ *  (pass a new `position`). */
+export function updatePage(id: string, pid: string, draft: PageDraft): Promise<Page> {
+  return request<Page>(
+    `/documents/${encodeURIComponent(id)}/pages/${encodeURIComponent(pid)}`,
+    { method: "PUT", auth: true, body: draft },
+  );
+}
+
+/** `DELETE /documents/:id/pages/:pid` — remove a page. */
+export function deletePage(id: string, pid: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/documents/${encodeURIComponent(id)}/pages/${encodeURIComponent(pid)}`,
+    { method: "DELETE", auth: true },
+  );
 }
 
 // ---- references (reusable pages merged into the rendered output) -------------
@@ -119,9 +161,20 @@ export function removeSource(id: string, sid: string): Promise<{ deleted: boolea
 // ---- render / export --------------------------------------------------------
 
 /** `GET /documents/:id/render` — the assembled HTML preview (body + merged
- *  references, brand CSS applied). Returns the raw HTML string. */
-export async function renderDocumentHtml(id: string, signal?: AbortSignal): Promise<string> {
-  const res = await fetch(`${apiBase()}/documents/${encodeURIComponent(id)}/render`, { signal });
+ *  references, brand CSS + logo applied). Returns the raw HTML string.
+ *
+ *  Pass `brandingId` to preview a brand other than the saved one (the editor
+ *  passes its live picker value — `null`/`""` previews the default brand) so the
+ *  preview tracks the picker before the document is saved. Omit it (`undefined`)
+ *  to render with the document's saved brand. */
+export async function renderDocumentHtml(
+  id: string,
+  brandingId?: string | null,
+  signal?: AbortSignal,
+): Promise<string> {
+  const q =
+    brandingId === undefined ? "" : `?branding_id=${encodeURIComponent(brandingId ?? "")}`;
+  const res = await fetch(`${apiBase()}/documents/${encodeURIComponent(id)}/render${q}`, { signal });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new ApiError(res.status, text || `${res.status} ${res.statusText}`);

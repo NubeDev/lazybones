@@ -43,7 +43,23 @@ export function registerSlot<K extends SlotKind>(
   // The runtime shape is exactly `RegisteredSlot<K>`; the cast to the union
   // element type is sound (TS can't prove the generic narrows on its own).
   const entry = { ...contribution, slot, extensionId } as unknown as AnyRegisteredSlot;
-  registry.update((prev) => [...prev, entry]);
+  // Registration is idempotent on `(extensionId, slot, contribution id)`: a
+  // re-register REPLACES the prior entry rather than appending a duplicate. This
+  // keeps the registry clean when a remote's mount runs more than once — e.g.
+  // React StrictMode double-invokes the host's mount effect in development, which
+  // would otherwise show the same `route`/tab twice.
+  const id = (contribution as { id?: string }).id;
+  registry.update((prev) => [
+    ...prev.filter(
+      (e) =>
+        !(
+          e.extensionId === extensionId &&
+          e.slot === slot &&
+          (e as { id?: string }).id === id
+        ),
+    ),
+    entry,
+  ]);
   return () => {
     registry.update((prev) => prev.filter((e) => e !== entry));
   };

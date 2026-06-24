@@ -18,13 +18,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogTrigger,
-  DialogClose,
-} from "@/components/ui/dialog";
-import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import { BrandPicker } from "@/components/brand-picker";
 import { ApiError } from "@/lib/api/client";
 import { exportPdfUrl, renderDocumentHtml } from "@/lib/api/documents";
@@ -38,20 +31,19 @@ import {
   useUpdateDocument,
 } from "@/lib/hooks/use-documents";
 import type { DocumentDraft } from "@/lib/api/documents";
-import type { Asset } from "@/types/asset";
 import type { DocKind, Document } from "@/types/document";
 import { DocumentSources } from "./document-sources";
+import { DocumentPages } from "./document-pages";
 import { DocumentRepo } from "./document-repo";
 import { AssetsLibrary } from "./assets-library";
 
-const EMPTY: DocumentDraft = { title: "", kind: "document", branding_id: null, body: "" };
+const EMPTY: DocumentDraft = { title: "", kind: "document", branding_id: null };
 
 function draftFrom(d: Document): DocumentDraft {
   return {
     title: d.title,
     kind: d.kind,
     branding_id: d.branding_id ?? null,
-    body: d.body ?? "",
   };
 }
 
@@ -123,10 +115,6 @@ export function DocumentEditor({
   const canSave = !!id.trim() && !!draft.title.trim() && !mut.isPending;
   const kindLabel = draft.kind === "reference" ? "Reference page" : "Document";
 
-  function insertAtBody(snippet: string) {
-    setDraft((d) => ({ ...d, body: d.body ? `${d.body}\n\n${snippet}` : snippet }));
-  }
-
   return (
     <div className="flex h-full min-w-0 flex-col">
       <Topbar
@@ -197,15 +185,17 @@ export function DocumentEditor({
             </Field>
 
             <div>
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-medium">Body</span>
-                <InsertAssetButton onInsert={(a) => insertAtBody(assetMarkdown(a))} />
+              <div className="mb-1 flex items-center gap-1.5">
+                <FileText className="size-3.5 text-accent" />
+                <span className="text-xs font-medium">Pages</span>
               </div>
-              <MarkdownEditor
-                value={draft.body}
-                onChange={(b) => setDraft({ ...draft, body: b })}
-                placeholder={"# Heading\n\nWrite the document in markdown…"}
-              />
+              {creating ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                  Create the {kindLabel.toLowerCase()} first to add and edit pages.
+                </p>
+              ) : (
+                <DocumentPages documentId={currentId!} />
+              )}
             </div>
 
             {message && (
@@ -225,7 +215,11 @@ export function DocumentEditor({
               </p>
             </div>
           ) : (
-            <SidePanels documentId={currentId!} document={doc} />
+            <SidePanels
+              documentId={currentId!}
+              document={doc}
+              brandingId={draft.branding_id ?? null}
+            />
           )}
         </div>
       </div>
@@ -233,7 +227,15 @@ export function DocumentEditor({
   );
 }
 
-function SidePanels({ documentId, document }: { documentId: string; document?: Document }) {
+function SidePanels({
+  documentId,
+  document,
+  brandingId,
+}: {
+  documentId: string;
+  document?: Document;
+  brandingId: string | null;
+}) {
   return (
     <Tabs defaultValue="preview" className="flex h-full flex-col">
       <div className="border-b border-border p-2">
@@ -258,7 +260,7 @@ function SidePanels({ documentId, document }: { documentId: string; document?: D
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <TabsContent value="preview">
-          <HtmlPreview documentId={documentId} />
+          <HtmlPreview documentId={documentId} brandingId={brandingId} />
         </TabsContent>
         <TabsContent value="references">
           <ReferencesPanel documentId={documentId} />
@@ -282,17 +284,28 @@ function SidePanels({ documentId, document }: { documentId: string; document?: D
 }
 
 /** Live HTML preview from `GET /documents/:id/render` (body + merged references,
- *  brand CSS applied). Reflects the last *saved* state — rendered server-side. */
-function HtmlPreview({ documentId }: { documentId: string }) {
+ *  brand CSS + logo applied). The **brand previews live** — the current picker
+ *  value is passed as a `?branding_id=` override so switching brands re-renders
+ *  the actual document immediately. Page content still reflects the last *saved*
+ *  version (it is rendered server-side from saved pages). */
+function HtmlPreview({
+  documentId,
+  brandingId,
+}: {
+  documentId: string;
+  brandingId: string | null;
+}) {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ["doc-render", documentId],
-    queryFn: ({ signal }) => renderDocumentHtml(documentId, signal),
+    queryKey: ["doc-render", documentId, brandingId],
+    queryFn: ({ signal }) => renderDocumentHtml(documentId, brandingId, signal),
   });
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] text-muted-foreground">Rendered from the last saved version.</p>
+        <p className="text-[11px] text-muted-foreground">
+          Brand previews live; page content reflects the last saved version.
+        </p>
         <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={isFetching ? "animate-spin" : ""} /> Refresh
         </Button>
@@ -403,48 +416,6 @@ function ReferencesPanel({ documentId }: { documentId: string }) {
       </div>
     </div>
   );
-}
-
-/** A dialog wrapping the asset library so the author can pick an image to insert
- *  into the markdown body. */
-function InsertAssetButton({ onInsert }: { onInsert: (asset: Asset) => void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]">
-          <ImagePlus className="size-3" /> Insert asset
-        </Button>
-      </DialogTrigger>
-      <DialogContent
-        title="Insert an asset"
-        description="Pick an image to embed in the document body, or upload a new one."
-        className="max-w-2xl"
-      >
-        <div className="max-h-[60vh] overflow-y-auto">
-          <AssetsLibrary
-            onInsert={(a) => {
-              onInsert(a);
-              setOpen(false);
-            }}
-          />
-        </div>
-        <div className="mt-3 flex justify-end">
-          <DialogClose asChild>
-            <Button variant="ghost" size="sm">
-              Close
-            </Button>
-          </DialogClose>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** A markdown image referencing an asset by its server path (the export route
- *  resolves `/assets/<id>` to the inline bytes). */
-function assetMarkdown(asset: Asset): string {
-  return `![${asset.filename}](/assets/${asset.id})`;
 }
 
 function Field({

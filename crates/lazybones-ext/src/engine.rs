@@ -69,6 +69,23 @@ impl Default for EngineLimits {
 }
 
 impl EngineLimits {
+    /// A more generous profile for an extension point that does a real network
+    /// round-trip (the `http-fetch` grant, e.g. the `weather` point). A gate
+    /// check is pure compute and rare, so [`Default`] bounds it tight; an
+    /// outbound fetch must survive DNS + TLS + an upstream reply, so the
+    /// wall-clock budget is seconds, not milliseconds. CPU fuel and memory are
+    /// also raised since a TLS handshake + JSON parse runs far more bytecode than
+    /// a verdict computation.
+    #[must_use]
+    pub fn network() -> Self {
+        Self {
+            fuel: 5_000_000_000,
+            wall_clock: Duration::from_secs(8),
+            max_memory_bytes: 128 * 1024 * 1024,
+            epoch_tick: Duration::from_millis(5),
+        }
+    }
+
     /// Number of epoch ticks corresponding to [`Self::wall_clock`] (rounded up,
     /// minimum one). This is what gets handed to `Store::set_epoch_deadline`.
     pub fn epoch_deadline_ticks(&self) -> u64 {

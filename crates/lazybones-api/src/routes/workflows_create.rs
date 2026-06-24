@@ -23,6 +23,7 @@ pub async fn create_workflow(
         base_branch: body.workspace.base_branch,
         branch_prefix: body.workspace.branch_prefix,
         worktree_mode: body.workspace.worktree_mode,
+        worktree_name: body.workspace.worktree_name,
         tool: body.workspace.tool,
         model: body.workspace.model,
         effort: body.workspace.effort,

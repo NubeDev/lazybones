@@ -33,8 +33,9 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use lazybones_auth::Capability;
 use lazybones_ext::{
-    Capability as ExtCapability, DiffStat, GateCheckHost, GateInput, GateOutcome, InstallRequest,
-    Verdict, VerdictKind, dispatch::gate_verdict_fail_closed, validate_grant,
+    Capability as ExtCapability, DiffStat, GateCheckHost, GateInput, GateOutcome, HostAllowlist,
+    InstallRequest, Verdict, VerdictKind, WeatherHost, WeatherOutcome, WeatherQuery, WeatherResult,
+    dispatch::gate_verdict_fail_closed, validate_grant,
 };
 use lazybones_store::{Extension, ExtensionSource, StoreError, sha256_hex};
 use serde::{Deserialize, Serialize};
@@ -84,14 +85,25 @@ pub struct GrantsBody {
 }
 
 /// `POST /extensions/:id/invoke` body: a manual/test invocation of one named
-/// export. v1 supports the `gate-check` export only.
+/// export. v1 supports the `gate-check` and `weather` exports.
 #[derive(Debug, Deserialize)]
 pub struct InvokeBody {
-    /// The WIT export to invoke (must be one the extension declares; v1: `gate-check`).
+    /// The WIT export to invoke (must be one the extension declares; v1:
+    /// `gate-check` or `weather`).
     pub export: String,
-    /// The input for that export. For `gate-check` this is a [`GateInputBody`].
+    /// The input for that export, shaped per export: [`GateInputBody`] for
+    /// `gate-check`, [`WeatherInputBody`] for `weather`. Kept opaque here and
+    /// decoded once the export is known.
     #[serde(default)]
-    pub input: GateInputBody,
+    pub input: serde_json::Value,
+}
+
+/// The `weather` input projected from JSON (mapped into [`WeatherQuery`]).
+#[derive(Debug, Default, Deserialize)]
+pub struct WeatherInputBody {
+    /// Free-text place name to resolve + report (e.g. "Berlin").
+    #[serde(default)]
+    pub location: String,
 }
 
 /// The `gate-check` input projected from JSON (the generated WIT record is not
@@ -123,22 +135,33 @@ pub struct DiffStatBody {
     pub deletions: u32,
 }
 
-/// `POST /extensions/:id/invoke` response: the guest verdict (or the fail-closed
-/// verdict a fault maps to) plus the measured cold-instantiation latency.
+/// `POST /extensions/:id/invoke` response: the guest's output for the invoked
+/// export plus the measured cold-instantiation latency. Exactly one of `verdict`
+/// (gate-check) / `weather` (weather) is set, per the invoked export.
 #[derive(Debug, Serialize)]
 pub struct InvokeResponse {
     /// The export that was invoked.
     pub export: String,
-    /// The verdict outcome (`pass` / `fail` / `skip`).
-    pub verdict: VerdictView,
+    /// The gate-check verdict (`pass` / `fail` / `skip`). Present only for the
+    /// `gate-check` export.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<VerdictView>,
+    /// The weather result. Present only for the `weather` export.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weather: Option<WeatherView>,
     /// Microseconds spent instantiating the component for this call; `None` if the
     /// invocation faulted before instantiation completed (design §3.4 flags cold
     /// instantiation as a measured P0 input).
     pub instantiation_micros: Option<u128>,
-    /// Whether the verdict came from a host-boundary fault mapped fail-closed
-    /// (rather than a clean guest return) — surfaced so a test-invoke shows the
-    /// gate's actual landing behaviour.
+    /// Whether the result came from a host-boundary fault (rather than a clean
+    /// guest return) — surfaced so a test-invoke shows the extension's actual
+    /// behaviour. For `gate-check` a fault is mapped to the fail-closed verdict;
+    /// for `weather` a fault leaves `weather` absent and `error` carries why.
     pub faulted: bool,
+    /// A host-boundary fault message, when `faulted` and no typed result applies
+    /// (e.g. a weather guest that trapped or a denied outbound host).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// JSON projection of a gate-check [`Verdict`] (the generated record is not serde).
@@ -148,6 +171,30 @@ pub struct VerdictView {
     pub kind: &'static str,
     /// Human-readable explanation surfaced to the operator.
     pub message: String,
+}
+
+/// JSON projection of a [`WeatherResult`] (the generated WIT record is not serde).
+/// This is what the WASM guest fetched + parsed itself; the host only relays it.
+#[derive(Debug, Serialize)]
+pub struct WeatherView {
+    /// Resolved, canonical place name.
+    pub location: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Current air temperature, °C.
+    pub temperature_c: f64,
+    /// Current wind speed, km/h.
+    pub wind_kph: f64,
+    /// WMO weather interpretation code.
+    pub weather_code: u32,
+    /// Human-readable description mapped from `weather_code`.
+    pub description: String,
+    /// ISO-8601 observation timestamp from the upstream API.
+    pub observed_at: String,
+    /// Set when the guest ran but could not resolve the query (unknown place,
+    /// upstream failure). Distinct from a host fault (`faulted`/`error`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Whether a truthy-string query flag (`1`, `true`, `yes`, `on`) is set.
@@ -353,9 +400,10 @@ pub async fn set_grants(
 }
 
 /// `POST /extensions/:id/invoke` — manually/test-invoke a named export.
-/// Requires [`Capability::Extension`]. v1 supports the `gate-check` export only;
+/// Requires [`Capability::Extension`]. v1 supports `gate-check` and `weather`;
 /// the guest runs under the full fuel/epoch/memory/timeout regime and any
-/// host-boundary fault is reported as the fail-closed verdict it would land as.
+/// host-boundary fault is caught at the boundary (mapped to the fail-closed
+/// verdict for `gate-check`, or surfaced as `error` for `weather`).
 pub async fn invoke_extension(
     State(state): State<AppState>,
     session: Session,
@@ -376,32 +424,41 @@ pub async fn invoke_extension(
             body.export
         )));
     }
-    if body.export != "gate-check" {
-        return Err(ApiError::bad_request(format!(
-            "export `{}` is not test-invokable in v1 (only `gate-check`)",
-            body.export
-        )));
-    }
 
     let bytes = state
         .assets
         .get(&ext.wasm_sha256, Some("extensions"))
         .await?;
+    let engine = state.ext_engine().clone();
 
+    match body.export.as_str() {
+        "gate-check" => Ok(Json(invoke_gate_check(engine, &bytes, body).await)),
+        "weather" => Ok(Json(invoke_weather(engine, &bytes, &ext, body).await?)),
+        other => Err(ApiError::bad_request(format!(
+            "export `{other}` is not test-invokable in v1 (only `gate-check`, `weather`)"
+        ))),
+    }
+}
+
+/// Run the `gate-check` export, folding a load/host fault into the fail-closed
+/// verdict so the response always shows what the gate would do.
+async fn invoke_gate_check(
+    engine: lazybones_ext::ExtEngine,
+    bytes: &[u8],
+    body: InvokeBody,
+) -> InvokeResponse {
+    let gate: GateInputBody = serde_json::from_value(body.input).unwrap_or_default();
     let input = GateInput {
-        task_id: body.input.task_id,
-        task_summary: body.input.task_summary,
+        task_id: gate.task_id,
+        task_summary: gate.task_summary,
         diff: DiffStat {
-            files_changed: body.input.diff.files_changed,
-            insertions: body.input.diff.insertions,
-            deletions: body.input.diff.deletions,
+            files_changed: gate.diff.files_changed,
+            insertions: gate.diff.insertions,
+            deletions: gate.diff.deletions,
         },
     };
 
-    // Compile + evaluate; fold a load fault into the same fail-closed path so the
-    // response always shows what the gate would do.
-    let engine = state.ext_engine().clone();
-    let result = match GateCheckHost::from_bytes(engine, &bytes) {
+    let result = match GateCheckHost::from_bytes(engine, bytes) {
         Ok(host) => host.evaluate(input).await,
         Err(fault) => Err(fault),
     };
@@ -414,13 +471,71 @@ pub async fn invoke_extension(
         Err(fault) => (gate_verdict_fail_closed(Err(fault)), None, true),
     };
 
-    Ok(Json(InvokeResponse {
-        export: body.export,
-        verdict: verdict_view(&verdict),
+    InvokeResponse {
+        export: "gate-check".to_string(),
+        verdict: Some(verdict_view(&verdict)),
+        weather: None,
         instantiation_micros: instantiation,
         faulted,
-    }))
+        error: None,
+    }
 }
+
+/// Run the `weather` export. The guest does the outbound fetch itself, so this
+/// **requires the `http-fetch` grant** (default-deny — design §3.3) and bounds
+/// the guest to [`WEATHER_ALLOWLIST`]. A clean guest return (even one whose own
+/// `error` is set) is `faulted: false`; only a host-boundary fault (trap, denied
+/// host, timeout) sets `faulted` + `error`.
+async fn invoke_weather(
+    engine: lazybones_ext::ExtEngine,
+    bytes: &[u8],
+    ext: &Extension,
+    body: InvokeBody,
+) -> ApiResult<InvokeResponse> {
+    if !ext.granted_caps.iter().any(|c| c == "http-fetch") {
+        return Err(ApiError::bad_request(
+            "the `weather` export requires the `http-fetch` capability to be granted",
+        ));
+    }
+
+    let input: WeatherInputBody = serde_json::from_value(body.input).unwrap_or_default();
+    let query = WeatherQuery {
+        location: input.location,
+    };
+
+    let allowlist = HostAllowlist::from_hosts(WEATHER_ALLOWLIST);
+    let result = match WeatherHost::from_bytes(engine, bytes, allowlist) {
+        Ok(host) => host.fetch(query).await,
+        Err(fault) => Err(fault),
+    };
+
+    Ok(match result {
+        Ok(WeatherOutcome {
+            result,
+            instantiation,
+        }) => InvokeResponse {
+            export: "weather".to_string(),
+            verdict: None,
+            weather: Some(weather_view(&result)),
+            instantiation_micros: Some(instantiation.as_micros()),
+            faulted: false,
+            error: None,
+        },
+        Err(fault) => InvokeResponse {
+            export: "weather".to_string(),
+            verdict: None,
+            weather: None,
+            instantiation_micros: None,
+            faulted: true,
+            error: Some(fault.to_string()),
+        },
+    })
+}
+
+/// The hosts the `weather` guest's outbound `http-fetch` is bounded to (design
+/// §3.3: `http-fetch` is allowlist-only). Open-Meteo's geocoding + forecast
+/// hosts — keyless, no other reachable surface.
+const WEATHER_ALLOWLIST: [&str; 2] = ["geocoding-api.open-meteo.com", "api.open-meteo.com"];
 
 /// `GET /extensions/:id/frontend/*path` — serve a file from an enabled extension's
 /// federated remote bundle (design §4.3). Open read: the Module Federation runtime
@@ -490,6 +605,22 @@ fn verdict_view(verdict: &Verdict) -> VerdictView {
     VerdictView {
         kind,
         message: verdict.message.clone(),
+    }
+}
+
+/// Project a generated [`WeatherResult`] into its JSON view (relaying what the
+/// WASM guest fetched + parsed itself).
+fn weather_view(r: &WeatherResult) -> WeatherView {
+    WeatherView {
+        location: r.location.clone(),
+        latitude: r.latitude,
+        longitude: r.longitude,
+        temperature_c: r.temperature_c,
+        wind_kph: r.wind_kph,
+        weather_code: r.weather_code,
+        description: r.description.clone(),
+        observed_at: r.observed_at.clone(),
+        error: r.error.clone(),
     }
 }
 

@@ -51,6 +51,11 @@ pub struct EffectiveGit {
     pub branch_prefix: String,
     /// The worktree provisioning mode.
     pub worktree_mode: WorktreeMode,
+    /// Optional name overriding the id-derived worktree dir + branch for
+    /// `New`/`Shared` modes; `None` keeps the default (`run_id`/`task.id`).
+    /// Two workflows sharing a name build in one tree. Workspace-level only —
+    /// a standalone task has no workspace, so it is always `None`.
+    pub worktree_name: Option<String>,
     /// The agent tool to launch (always set: global has a default).
     pub tool: String,
     /// The model forwarded to the agent CLI; `None` = the CLI's own default.
@@ -111,6 +116,8 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
             branch_prefix: cfg.branch_prefix.clone(),
             // Standalone: the task's own mode is the contract.
             worktree_mode: task.worktree_mode,
+            // No workspace ⇒ no name override; keep the id-derived default.
+            worktree_name: None,
             // No workspace layer: task ?? global.
             tool: task.tool.clone().unwrap_or_else(|| cfg.agent_tool.clone()),
             model: task.model.clone().or_else(|| cfg.agent_model.clone()),
@@ -139,6 +146,11 @@ pub fn resolve(task: &Task, run: Option<&Run>, cfg: &EngineConfig) -> EffectiveG
                     .clone()
                     .unwrap_or_else(|| cfg.branch_prefix.clone()),
                 worktree_mode,
+                // Workspace-level worktree name; empty string treated as unset.
+                worktree_name: ws
+                    .worktree_name
+                    .clone()
+                    .filter(|s| !s.trim().is_empty()),
                 // task ?? workspace ?? global, per field.
                 tool: task
                     .tool
@@ -222,6 +234,7 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,
@@ -245,6 +258,7 @@ mod tests {
             base_branch: Some("dev".into()),
             branch_prefix: Some("wf/".into()),
             worktree_mode: WorktreeMode::Reuse,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,
@@ -270,6 +284,7 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            worktree_name: None,
             tool: Some("codex".into()),
             model: None,
             effort: Some("medium".into()),
@@ -326,6 +341,7 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,
@@ -346,6 +362,7 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,
@@ -364,6 +381,7 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,
@@ -411,6 +429,7 @@ mod tests {
             base_branch: None,
             branch_prefix: None,
             worktree_mode: WorktreeMode::New,
+            worktree_name: None,
             tool: None,
             model: None,
             effort: None,

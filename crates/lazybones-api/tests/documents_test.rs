@@ -190,30 +190,84 @@ async fn asset_upload_serve_dedup_delete() {
 async fn document_crud_references_render_export() {
     let app = app().await;
 
-    // A reusable reference page (T&C) and a main document.
+    // A reusable reference document (T&C) and a main document — both are now
+    // containers; their content lives in pages.
     let (s, _) = send(
         &app,
         loop_json(
             "POST",
             "/documents",
-            json!({"id":"tc","title":"Terms","kind":"reference","body":"## Terms\n\nBe nice."}),
+            json!({"id":"tc","title":"Terms","kind":"reference"}),
         ),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     let (s, body) = send(
         &app,
-        loop_json(
-            "POST",
-            "/documents",
-            json!({"id":"quote","title":"Quote","body":"# Quote\n\nPrice: $10."}),
-        ),
+        loop_json("POST", "/documents", json!({"id":"quote","title":"Quote"})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "create document: {body}");
     assert_eq!(body["kind"], "document");
 
-    // Open reads: get + list.
+    // Add the T&C content as a page on the reference document.
+    let (s, _) = send(
+        &app,
+        loop_json(
+            "POST",
+            "/documents/tc/pages",
+            json!({"title":"Terms","body":"## Terms\n\nBe nice."}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Author the quote's content across two pages; appended in order.
+    let (s, page1) = send(
+        &app,
+        loop_json(
+            "POST",
+            "/documents/quote/pages",
+            json!({"title":"Cover","body":"# Quote\n\nPrice: $10."}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "create page: {page1}");
+    let p1 = page1["id"].as_str().unwrap().to_owned();
+    let (s, _) = send(
+        &app,
+        loop_json(
+            "POST",
+            "/documents/quote/pages",
+            json!({"title":"Details","body":"## Details\n\nNet 30."}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // List pages: two, in position order.
+    let (s, pages) = send(&app, get("/documents/quote/pages")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(pages.as_array().unwrap().len(), 2);
+    assert_eq!(pages[0]["title"], "Cover");
+    assert_eq!(pages[1]["title"], "Details");
+
+    // Edit a page (body + move it after the other by writing a later position).
+    let (s, edited) = send(
+        &app,
+        loop_json(
+            "PUT",
+            &format!("/documents/quote/pages/{p1}"),
+            json!({"title":"Cover","body":"# Quote\n\nPrice: $10.","position":99.0}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "edit page: {edited}");
+    let (s, pages) = send(&app, get("/documents/quote/pages")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(pages[0]["title"], "Details", "reorder moved Cover to the end");
+
+    // Open reads: get + list documents.
     let (s, body) = send(&app, get("/documents")).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 2);
@@ -234,12 +288,13 @@ async fn document_crud_references_render_export() {
     assert_eq!(refs.as_array().unwrap().len(), 1);
     assert_eq!(refs[0]["thing_id"], "tc");
 
-    // Render: HTML preview contains the body AND the merged reference.
+    // Render: HTML preview contains both pages AND the merged reference.
     let (s, ct, bytes) = send_raw(&app, get("/documents/quote/render")).await;
     assert_eq!(s, StatusCode::OK);
     assert!(ct.starts_with("text/html"), "render is HTML: {ct}");
     let html = String::from_utf8(bytes).unwrap();
-    assert!(html.contains("Price: $10."), "body present: {html}");
+    assert!(html.contains("Price: $10."), "page 1 present: {html}");
+    assert!(html.contains("Net 30."), "page 2 present");
     assert!(html.contains("Be nice."), "merged reference present");
 
     // Export: a real PDF (application/pdf, %PDF header).
@@ -251,14 +306,30 @@ async fn document_crud_references_render_export() {
     // Update preserves the id; delete reports existence.
     let (s, body) = send(
         &app,
-        loop_json("PUT", "/documents/quote", json!({"title":"Quote v2","body":"# Quote v2"})),
+        loop_json("PUT", "/documents/quote", json!({"title":"Quote v2"})),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["title"], "Quote v2");
+
+    // Delete a single page; the other remains.
+    let (s, body) = send(
+        &app,
+        loop_json("DELETE", &format!("/documents/quote/pages/{p1}"), Value::Null),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["deleted"], true);
+    let (s, pages) = send(&app, get("/documents/quote/pages")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(pages.as_array().unwrap().len(), 1, "one page left after delete");
+
+    // Deleting the document cascades its remaining pages.
     let (s, body) = send(&app, loop_json("DELETE", "/documents/quote", Value::Null)).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["deleted"], true);
+    let (s, _) = send(&app, get("/documents/quote/pages")).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "pages 404 once the document is gone");
 
     // A reference detach + missing-document 404.
     let (s, _) = send(&app, get("/documents/ghost/references")).await;

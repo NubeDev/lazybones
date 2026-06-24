@@ -29,6 +29,7 @@ pub async fn update_workflow(
         base_branch: w.base_branch,
         branch_prefix: w.branch_prefix,
         worktree_mode: w.worktree_mode,
+        worktree_name: w.worktree_name,
         tool: w.tool,
         model: w.model,
         effort: w.effort,

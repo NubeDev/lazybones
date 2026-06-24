@@ -3,16 +3,21 @@ import {
   addLinkSource,
   addReference,
   createDocument,
+  createPage,
   deleteDocument,
+  deletePage,
   getDocument,
   listDocuments,
+  listPages,
   listReferences,
   listSources,
   removeReference,
   removeSource,
   updateDocument,
+  updatePage,
   uploadFileSource,
   type DocumentDraft,
+  type PageDraft,
 } from "@/lib/api/documents";
 
 /** Poll the document list. */
@@ -65,6 +70,51 @@ export function useDeleteDocument() {
   return useMutation({
     mutationFn: (id: string) => deleteDocument(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+  });
+}
+
+// ---- pages ------------------------------------------------------------------
+
+/** The ordered pages (content) of a document. */
+export function usePages(id?: string) {
+  return useQuery({
+    queryKey: ["doc-pages", id],
+    queryFn: ({ signal }) => listPages(id as string, signal),
+    enabled: id != null,
+  });
+}
+
+/** Invalidate a document's page list and its server-rendered preview together. */
+function invalidatePages(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.invalidateQueries({ queryKey: ["doc-pages", id] });
+  qc.invalidateQueries({ queryKey: ["doc-render", id] });
+}
+
+/** Append (or insert) a page. */
+export function useCreatePage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, draft }: { id: string; draft: PageDraft }) => createPage(id, draft),
+    onSuccess: (_d, { id }) => invalidatePages(qc, id),
+  });
+}
+
+/** Edit a page's content and/or move it (new `position`). */
+export function useUpdatePage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pid, draft }: { id: string; pid: string; draft: PageDraft }) =>
+      updatePage(id, pid, draft),
+    onSuccess: (_d, { id }) => invalidatePages(qc, id),
+  });
+}
+
+/** Delete a page. */
+export function useDeletePage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pid }: { id: string; pid: string }) => deletePage(id, pid),
+    onSuccess: (_d, { id }) => invalidatePages(qc, id),
   });
 }
 

@@ -202,6 +202,7 @@ fn workspace(repo: &Path) -> Workspace {
         base_branch: None,
         branch_prefix: None,
         worktree_mode: WorktreeMode::New,
+        worktree_name: None,
         tool: None,
         model: None,
         effort: None,

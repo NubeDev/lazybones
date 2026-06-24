@@ -237,7 +237,10 @@ pub async fn create_issue(
     let doc = require_document(&state, &id).await?;
     let mut repo = repo_of(&doc)?;
     let title = body.title.unwrap_or_else(|| doc.title.clone());
-    let issue_body = body.body.unwrap_or_else(|| doc.body.clone());
+    let issue_body = match body.body {
+        Some(b) => b,
+        None => assemble_markdown(&state, &doc).await?,
+    };
     let url = Gh::new()
         .issue_create(&repo.repo, &title, &issue_body)
         .await?;

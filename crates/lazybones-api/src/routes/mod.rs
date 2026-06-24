@@ -18,6 +18,7 @@ mod claim;
 mod create;
 mod delete;
 mod document_gh;
+mod document_pages;
 mod document_render;
 mod document_sources;
 mod documents;
@@ -173,6 +174,18 @@ pub fn router(state: AppState) -> Router {
             delete(documents::remove_reference),
         )
         // Render: assembled HTML preview + PDF export.
+        // Pages: the ordered content of a document/book. Reads open; mutations
+        // (incl. reorder via the `position` field) guarded by `Document`.
+        .route(
+            "/documents/:id/pages",
+            get(document_pages::list_pages).post(document_pages::create_page),
+        )
+        .route(
+            "/documents/:id/pages/:pid",
+            get(document_pages::get_page)
+                .put(document_pages::update_page)
+                .delete(document_pages::delete_page),
+        )
         .route("/documents/:id/render", get(document_render::render_document))
         .route("/documents/:id/export.pdf", get(document_render::export_pdf))
         // Sources: a document's uploads / context material (links + files), behind
