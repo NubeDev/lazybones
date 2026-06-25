@@ -95,6 +95,8 @@ pub fn router(state: AppState) -> Router {
     let mcp_service = lazybones_mcp::streamable_http_service(
         state.store.clone(),
         state.assets.clone(),
+        state.extensions().clone(),
+        state.ext_engine_cell().clone(),
         Arc::new(state.clone()),
     );
     Router::new()

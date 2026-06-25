@@ -7,13 +7,14 @@
 //! The [`ToolRouter`] is assembled by the `#[tool_router]` macro; it is **empty** in
 //! this scaffold and grows one `#[tool]` method per verb as the §6 surface lands.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool_handler};
 
 use lazybones_auth::{Capability, ScopedSession};
+use lazybones_ext::{EngineLimits, ExtEngine, Registry};
 use lazybones_store::{BlobStore, StoreHandle};
 
 use crate::auth::{self, SessionResolver};
@@ -82,6 +83,18 @@ pub struct McpServer {
     /// when the server is built without it (the unit-test path): rendering then
     /// simply omits images rather than failing.
     assets: Option<Arc<dyn BlobStore>>,
+    /// The in-memory extension dispatch index, shared with the REST surface
+    /// ([`AppState::extensions`]). The loop-only `extension.install`/`set_grants`/
+    /// `enable`/`disable` tools lock it to mirror their store write into the index,
+    /// exactly as the `/extensions` routes do. `None` on the unit-test path, where
+    /// the loop-only capability gate refuses before the runtime is ever reached.
+    extensions: Option<Arc<RwLock<Registry>>>,
+    /// The shared Wasmtime extension engine cell, shared with the REST surface
+    /// ([`AppState::ext_engine`]). `extension.invoke` resolves it (building the one
+    /// engine + epoch ticker lazily on first use, like the route) to run a guest.
+    /// The same `Arc<OnceLock<…>>` both surfaces hold means the process has exactly
+    /// one engine. `None` on the unit-test path.
+    ext_engine: Option<Arc<OnceLock<ExtEngine>>>,
     /// The typed tool surface, assembled by [`crate::tools::router`] from each
     /// group's `#[tool_router]` block — the full §6.1 orchestration + §6.4
     /// supervision verbs.
@@ -100,6 +113,8 @@ impl McpServer {
             resolver,
             run,
             assets: None,
+            extensions: None,
+            ext_engine: None,
             tool_router: crate::tools::router(),
         }
     }
@@ -110,6 +125,23 @@ impl McpServer {
     #[must_use]
     pub fn with_assets(mut self, assets: Arc<dyn BlobStore>) -> Self {
         self.assets = Some(assets);
+        self
+    }
+
+    /// Share the extension dispatch index **and** engine cell with the REST surface
+    /// (builder style), so the loop-only extension tools install/grant/enable/invoke
+    /// against the **same** registry + engine the routes and the scheduler's
+    /// dispatcher use (the mount wires `AppState::extensions` + `AppState::ext_engine`
+    /// here). Omitted on the unit-test path, where the `Capability::Extension` gate
+    /// refuses before the runtime is needed.
+    #[must_use]
+    pub fn with_ext_runtime(
+        mut self,
+        extensions: Arc<RwLock<Registry>>,
+        ext_engine: Arc<OnceLock<ExtEngine>>,
+    ) -> Self {
+        self.extensions = Some(extensions);
+        self.ext_engine = Some(ext_engine);
         self
     }
 
@@ -126,6 +158,38 @@ impl McpServer {
     #[must_use]
     pub fn assets(&self) -> Option<&Arc<dyn BlobStore>> {
         self.assets.as_ref()
+    }
+
+    /// The shared extension dispatch index, if the runtime was wired in. The
+    /// loop-only extension mutators reach it to mirror their store write into the
+    /// index; an unwired server (the unit-test path) is an internal error, but only
+    /// *after* the `Capability::Extension` gate has already refused.
+    ///
+    /// # Errors
+    /// [`McpError::Internal`] if the extension runtime was not wired in.
+    pub fn ext_registry(&self) -> Result<&Arc<RwLock<Registry>>, McpError> {
+        self.extensions
+            .as_ref()
+            .ok_or_else(|| McpError::Internal("extension runtime not wired".to_owned()))
+    }
+
+    /// The shared Wasmtime extension engine, built on first use (mirroring
+    /// `AppState::ext_engine`), if the runtime was wired in. `extension.invoke`
+    /// resolves it to run a guest. Cloning the returned [`ExtEngine`] is an `Arc`
+    /// bump — the engine + epoch ticker stay shared process-wide.
+    ///
+    /// # Errors
+    /// [`McpError::Internal`] if the extension runtime was not wired in.
+    pub fn ext_engine(&self) -> Result<ExtEngine, McpError> {
+        let cell = self
+            .ext_engine
+            .as_ref()
+            .ok_or_else(|| McpError::Internal("extension runtime not wired".to_owned()))?;
+        let engine = cell.get_or_init(|| {
+            ExtEngine::new(EngineLimits::default())
+                .expect("initialize the shared wasm extension engine")
+        });
+        Ok(engine.clone())
     }
 
     /// The run label a standalone `task.create` seeds under — the MCP twin of
@@ -155,6 +219,33 @@ impl McpServer {
         let session = self.session_for(authorization).ok_or(McpError::Unauthorized)?;
         auth::require(&session, cap)?;
         Ok(session)
+    }
+
+    /// Like [`authorize`](Self::authorize) but the call is allowed if the session
+    /// holds **any** of `caps` — used by `extension.scaffold`, an authoring act the
+    /// design grants to either the `Author` *or* the `Document` profile (a
+    /// file-writing act, §6.3). A missing/unknown token is still
+    /// [`Unauthorized`](McpError::Unauthorized); a token holding none of `caps` is
+    /// [`Forbidden`](McpError::Forbidden), naming the first as the expected grant.
+    ///
+    /// # Errors
+    ///
+    /// [`McpError::Unauthorized`] with no resolvable session, or
+    /// [`McpError::Forbidden`] when the session holds none of `caps`. `caps` must be
+    /// non-empty.
+    pub fn authorize_any(
+        &self,
+        authorization: Option<&str>,
+        caps: &[Capability],
+    ) -> Result<ScopedSession, McpError> {
+        let session = self.session_for(authorization).ok_or(McpError::Unauthorized)?;
+        if caps.iter().any(|&c| session.can(c)) {
+            Ok(session)
+        } else {
+            // Name the first (canonical) capability the caller is missing.
+            auth::require(&session, caps[0])?;
+            Ok(session)
+        }
     }
 
     /// Resolve the [`ScopedSession`] a tool call acts under from its `Authorization`

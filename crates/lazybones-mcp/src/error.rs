@@ -42,6 +42,13 @@ pub enum McpError {
     #[error(transparent)]
     Gh(#[from] lazybones_gh::GhError),
 
+    /// An extension registry/grant failure from a loop-only extension tool
+    /// (install/grant). Classified below: an id clash is a conflict, everything else
+    /// (a bad manifest, an out-of-policy grant) is a rejected request — mirroring the
+    /// `/extensions` routes' `ApiError::Extension` mapping.
+    #[error(transparent)]
+    Registry(#[from] lazybones_ext::RegistryError),
+
     /// The requested resource does not exist (REST `404`).
     #[error("not found")]
     NotFound,
@@ -112,6 +119,12 @@ impl From<McpError> for ErrorData {
                 | StoreError::BrandingExists(_)
                 | StoreError::ExtensionExists(_),
             ) => ErrorData::invalid_request(message, None),
+            // An extension id clash is a conflict; a bad manifest / out-of-policy
+            // grant is a rejected request (never a server fault).
+            McpError::Registry(lazybones_ext::RegistryError::AlreadyRegistered(_)) => {
+                ErrorData::invalid_request(message, None)
+            }
+            McpError::Registry(_) => ErrorData::invalid_params(message, None),
             // Anything else from the store/blob layer — and a `gh`/`git` publish
             // failure — is ours.
             McpError::Store(_) | McpError::Asset(_) | McpError::Gh(_) | McpError::Internal(_) => {

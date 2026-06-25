@@ -687,3 +687,94 @@ pub struct BrandingArgs {
     #[serde(default)]
     pub footer_text: String,
 }
+
+// ---- extensions (design §6.3) -------------------------------------------------
+
+/// Arguments for `extension.scaffold` — author a `cargo-component` guest skeleton,
+/// a `lazybones.ext.toml` manifest, and (optionally) a federated-remote skeleton
+/// into a repo/worktree. This is a *file-writing* authoring act (gated by
+/// `Author`/`Document`), **not** a privileged install: the bytes it writes are just
+/// source the operator later builds + installs (loop-only) — design §6.3.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ExtensionScaffoldArgs {
+    /// The repo/worktree directory to scaffold into; the extension lands in a
+    /// `<dir>/<id>/` subdirectory. Created if absent.
+    pub dir: String,
+    /// The extension id / cargo package name (kebab-case), e.g. `gate-check-strict`.
+    pub id: String,
+    /// Human-readable name for the manifest; defaults to `id`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// One-line description folded into the generated source header.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The WIT extension point(s) the guest implements; defaults to `["gate-check"]`
+    /// (the v1 example export the skeleton's `run` body fills in).
+    #[serde(default)]
+    pub extension_points: Vec<String>,
+    /// Capability wire strings the manifest *requests* (declared import surface;
+    /// installs are still default-deny — the admin grants `⊆ requested` separately).
+    #[serde(default)]
+    pub requested_caps: Vec<String>,
+    /// Also scaffold a federated frontend remote skeleton (`frontend/` — design §4).
+    #[serde(default)]
+    pub frontend: bool,
+}
+
+/// Arguments for `extension.list` — the typed twin of `GET /extensions`
+/// (`?enabled=&frontend=`). Both flags narrow the listing (design §4.3).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ExtensionListArgs {
+    /// Narrow to enabled extensions only.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Narrow to extensions that ship a frontend remote.
+    #[serde(default)]
+    pub frontend: bool,
+}
+
+/// Arguments for `extension.install` — the typed twin of `POST /extensions` (the
+/// **URL path only**: MCP carries JSON, never raw `.wasm` bytes — design §8). Gated
+/// by the loop-only `Capability::Extension`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ExtensionInstallArgs {
+    /// `http(s)` URL the `.wasm` component is fetched from (retained as the source
+    /// for provenance / re-fetch).
+    pub url: String,
+    /// The id to install under; omitted derives a stable `ext-<sha16>` from the
+    /// component bytes.
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
+/// Arguments for `extension.set_grants` — the typed twin of
+/// `POST /extensions/:id/grants`. Enforces `granted ⊆ requested` (and no deferred
+/// cap). Gated by the loop-only `Capability::Extension`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ExtensionGrantsArgs {
+    /// The extension id to grant against; `404` if unknown.
+    pub id: String,
+    /// The capability wire strings to grant (e.g. `["log", "store-read"]`).
+    #[serde(default)]
+    pub granted_caps: Vec<String>,
+}
+
+/// Arguments for `extension.invoke` — the typed twin of `POST /extensions/:id/invoke`
+/// (v1 supports the `gate-check` and `weather` exports). Gated by the loop-only
+/// `Capability::Extension`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ExtensionInvokeArgs {
+    /// The extension id to invoke; `404` if unknown.
+    pub id: String,
+    /// The WIT export to invoke (must be one the extension declares).
+    pub export: String,
+    /// The input for that export, shaped per export and decoded once the export is
+    /// known (gate-check / weather).
+    #[serde(default)]
+    pub input: serde_json::Value,
+}

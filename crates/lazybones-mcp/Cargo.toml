@@ -55,3 +55,5 @@ tracing = { workspace = true }
 [dev-dependencies]
 # Drive the async tool methods in the in-process integration test.
 tokio = { workspace = true }
+# Isolate `extension.scaffold`'s file-writing output in a tempdir per test.
+tempfile = "3"
