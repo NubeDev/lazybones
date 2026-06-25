@@ -9,11 +9,41 @@
 //! routes use. No token ⇒ only the unguarded read tools resolve (design §3).
 //!
 //! This module owns the pure, mount-independent pieces: parsing the bearer token
-//! out of an `Authorization` header value, and the [`require`] capability guard.
+//! out of an `Authorization` header value, resolving it to a session through the
+//! [`SessionResolver`] the mount supplies, and the [`require`] capability guard.
 
 use lazybones_auth::{AuthError, Capability, ScopedSession};
 
 use crate::error::McpError;
+
+/// Resolve a bearer token to the [`ScopedSession`] it authenticates.
+///
+/// The MCP server runs in-process inside `lazybonesd`; the token → session registry
+/// lives on `lazybones-api`'s `AppState` (`AppState::session_for`). To keep this
+/// crate free of a dependency cycle back onto the API, that registry is reached
+/// through this trait: `AppState` implements it by delegating to its inherent
+/// `session_for`, so an MCP connection authenticates against the **same** map a REST
+/// request does — the MCP surface is a second front door onto the existing grants,
+/// not a new auth plane (design §3).
+pub trait SessionResolver: Send + Sync {
+    /// Map a bearer token to its session, or `None` if the token is unregistered.
+    fn session_for(&self, token: &str) -> Option<ScopedSession>;
+}
+
+/// Resolve the [`ScopedSession`] an MCP request acts under from its `Authorization`
+/// header value, looking the bearer token up via `resolver`.
+///
+/// Returns `None` when the header is absent/malformed or the token is unregistered —
+/// the unauthenticated read-only path (no token ⇒ only the unguarded read tools
+/// resolve; every mutator then refuses via [`require`], design §3).
+#[must_use]
+pub fn resolve_session(
+    resolver: &dyn SessionResolver,
+    authorization: Option<&str>,
+) -> Option<ScopedSession> {
+    let token = bearer_token(authorization?)?;
+    resolver.session_for(token)
+}
 
 /// Extract the bearer token from an `Authorization` header value, if present and
 /// well-formed (`"Bearer <token>"`, case-insensitive scheme, non-empty token).
@@ -84,6 +114,35 @@ mod tests {
         assert_eq!(bearer_token("abc123"), None);
         assert_eq!(bearer_token("Bearer "), None);
         assert_eq!(bearer_token(""), None);
+    }
+
+    /// A tiny in-test registry so `resolve_session` can be exercised without the
+    /// API's `AppState`.
+    struct FakeRegistry(Option<(String, ScopedSession)>);
+    impl SessionResolver for FakeRegistry {
+        fn session_for(&self, token: &str) -> Option<ScopedSession> {
+            self.0
+                .as_ref()
+                .filter(|(t, _)| t == token)
+                .map(|(_, s)| s.clone())
+        }
+    }
+
+    #[test]
+    fn resolve_session_maps_bearer_then_falls_through_to_none() {
+        let session = ScopedSession::for_management(
+            "tester",
+            lazybones_auth::ManagementProfile::Author,
+        );
+        let reg = FakeRegistry(Some(("secret".to_owned(), session)));
+
+        // A registered bearer token resolves to its session.
+        assert!(resolve_session(&reg, Some("Bearer secret")).is_some());
+        // An unknown token, a non-bearer scheme, and a missing header all fall
+        // through to the unauthenticated read-only path.
+        assert!(resolve_session(&reg, Some("Bearer nope")).is_none());
+        assert!(resolve_session(&reg, Some("Basic secret")).is_none());
+        assert!(resolve_session(&reg, None).is_none());
     }
 
     #[test]

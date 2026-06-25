@@ -20,6 +20,11 @@ lazybones-ext = { workspace = true }
 # Pure markdown→Typst (PDF) + markdown→HTML rendering for the document export
 # route. Assembly (resolving references + fetching image bytes) stays in the API.
 lazybones-render = { workspace = true }
+# The MCP front door, mounted in-process as the `/mcp` sub-router. The API supplies
+# its token registry (`AppState` implements `SessionResolver`) and the shared store,
+# so an MCP session authenticates and reads/writes through the same boundary a REST
+# request does (docs/mcp/README.md §2.1/§3).
+lazybones-mcp = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -76,6 +76,8 @@ mod workflows_stop_reset;
 mod workflows_tasks;
 mod workflows_update;
 
+use std::sync::Arc;
+
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post, put};
@@ -85,7 +87,15 @@ use crate::state::AppState;
 
 /// Assemble the full route table over the shared [`AppState`].
 pub fn router(state: AppState) -> Router {
+    // The MCP front door (`lazybones-mcp`), mounted in-process as a sub-router at
+    // `/mcp` (design §4.1). It shares this server's store and authenticates against
+    // the same token registry via `AppState`'s `SessionResolver` impl — no
+    // HTTP-to-self, no new privilege. It sits inside the same `cors_layer()` + body
+    // limit applied to the REST routes below.
+    let mcp_service =
+        lazybones_mcp::streamable_http_service(state.store.clone(), Arc::new(state.clone()));
     Router::new()
+        .nest_service("/mcp", mcp_service)
         .route("/health", get(health::health))
         .route("/workfile/sync", post(sync::sync_workfile))
         .route("/tasks", get(list::list_tasks).post(create::create_task))

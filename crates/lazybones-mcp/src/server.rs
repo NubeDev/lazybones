@@ -7,11 +7,16 @@
 //! The [`ToolRouter`] is assembled by the `#[tool_router]` macro; it is **empty** in
 //! this scaffold and grows one `#[tool]` method per verb as the §6 surface lands.
 
+use std::sync::Arc;
+
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool_handler, tool_router};
 
+use lazybones_auth::ScopedSession;
 use lazybones_store::StoreHandle;
+
+use crate::auth::{self, SessionResolver};
 
 /// The instructions string advertised over `ServerHandler::get_info`. Distilled
 /// from [`docs/managing-with-ai.md`](../../../docs/managing-with-ai.md) — the same
@@ -56,6 +61,10 @@ pub struct McpServer {
     /// The durable store — every tool's path to lazybones' state. Shared, not forked
     /// (design §2.2: one store, in-process, no second source of truth).
     store: StoreHandle,
+    /// Maps a request's bearer token to its [`ScopedSession`] against the API's token
+    /// registry — the same map a REST request authenticates through (design §3). Held
+    /// behind `Arc<dyn …>` so this crate stays free of a cycle back onto `lazybones-api`.
+    resolver: Arc<dyn SessionResolver>,
     /// The typed tool surface. Empty in this scaffold; `#[tool]` methods register
     /// here as the §6 verbs land.
     tool_router: ToolRouter<McpServer>,
@@ -63,12 +72,14 @@ pub struct McpServer {
 
 #[tool_router]
 impl McpServer {
-    /// Build a server over the shared [`StoreHandle`]. Later tasks extend the
-    /// signature with the engine handles the orchestration/lifecycle tools need.
+    /// Build a server over the shared [`StoreHandle`] and the bearer-token
+    /// [`SessionResolver`] the mount supplies. Later tasks extend the signature with
+    /// the engine handles the orchestration/lifecycle tools need.
     #[must_use]
-    pub fn new(store: StoreHandle) -> Self {
+    pub fn new(store: StoreHandle, resolver: Arc<dyn SessionResolver>) -> Self {
         Self {
             store,
+            resolver,
             tool_router: Self::tool_router(),
         }
     }
@@ -78,6 +89,19 @@ impl McpServer {
     #[must_use]
     pub fn store(&self) -> &StoreHandle {
         &self.store
+    }
+
+    /// Resolve the [`ScopedSession`] a tool call acts under from its `Authorization`
+    /// header value (`None` ⇒ the unauthenticated read-only path).
+    ///
+    /// Tools read the header from the injected [`http::request::Parts`] (available via
+    /// `RequestContext`/`Extension<Parts>`, see the rmcp transport docs) and pass it
+    /// here; the token → session lookup runs against the API's registry through the
+    /// [`SessionResolver`]. A mutator then asserts its capability via
+    /// [`auth::require`](crate::auth::require) on the returned session.
+    #[must_use]
+    pub fn session_for(&self, authorization: Option<&str>) -> Option<ScopedSession> {
+        auth::resolve_session(self.resolver.as_ref(), authorization)
     }
 }
 

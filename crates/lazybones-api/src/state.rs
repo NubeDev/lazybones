@@ -160,3 +160,13 @@ impl AppState {
             .insert(token.into(), session);
     }
 }
+
+/// Let the in-process MCP server (`lazybones-mcp`) resolve a bearer token against
+/// this same token registry, so an MCP connection authenticates exactly like a REST
+/// request — the MCP surface is a second front door onto the existing grants, not a
+/// new auth plane (docs/mcp/README.md §3).
+impl lazybones_mcp::SessionResolver for AppState {
+    fn session_for(&self, token: &str) -> Option<ScopedSession> {
+        AppState::session_for(self, token)
+    }
+}

@@ -3346,6 +3346,7 @@ dependencies = [
  "lazybones-engine",
  "lazybones-ext",
  "lazybones-gh",
+ "lazybones-mcp",
  "lazybones-render",
  "lazybones-store",
  "serde",
