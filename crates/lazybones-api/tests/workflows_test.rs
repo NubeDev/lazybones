@@ -92,6 +92,10 @@ fn init_repo_with_remote(root: &Path, name: &str) -> std::path::PathBuf {
     git(&repo, &["config", "user.email", "t@t"]);
     git(&repo, &["config", "user.name", "t"]);
     std::fs::write(repo.join("README.md"), "x").unwrap();
+    // Gitignore the daemon state dir — the start-time preflight requires it (so a
+    // task's `git add` can't stage worktrees/db into the branch). Real repos must
+    // do the same; the fixture mirrors that.
+    std::fs::write(repo.join(".gitignore"), ".lazy/\n").unwrap();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init"]);
     git(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);

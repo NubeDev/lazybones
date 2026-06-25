@@ -44,6 +44,8 @@ function draftFrom(d: Document): DocumentDraft {
     title: d.title,
     kind: d.kind,
     branding_id: d.branding_id ?? null,
+    page_numbers: d.page_numbers,
+    index: d.index,
   };
 }
 
@@ -68,9 +70,19 @@ export function DocumentEditor({
 
   const [id, setId] = useState(documentId ?? "");
   const [draft, setDraft] = useState<DocumentDraft>({ ...EMPTY, kind: initialKind });
-  // Layout toggles shared by the live preview and the PDF export, so the
-  // exported document matches exactly what's previewed.
-  const [layout, setLayout] = useState<RenderLayout>({ pageNumbers: false, index: false });
+  // The layout toggles live *on the draft* (they persist with the document), and
+  // a `RenderLayout` view of them drives the live preview + PDF export so the
+  // output matches the checkboxes — including before the document is saved.
+  const layout: RenderLayout = {
+    pageNumbers: draft.page_numbers ?? false,
+    index: draft.index ?? false,
+  };
+  const setLayout = (patch: Partial<RenderLayout>) =>
+    setDraft((d) => ({
+      ...d,
+      ...(patch.pageNumbers !== undefined ? { page_numbers: patch.pageNumbers } : {}),
+      ...(patch.index !== undefined ? { index: patch.index } : {}),
+    }));
 
   useEffect(() => {
     if (doc) {
@@ -193,16 +205,16 @@ export function DocumentEditor({
                 <LayoutToggle
                   label="Page numbers"
                   checked={!!layout.pageNumbers}
-                  onChange={(v) => setLayout((l) => ({ ...l, pageNumbers: v }))}
+                  onChange={(v) => setLayout({ pageNumbers: v })}
                 />
                 <LayoutToggle
                   label="Index (table of contents)"
                   checked={!!layout.index}
-                  onChange={(v) => setLayout((l) => ({ ...l, index: v }))}
+                  onChange={(v) => setLayout({ index: v })}
                 />
               </div>
               <span className="block text-[10px] text-muted-foreground">
-                applies to the preview and the PDF export
+                saved with the document; applies to the preview and the PDF export
               </span>
             </div>
 

@@ -296,12 +296,28 @@ async fn document_crud_references_render_export() {
     assert!(html.contains("Price: $10."), "page 1 present: {html}");
     assert!(html.contains("Net 30."), "page 2 present");
     assert!(html.contains("Be nice."), "merged reference present");
+    // Each saved page is its own A4 sheet (two quote pages + one merged
+    // reference): the preview must paginate, not collapse onto one sheet.
+    assert_eq!(
+        html.matches("class=\"doc-page\"").count(),
+        3,
+        "one preview sheet per saved page (2 quote + 1 reference)"
+    );
 
     // Export: a real PDF (application/pdf, %PDF header).
     let (s, ct, bytes) = send_raw(&app, get("/documents/quote/export.pdf")).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(ct, "application/pdf");
     assert!(bytes.starts_with(b"%PDF"), "looks like a PDF");
+    // …and the PDF carries one page object per saved page (page-broken), not a
+    // single page with everything stacked.
+    let pdf = String::from_utf8_lossy(&bytes);
+    let page_objects =
+        pdf.matches("/Type /Page\n").count() + pdf.matches("/Type/Page").count();
+    assert!(
+        page_objects >= 3,
+        "PDF should have one page per saved page (got {page_objects})"
+    );
 
     // Update preserves the id; delete reports existence.
     let (s, body) = send(
@@ -334,6 +350,129 @@ async fn document_crud_references_render_export() {
     // A reference detach + missing-document 404.
     let (s, _) = send(&app, get("/documents/ghost/references")).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+/// The page-number / index layout toggles persist on the document (so they
+/// survive a reload) and drive the render without a query override.
+#[tokio::test]
+async fn layout_toggles_persist_and_drive_render() {
+    let app = app().await;
+
+    let (s, _) = send(
+        &app,
+        loop_json("POST", "/documents", json!({"id":"lay","title":"Lay","kind":"document"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = send(
+        &app,
+        loop_json("POST", "/documents/lay/pages", json!({"title":"One","body":"# One"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Defaults are off: a fresh document persists `false` and renders no index /
+    // page counter.
+    let (s, doc) = send(&app, get("/documents/lay")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(doc["page_numbers"], false);
+    assert_eq!(doc["index"], false);
+
+    // Save the toggles on the document (no render query).
+    let (s, doc) = send(
+        &app,
+        loop_json(
+            "PUT",
+            "/documents/lay",
+            json!({"title":"Lay","page_numbers":true,"index":true}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(doc["page_numbers"], true, "page_numbers persisted: {doc}");
+    assert_eq!(doc["index"], true, "index persisted");
+
+    // They survive a fresh fetch (reload).
+    let (s, doc) = send(&app, get("/documents/lay")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(doc["page_numbers"], true);
+    assert_eq!(doc["index"], true);
+
+    // …and the render reflects them with NO query override (the saved values
+    // drive it): the index page and the page counter both appear.
+    let (s, ct, bytes) = send_raw(&app, get("/documents/lay/render")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(ct.starts_with("text/html"));
+    let html = String::from_utf8(bytes).unwrap();
+    // Match the rendered markup, not the always-present CSS class definitions.
+    assert!(html.contains("class=\"doc-index\""), "saved index toggle renders the index");
+    assert!(html.contains("class=\"page-num\""), "saved page-number toggle renders the counter");
+
+    // A query override still wins (the editor's live, unsaved checkbox state):
+    // forcing index off hides it even though the saved value is on.
+    let (s, _ct, bytes) = send_raw(&app, get("/documents/lay/render?index=false")).await;
+    assert_eq!(s, StatusCode::OK);
+    let html = String::from_utf8(bytes).unwrap();
+    assert!(!html.contains("class=\"doc-index\""), "query override hides the index");
+}
+
+/// An empty page with the "page break" toggle on still renders as its own sheet
+/// (a deliberate blank spacer), while an empty page with it off is dropped.
+#[tokio::test]
+async fn empty_page_with_page_break_still_renders() {
+    let app = app().await;
+
+    let (s, _) = send(
+        &app,
+        loop_json("POST", "/documents", json!({"id":"book","title":"Book","kind":"document"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // A normal first page, a deliberately-blank spacer page (page_break on), and a
+    // third page. The spacer must survive into the render even though it's empty.
+    for body in [
+        json!({"title":"One","body":"# One"}),
+        json!({"title":"Spacer","body":"","page_break":true}),
+        json!({"title":"Three","body":"# Three"}),
+    ] {
+        let (s, _) = send(&app, loop_json("POST", "/documents/book/pages", body)).await;
+        assert_eq!(s, StatusCode::OK);
+    }
+
+    // The kept blank spacer is its own preview sheet → three sheets, not two.
+    let (s, ct, bytes) = send_raw(&app, get("/documents/book/render")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(ct.starts_with("text/html"));
+    let html = String::from_utf8(bytes).unwrap();
+    assert_eq!(
+        html.matches("class=\"doc-page\"").count(),
+        3,
+        "the empty page_break page renders as its own sheet"
+    );
+
+    // …and the PDF carries a page object for it too.
+    let (s, _ct, bytes) = send_raw(&app, get("/documents/book/export.pdf")).await;
+    assert_eq!(s, StatusCode::OK);
+    let pdf = String::from_utf8_lossy(&bytes);
+    let page_objects = pdf.matches("/Type /Page\n").count() + pdf.matches("/Type/Page").count();
+    assert!(page_objects >= 3, "kept blank page adds a PDF page (got {page_objects})");
+
+    // Now add an empty page with the toggle OFF: it is dropped from the render.
+    let (s, _) = send(
+        &app,
+        loop_json("POST", "/documents/book/pages", json!({"title":"Ghost","body":"","page_break":false})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _ct, bytes) = send_raw(&app, get("/documents/book/render")).await;
+    assert_eq!(s, StatusCode::OK);
+    let html = String::from_utf8(bytes).unwrap();
+    assert_eq!(
+        html.matches("class=\"doc-page\"").count(),
+        3,
+        "an empty page with page_break off does not render"
+    );
 }
 
 #[tokio::test]

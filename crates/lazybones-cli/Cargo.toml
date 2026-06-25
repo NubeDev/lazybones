@@ -18,6 +18,7 @@ lazybones-auth = { workspace = true }
 lazybones-api = { workspace = true }
 lazybones-engine = { workspace = true }
 lazybones-ext = { workspace = true }
+lazybones-jobs = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }

@@ -87,6 +87,41 @@ impl From<lazybones_engine::IssueError> for ApiError {
     }
 }
 
+/// Map an engine [`SyncError`](lazybones_engine::sync::SyncError) onto an HTTP
+/// status: "not configured" is an actionable `409` (set it up in Settings); a git
+/// transport failure is upstream (`502`); a store failure reuses the store map.
+impl From<lazybones_engine::sync::SyncError> for ApiError {
+    fn from(e: lazybones_engine::sync::SyncError) -> Self {
+        use lazybones_engine::sync::SyncError as E;
+        match e {
+            E::Unconfigured => ApiError::Conflict(e.to_string()),
+            E::Gh(g) => ApiError::Gh(g),
+            E::Store(s) => ApiError::Store(s),
+            // `SyncError` is `#[non_exhaustive]`; any future arm is a server-side
+            // failure until it earns a more specific mapping.
+            other => ApiError::Internal(other.to_string()),
+        }
+    }
+}
+
+/// Map a [`JobError`](lazybones_jobs::JobError) onto an HTTP status: an unknown
+/// job name is `404`; a duplicate registration or a failed/aborted run is a
+/// server-side `500` (the caller asked for a valid job; it failed on our side).
+impl From<lazybones_jobs::JobError> for ApiError {
+    fn from(e: lazybones_jobs::JobError) -> Self {
+        use lazybones_jobs::JobError as E;
+        match e {
+            E::Unknown(_) => ApiError::NotFound,
+            E::Duplicate(_) | E::Failed { .. } | E::Join { .. } => {
+                ApiError::Internal(e.to_string())
+            }
+            // `JobError` is `#[non_exhaustive]`; treat any future arm as a
+            // server-side failure until it earns a more specific mapping.
+            other => ApiError::Internal(other.to_string()),
+        }
+    }
+}
+
 /// Map an extension-registry [`RegistryError`](lazybones_ext::RegistryError) onto
 /// an HTTP status: a duplicate install id conflicts with existing state (`409`);
 /// everything else (bad manifest, sha mismatch, re-review required, grant

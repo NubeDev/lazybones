@@ -70,7 +70,9 @@ async fn titled_page_bodies(state: &AppState, document: &str) -> ApiResult<Vec<(
         .list_pages(document)
         .await?
         .into_iter()
-        .filter(|p| !p.body.trim().is_empty())
+        // Keep any page with content, plus an explicitly-kept empty page (its
+        // "page break" toggle) so a deliberate blank spacer page still renders.
+        .filter(lazybones_store::Page::renders)
         .map(|p| (p.title, p.body))
         .collect())
 }
@@ -180,31 +182,33 @@ fn to_brand(b: &Branding) -> Brand {
     }
 }
 
+/// Resolve the effective layout from an optional query override and the
+/// document's persisted toggles: a present query value wins (the editor's live,
+/// possibly-unsaved checkbox state), an absent one falls back to what's saved on
+/// the document. So a reloaded document renders with its stored toggles, while an
+/// in-flight edit still previews live.
+fn resolve_options(doc: &Document, page_numbers: Option<bool>, index: Option<bool>) -> RenderOptions {
+    RenderOptions {
+        page_numbers: page_numbers.unwrap_or(doc.page_numbers),
+        index: index.unwrap_or(doc.index),
+    }
+}
+
 /// Query for the render preview: an optional live `branding_id` override so the
 /// editor can preview the currently-picked brand before the document is saved,
-/// plus the live layout toggles (page numbers / index) so the preview tracks the
-/// checkboxes before anything is saved.
+/// plus optional live layout toggles (page numbers / index). A toggle that's
+/// absent falls back to the document's persisted value.
 #[derive(Debug, Deserialize)]
 pub struct RenderQuery {
     /// The brand to preview with (blank ⇒ default brand). Absent ⇒ the saved one.
     #[serde(default)]
     branding_id: Option<String>,
-    /// Print a page number on every page.
+    /// Print a page number on every page. Absent ⇒ the document's saved value.
     #[serde(default)]
-    page_numbers: bool,
-    /// Prepend a table-of-contents index page.
+    page_numbers: Option<bool>,
+    /// Prepend a table-of-contents index page. Absent ⇒ the saved value.
     #[serde(default)]
-    index: bool,
-}
-
-impl RenderQuery {
-    /// The layout options carried by this query.
-    fn options(&self) -> RenderOptions {
-        RenderOptions {
-            page_numbers: self.page_numbers,
-            index: self.index,
-        }
-    }
+    index: Option<bool>,
 }
 
 /// `GET /documents/:id/render` — the assembled HTML preview (body + merged
@@ -218,7 +222,8 @@ pub async fn render_document(
     Query(q): Query<RenderQuery>,
 ) -> ApiResult<Html<String>> {
     let doc = require_document(&state, &id).await?;
-    let assembled = assemble(&state, &doc, q.branding_id.as_deref(), q.options()).await?;
+    let options = resolve_options(&doc, q.page_numbers, q.index);
+    let assembled = assemble(&state, &doc, q.branding_id.as_deref(), options).await?;
     Ok(Html(lazybones_render::render_html(&assembled)))
 }
 
@@ -230,31 +235,23 @@ pub async fn export_pdf(
     Query(q): Query<ExportQuery>,
 ) -> ApiResult<Response> {
     let doc = require_document(&state, &id).await?;
-    // Export always uses the document's saved brand (no live override), but honors
-    // the layout toggles passed on the export link so the PDF matches the preview.
-    let assembled = assemble(&state, &doc, None, q.options()).await?;
+    // Export always uses the document's saved brand (no live override), and the
+    // layout toggles fall back to what's saved when not passed on the export link.
+    let options = resolve_options(&doc, q.page_numbers, q.index);
+    let assembled = assemble(&state, &doc, None, options).await?;
     let pdf = lazybones_render::render_pdf(&assembled)?;
     Ok(([(CONTENT_TYPE, "application/pdf")], pdf).into_response())
 }
 
-/// Query for the PDF export: the layout toggles (page numbers / index), so the
-/// exported document matches what the editor previewed.
+/// Query for the PDF export: optional layout toggles (page numbers / index). An
+/// absent toggle falls back to the document's persisted value.
 #[derive(Debug, Deserialize)]
 pub struct ExportQuery {
-    /// Print a page number on every page.
+    /// Print a page number on every page. Absent ⇒ the document's saved value.
     #[serde(default)]
-    page_numbers: bool,
-    /// Prepend a table-of-contents index page.
+    page_numbers: Option<bool>,
+    /// Prepend a table-of-contents index page. Absent ⇒ the saved value.
     #[serde(default)]
-    index: bool,
+    index: Option<bool>,
 }
 
-impl ExportQuery {
-    /// The layout options carried by this query.
-    fn options(&self) -> RenderOptions {
-        RenderOptions {
-            page_numbers: self.page_numbers,
-            index: self.index,
-        }
-    }
-}

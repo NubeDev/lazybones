@@ -145,6 +145,23 @@ cleanly onto the **already-pushed commit** — zero work lost. So holding off a 
 retry during the lag window is correct. **Proof a task reconciled:** its successor
 can't go `ready` unless it did — watch for the next task to auto-promote.
 
+> **Fixed (base_commit baseline):** there *was* a bug where this self-heal stranded
+> the work instead. A task records a `base_commit` baseline at claim — "HEAD before
+> this task ran" — and the gate flags `blocked: "task produced no commit of its own
+> (empty task)"` when HEAD never moves past it. The baseline used to be **re-stamped
+> to current HEAD on every (re)claim**, so a task whose first attempt committed green
+> work but died in the reconcile lag had its retry reuse a tree whose HEAD *was* that
+> commit → the retry adopted the task's own work as its baseline → "HEAD didn't
+> advance" → blocked as empty, with the finished commit sitting right there on the
+> branch. The fix ([scheduler/tick.rs](../../crates/lazybones-engine/src/scheduler/tick.rs)
+> `resolve_base_commit`, [scheduler/worktree.rs](../../crates/lazybones-engine/src/scheduler/worktree.rs)
+> `Provisioned.reused`): the baseline is now captured **once, before the first
+> attempt**, and **preserved across reclaims onto a reused tree** — so a retry never
+> flags already-committed work empty. If you see a historical `empty task` block on a
+> task whose worktree *does* hold a `task(...) … completed of N` commit, that is this
+> bug; on the fixed daemon, clean-retry it (`remove_worktrees:true` re-cuts from base
+> and re-stamps the correct baseline) or just confirm the successor promoted.
+
 Only escalate (human nudge / retry) when `running`/`commit=null` persists **several
 minutes** AND the next task never promotes AND `hcom` shows the agent `listening`
 (parked), not `active`.
@@ -159,6 +176,17 @@ distinct wall with a distinct fix.
 | 1 | Hangs/loops **at spawn**; daemon log `launch_blocked: screen settled` / `spawn failed (exit status: 2)` | Claude Code **bypass-permissions consent** screen (one-time, per host) | Operator, once: run `claude` interactively → "Yes, I accept", or set `bypassPermissionsModeAccepted: true` in `~/.claude.json`. No env var skips it. |
 | 2 | Hangs at spawn with a **"Do you trust this folder?"** prompt | Folder-trust gate on the worktree | Auto-handled by `auto_trust_agent_folder` (default on, seeds `hasTrustDialogAccepted`). If off, enable it. |
 | 3 | Parks **mid-run**, `commit=null`, screen shows a Write/create-file approval for a `.claude/` or `memory-note` path | Claude Code **auto-memory** trying to write into protected `.claude/` — no `permissions.allow` rule suppresses it | Daemon spawns agents with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` ([hcom/spawn.rs](../../crates/lazybones-engine/src/hcom/spawn.rs)). Update + restart the daemon. On an old daemon: **deny** the prompt (3/No), never "allow all". |
+| 7 | `launch_failed` exit code 1 across **every** repo; headless log shows `error: option '--permission-mode <mode>' argument 'auto' is invalid. Allowed choices are acceptEdits, bypassPermissions, default, delegate, dontAsk, plan.` | Installed `claude` is **too old** for the `--permission-mode auto` flag the daemon spawns (`permission_flags` default in [config.rs](../../crates/lazybones-engine/src/config.rs)). `auto` exists only on claude ≳2.1.185 | **Update claude** (`claude update`, must run with `CLAUDECODE` unset — it can't update from inside a Claude session) to ≥2.1.185, then restart the daemon. (Alternative: set `permission_flags.claude` to `--permission-mode dontAsk`, the older auto-approve peer — but `auto` on a current binary is the verified path.) |
+| 8 | `launch_blocked`; ANSI-stripped headless log shows `Welcome to Claude Code … Let's get started. Choose the text style …` | A claude **update reset onboarding** (`claude update` warns *config install method is 'unknown'*); the first-run **theme picker** parks the headless agent | Seed `~/.claude.json` once: `theme` (e.g. `"dark"`) + `hasCompletedOnboarding: true` (+ `hasCompletedProjectOnboarding: true`). No re-launch of `claude` interactively needed. |
+| 9 | `launch_blocked`; headless log shows a **`Settings Warning`** box (`permissions.allow: Invalid permission rule "*" was skipped … ❯ 1. Continue 2. Fix with Claude 3. Exit`) | A newer claude **strict-validates `~/.claude/settings.json`** and interactively prompts on an invalid rule — the bare `"*"` wildcard in `permissions.allow` / `additionalDirectories` is now rejected | Remove the bare `"*"` entries from `permissions.allow` and `additionalDirectories` in `~/.claude/settings.json` (redundant anyway under `--permission-mode auto`/`bypassPermissions`). Keep the literal rules. |
+
+> **Walls #7–#9 cascade after a `claude` version bump.** A `claude update` can surface them in
+> sequence — fix the `auto`-flag gate (#7) and the next spawn parks on the theme picker (#8); seed
+> onboarding and the next parks on the settings-wildcard warning (#9). After each fix, **smoke-test
+> the spawn in a worktree** before relaunching tasks:
+> `env -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT -u CLAUDE_CODE_ENTRYPOINT claude --permission-mode auto -p "reply OK"`
+> — a clean `OK`/exit 0 means that wall is cleared. ANSI codes hide the prompt text in headless logs;
+> strip them to read the real screen: `sed -r 's/\x1b\[[0-9;?]*[a-zA-Z]//g' <log>`.
 | 4 | Looks like a 40-min hang, but it's a **build failure**; worktree crate has a relative path-dep to a sibling checkout outside the repo | Inside `.lazy/wt/<id>/`, the relative path resolves to a non-existent `.lazy/wt/<sibling>` | Symlink the sibling at the wt **parent**: `ln -s /real/path <repo>/.lazy/wt/<sibling>` (`.lazy` is gitignored). Covers every task in the chain. |
 | 5 | Daemon (or **management agent**) itself parks at consent/trust; it runs in `.lazy/agent`, not a worktree | Same gates as #1–#3 but on the non-worktree scratch dir | `management/runner.rs` bootstraps `.lazy/agent` with a `.claude/settings.json` allow-list, filters out `--dangerously-skip-permissions`, and `hcom/spawn.rs` scrubs inherited `CLAUDECODE`/`CLAUDE_CODE_*`. Never re-add the skip flag to the management config. |
 | 6 | Task lands red instantly with `cargo … --workspace` failing *"could not find `Cargo.toml`"* / *"is not a workspace"* — before any test runs; every retry re-hits it | **Gate inapplicable to the repo**: the default `cargo test --workspace` gate is pointed at a repo whose crates are independent (no root `[workspace]` table — e.g. `rbx-server` + `app-server` side by side) | **Auto-fixed at gate time, against the worktree.** Just before running the gate, a preflight ([scheduler/gate_preflight.rs](../../crates/lazybones-engine/src/scheduler/gate_preflight.rs)) checks the *worktree* (not the base repo): if the agent has made it a real workspace (e.g. a foundation task that wrote a root `[workspace]` Cargo.toml), `--workspace` is left as-is; otherwise the gate is rewritten to per-crate `cargo … --manifest-path <crate>/Cargo.toml` against the crates that actually exist in the worktree. Checking the worktree (post-agent) is deliberate — it avoids fighting the task and avoids targeting phantom or not-checked-out submodule crates. If no crates exist it blocks with a `gate-config` follow-up (set the right gate via `PATCH /workflows/:id`). Needs the daemon rebuilt/restarted to take effect. |

@@ -1,0 +1,22 @@
+[package]
+name = "lazybones-jobs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# `Job` is an async trait object; `async-trait` keeps it `dyn`-compatible.
+async-trait = { workspace = true }
+# The async runner spawns background jobs as tasks.
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# `JobReport` is returned as JSON by the API.
+serde = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

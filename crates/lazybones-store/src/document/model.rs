@@ -95,6 +95,15 @@ pub struct Document {
     /// The optional GitHub publishing target + linkage.
     #[serde(default)]
     pub repo: Option<DocRepo>,
+    /// Layout: print a page number on every page. Persisted so the toggle sticks
+    /// across reloads; the render/export query can still override it for a live
+    /// preview. Defaults to `false`.
+    #[serde(default)]
+    pub page_numbers: bool,
+    /// Layout: prepend a table-of-contents index page. Persisted like
+    /// [`page_numbers`](Document::page_numbers). Defaults to `false`.
+    #[serde(default)]
+    pub index: bool,
     /// RFC3339 creation timestamp.
     pub created_at: String,
     /// RFC3339 last-update timestamp.
@@ -119,6 +128,8 @@ impl Document {
             kind,
             branding_id: None,
             repo: None,
+            page_numbers: false,
+            index: false,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -128,6 +139,14 @@ impl Document {
     #[must_use]
     pub fn with_repo(mut self, repo: DocRepo) -> Self {
         self.repo = Some(repo);
+        self
+    }
+
+    /// Set the persisted layout toggles (builder style).
+    #[must_use]
+    pub fn with_layout(mut self, page_numbers: bool, index: bool) -> Self {
+        self.page_numbers = page_numbers;
+        self.index = index;
         self
     }
 }

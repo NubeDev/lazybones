@@ -17,6 +17,13 @@ use serde::{Deserialize, Serialize};
 /// between any two neighbours via [`position_between`] without renumbering.
 const POSITION_STEP: f64 = 1.0;
 
+/// The default for [`Page::page_break`]: a page renders on its own unless the
+/// author explicitly drops it when empty. Used as the `serde` default so rows
+/// written before this field existed deserialize as "always render".
+fn default_page_break() -> bool {
+    true
+}
+
 /// One ordered section of a [`Document`](crate::Document), unique install-wide by
 /// `id`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,6 +44,13 @@ pub struct Page {
     /// Fractional sort key within the document; pages render in ascending order.
     #[serde(default)]
     pub position: f64,
+    /// Whether this page is always emitted as its own sheet/PDF page — **even when
+    /// its body is empty**. The author's "page break" toggle: a blank page with
+    /// this set still produces a real page (a deliberate spacer / section break),
+    /// whereas an empty page with it unset is dropped from the render. Defaults to
+    /// `true` so a normal page always renders.
+    #[serde(default = "default_page_break")]
+    pub page_break: bool,
     /// RFC3339 creation timestamp.
     pub created_at: String,
     /// RFC3339 last-update timestamp.
@@ -62,9 +76,25 @@ impl Page {
             title: title.into(),
             body: body.into(),
             position,
+            page_break: true,
             created_at: now.clone(),
             updated_at: now,
         }
+    }
+
+    /// Set whether this page renders even when empty (builder style).
+    #[must_use]
+    pub fn with_page_break(mut self, page_break: bool) -> Self {
+        self.page_break = page_break;
+        self
+    }
+
+    /// Whether this page contributes a sheet/PDF page to the render: any page with
+    /// content, plus an explicitly kept empty page (its [`page_break`](Page::page_break)
+    /// flag). An empty page with the flag off is dropped.
+    #[must_use]
+    pub fn renders(&self) -> bool {
+        self.page_break || !self.body.trim().is_empty()
     }
 }
 

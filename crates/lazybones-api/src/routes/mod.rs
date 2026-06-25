@@ -15,6 +15,7 @@ mod branding;
 mod cancel;
 mod chat;
 mod claim;
+mod content_sync;
 mod create;
 mod delete;
 mod document_gh;
@@ -36,6 +37,7 @@ mod hcom_log;
 mod health;
 mod heartbeat;
 mod issue;
+mod jobs;
 mod list;
 mod management_agent;
 mod mcp_token;
@@ -286,6 +288,15 @@ pub fn router(state: AppState) -> Router {
             "/settings/preferences",
             get(preferences::get_preferences).put(preferences::put_preferences),
         )
+        // Content sync: git-backed sync of authored docs/skills/tasks/templates/
+        // workflows between machines. Status drives the "out of sync — pull?"
+        // banner; pull/push run through the generic job runner.
+        .route("/content-sync/status", get(content_sync::get_status))
+        .route("/content-sync/pull", post(content_sync::post_pull))
+        .route("/content-sync/push", post(content_sync::post_push))
+        // The generic job-runner surface (content-sync jobs live here).
+        .route("/jobs", get(jobs::list_jobs))
+        .route("/jobs/:name", post(jobs::run_job))
         .route("/agent/chat", post(agent_chat::post_agent_chat))
         .route("/agent/chat/:conversation", get(agent_chat::get_agent_chat))
         .route(

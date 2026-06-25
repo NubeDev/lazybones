@@ -5,11 +5,13 @@
 //! axum can share it across handlers.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use lazybones_auth::{ManagementProfile, ScopedSession};
 use lazybones_ext::{EngineLimits, ExtEngine, Registry};
+use lazybones_jobs::JobRunner;
 use lazybones_store::{BlobStore, FileBlobStore, StoreHandle};
 
 /// The content-addressed byte store for asset payloads, behind the
@@ -49,6 +51,13 @@ pub struct AppState {
     /// limited — design §3.4), built lazily on first test-invoke so the common
     /// no-extensions path (and most tests) never pays the engine/ticker cost.
     ext_engine: Arc<OnceLock<ExtEngine>>,
+    /// The daemon's data directory — where the content-sync checkout is derived
+    /// when the operator hasn't pinned an explicit dir. Set by `serve.rs`.
+    data_dir: PathBuf,
+    /// The generic job runner: the registry of background jobs (content-sync
+    /// pull/push) the `/jobs` + content-sync routes drive. Empty by default;
+    /// `serve.rs` registers the real jobs.
+    runner: JobRunner,
 }
 
 impl AppState {
@@ -74,7 +83,36 @@ impl AppState {
             tokens: Arc::new(RwLock::new(tokens)),
             extensions: Arc::new(RwLock::new(Registry::new())),
             ext_engine: Arc::new(OnceLock::new()),
+            data_dir: std::env::temp_dir().join("lazybones-data"),
+            runner: JobRunner::default(),
         }
+    }
+
+    /// The daemon's data directory (content-sync checkout root).
+    #[must_use]
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// The generic job runner (the content-sync jobs live in its registry).
+    #[must_use]
+    pub fn runner(&self) -> &JobRunner {
+        &self.runner
+    }
+
+    /// Set the data directory (builder style). Called by `serve.rs`.
+    #[must_use]
+    pub fn with_data_dir(mut self, data_dir: impl Into<PathBuf>) -> Self {
+        self.data_dir = data_dir.into();
+        self
+    }
+
+    /// Share the job runner (builder style) so the API drives the same registry
+    /// the daemon built. Called by `serve.rs`.
+    #[must_use]
+    pub fn with_jobs(mut self, runner: JobRunner) -> Self {
+        self.runner = runner;
+        self
     }
 
     /// The shared extension registry (the dispatch index). Cheap to clone (an

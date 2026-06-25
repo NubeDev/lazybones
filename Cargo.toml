@@ -8,6 +8,7 @@ members = [
     "crates/lazybones-api",
     "crates/lazybones-engine",
     "crates/lazybones-gh",
+    "crates/lazybones-jobs",
     "crates/lazybones-cli",
     "crates/lazybones-render",
     "crates/lazybones-ext",
@@ -34,6 +35,7 @@ lazybones-auth = { version = "0.1.0", path = "crates/lazybones-auth" }
 lazybones-api = { version = "0.1.0", path = "crates/lazybones-api" }
 lazybones-engine = { version = "0.1.0", path = "crates/lazybones-engine" }
 lazybones-gh = { version = "0.1.0", path = "crates/lazybones-gh" }
+lazybones-jobs = { version = "0.1.0", path = "crates/lazybones-jobs" }
 lazybones-render = { version = "0.1.0", path = "crates/lazybones-render" }
 lazybones-ext = { version = "0.1.0", path = "crates/lazybones-ext" }
 lazybones-mcp = { version = "0.1.0", path = "crates/lazybones-mcp" }

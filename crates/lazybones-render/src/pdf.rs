@@ -44,13 +44,13 @@ pub fn render_pdf(assembled: &Assembled) -> Result<Vec<u8>, RenderError> {
             .map(|(_, path)| path.clone())
     };
     // Convert each page independently and join with a real Typst page break, so
-    // every document page lands on its own PDF page. Empty pages are dropped so a
-    // blank page never produces a stray break.
+    // every document page lands on its own PDF page. An empty page is kept (it
+    // converts to empty markup) so a deliberate blank spacer page still produces a
+    // real page — the caller decides which pages reach here.
     let body = assembled
         .pages
         .iter()
         .map(|page| markdown_to_typst(page, |src| resolve(src)))
-        .filter(|typ| !typ.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n#pagebreak()\n\n");
 
@@ -132,20 +132,16 @@ fn page_footer(brand_text: &str, color: &str, page_numbers: bool) -> String {
     format!("[#grid(columns: (1fr, auto), {left}, {number})]")
 }
 
-/// An index (table of contents) block listing each non-empty page's title in
-/// render order, followed by a page break so the body starts on a fresh page.
-/// Mirrors the body's empty-page filtering so the numbering lines up.
+/// An index (table of contents) block listing each page's title in render order,
+/// followed by a page break so the body starts on a fresh page. Every page the
+/// caller passes is a real page (a deliberately-blank spacer included), so all
+/// are numbered.
 fn index_block(a: &Assembled, primary: &str) -> String {
     let mut rows = String::new();
-    let mut n = 0usize;
-    for (i, page) in a.pages.iter().enumerate() {
-        if page.trim().is_empty() {
-            continue;
-        }
-        n += 1;
+    for (i, _page) in a.pages.iter().enumerate() {
         rows.push_str(&format!(
             "#text(size: 11pt)[{}.#h(0.4em){}]\n#v(0.2cm)\n",
-            n,
+            i + 1,
             typst_string(&a.page_label(i))
         ));
     }
@@ -309,17 +305,19 @@ mod tests {
     }
 
     #[test]
-    fn index_block_lists_non_empty_pages() {
+    fn index_block_lists_every_page_including_blanks() {
+        // A deliberately-blank spacer page is a real page, so it is numbered in
+        // the index alongside the others (the caller already dropped any page that
+        // shouldn't render).
         let assembled = Assembled::with_pages(
             "Book",
             vec!["One".to_owned(), "  ".to_owned(), "Three".to_owned()],
         )
-        .with_page_titles(vec!["A".to_owned(), "Blank".to_owned(), "C".to_owned()]);
+        .with_page_titles(vec!["A".to_owned(), "Spacer".to_owned(), "C".to_owned()]);
         let block = index_block(&assembled, "rgb(\"#222\")");
-        // The blank page is skipped, and numbering renumbers around it.
         assert!(block.contains("\"A\""));
+        assert!(block.contains("\"Spacer\""));
         assert!(block.contains("\"C\""));
-        assert!(!block.contains("\"Blank\""));
         assert!(block.contains("#pagebreak()"));
     }
 

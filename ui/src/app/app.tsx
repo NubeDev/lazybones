@@ -19,6 +19,7 @@ import { setExtRoute } from "@/lib/ext/context-store";
 import { isExtRoute } from "@/lib/ext/slot-host";
 import { ExtThemeBridge } from "@/lib/ext/theme";
 import { ToastViewport } from "@/lib/ext/toast";
+import { SyncBanner } from "@/components/layout/sync-banner";
 
 /** The root shell: providers + the sidebar/content split + the Lazybones Agent.
  *  Also wires the frontend extension plane — the theme bridge that feeds remotes
@@ -31,6 +32,7 @@ export function App() {
         <TooltipProvider delayDuration={300}>
           <AgentContextProvider>
             <Shell />
+            <SyncBanner />
             <ToastViewport />
           </AgentContextProvider>
         </TooltipProvider>

@@ -51,7 +51,8 @@ pub async fn create_page(
     };
 
     let pid = mint_page_id(&state, &id, &body.title);
-    let page = Page::new(&pid, &id, &body.title, &body.body, position, state.store.now());
+    let page = Page::new(&pid, &id, &body.title, &body.body, position, state.store.now())
+        .with_page_break(body.page_break);
     Ok(Json(state.store.create_page(&page).await?))
 }
 
@@ -76,7 +77,8 @@ pub async fn update_page(
     require_document(&state, &id).await?;
     let existing = require_page(&state, &id, &pid).await?;
 
-    let mut page = Page::new(&pid, &id, &body.title, &body.body, existing.position, state.store.now());
+    let mut page = Page::new(&pid, &id, &body.title, &body.body, existing.position, state.store.now())
+        .with_page_break(body.page_break);
     // Move only when a new position is supplied; otherwise hold its place.
     if let Some(position) = body.position {
         page.position = position;

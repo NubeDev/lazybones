@@ -5,8 +5,10 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use lazybones_api::{AppState, router};
+use lazybones_engine::sync::{PullJob, PushJob};
 use lazybones_engine::{BlobComponentLoader, EngineConfig, ExtHooks};
 use lazybones_ext::{Dispatcher, DispatcherConfig, EngineLimits, ExtEngine, Registry};
+use lazybones_jobs::{JobRegistry, JobRunner};
 use lazybones_store::{BlobStore, FileBlobStore, StoreEngine, StoreHandle, sync_seeds};
 
 use crate::configure::Config;
@@ -81,17 +83,51 @@ pub async fn serve(config: Config, engine: EngineConfig) -> anyhow::Result<()> {
     };
     let (ext_engine, ext_hooks) = ext_hooks;
 
+    // CONTENT SYNC. Build the generic job runner with the content-sync pull/push
+    // jobs (each owns the store + data dir it needs), and hand it to the API so the
+    // `/content-sync/*` and `/jobs/*` routes drive the same registry.
+    let runner = {
+        let registry = JobRegistry::new()
+            .register(Arc::new(PullJob::new(
+                store.clone(),
+                assets.clone(),
+                config.data_dir.clone(),
+            )))?
+            .register(Arc::new(PushJob::new(
+                store.clone(),
+                assets.clone(),
+                config.data_dir.clone(),
+            )))?;
+        JobRunner::new(registry)
+    };
+
     let mut state = AppState::new(
         store.clone(),
         config.run.clone(),
         base_url,
         config.loop_token.clone(),
     )
-    .with_assets(assets);
+    .with_assets(assets)
+    .with_data_dir(config.data_dir.clone())
+    .with_jobs(runner.clone());
     if let Some(ext_engine) = ext_engine {
         state = state.with_ext_runtime(registry, ext_engine);
     }
     let app = router(state);
+
+    // Auto-sync (both gated on the operator's master switch + per-behaviour flag,
+    // re-read live each run). Boot auto-pull catches up from the remote; the
+    // periodic auto-push loop pushes changes "before you leave". Both run the same
+    // jobs the API drives, just on a timer. Spawned so neither blocks serving.
+    tokio::spawn(lazybones_engine::sync::auto_pull_on_boot(
+        store.clone(),
+        runner.clone(),
+    ));
+    let auto_push = lazybones_engine::sync::spawn_auto_push(
+        store.clone(),
+        runner.clone(),
+        config.data_dir.clone(),
+    );
 
     // The loop is the daemon: if lazybonesd is up, the queue is being drained.
     // Wired with the extension hooks so gate-check runs at the gate point and the
@@ -106,6 +142,7 @@ pub async fn serve(config: Config, engine: EngineConfig) -> anyhow::Result<()> {
         .await?;
 
     sched.abort(); // stop the loop when the API stops
+    auto_push.abort(); // and the periodic auto-push loop
     Ok(())
 }
 

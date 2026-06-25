@@ -130,6 +130,27 @@ async fn reattach_orphans(
     }
 }
 
+/// Resolve the baseline commit to record at claim — HEAD before *this task's first
+/// attempt*, kept stable across reclaims.
+///
+/// On a freshly cut tree (or a first claim with no baseline yet) the current HEAD
+/// *is* the pre-work baseline, so use it. On a *reused* tree that already has a
+/// baseline, keep the original: the tree's HEAD may be this task's own prior-attempt
+/// commit (green work that died in the reconcile lag), and adopting that as the new
+/// baseline would make the finish-check see "HEAD never advanced" and wrongly block
+/// the finished work as an empty task.
+fn resolve_base_commit(
+    reused: bool,
+    existing: &Option<String>,
+    head_now: Option<String>,
+) -> Option<String> {
+    if reused && existing.is_some() {
+        existing.clone()
+    } else {
+        head_now
+    }
+}
+
 /// CLAIM: provision + claim + spawn up to the remaining concurrency budget.
 async fn claim_and_spawn(
     store: &StoreHandle,
@@ -278,11 +299,20 @@ async fn claim_and_spawn(
         };
 
         // 3. Claim: ready → running, recording the session + worktree + branch +
-        //    the worktree HEAD captured *now*, before the agent commits anything.
-        //    In a shared tree the branch already carries prior tasks' commits, so
-        //    this baseline is how the gate later tells real work (HEAD moved) from
-        //    a no-op task. Best-effort: a read failure leaves it `None`.
-        let base_commit = super::git::git(
+        //    the baseline HEAD this task started from. In a shared tree the branch
+        //    already carries prior tasks' commits, so this baseline is how the gate
+        //    later tells real work (HEAD moved past it) from a no-op task.
+        //
+        //    The baseline must be HEAD *before this task's first attempt* and stay
+        //    stable across reclaims/revives. If a prior attempt committed green work
+        //    but died in the reconcile lag, the retry reuses a tree whose HEAD is
+        //    that very commit — re-stamping HEAD here would adopt the task's own work
+        //    as its baseline, so the next attempt (which has nothing left to add)
+        //    gets flagged "empty task" and the finished work is stranded. So: on a
+        //    reused tree where a baseline already exists, keep it; otherwise (fresh
+        //    cut, or first claim) capture HEAD now. Best-effort: a read failure
+        //    leaves a first claim `None` (the finish-check falls back to base_branch).
+        let head_now = super::git::git(
             std::path::Path::new(&provisioned.worktree),
             &["rev-parse", "HEAD"],
         )
@@ -291,6 +321,7 @@ async fn claim_and_spawn(
         .filter(|o| o.ok)
         .map(|o| o.stdout)
         .filter(|s| !s.is_empty());
+        let base_commit = resolve_base_commit(provisioned.reused, &task.base_commit, head_now);
         let claimed = store
             .transition(
                 &task.id,
@@ -463,5 +494,40 @@ mod tests {
         // Standalone share a bucket (first-seen run order: standalone, then wf-1).
         // Round 0: s1, w1; round 1: s2.
         assert_eq!(order, vec!["s1", "w1", "s2"]);
+    }
+
+    // --- base_commit baseline resolution (the reconcile-lag "empty task" fix) ---
+
+    #[test]
+    fn base_commit_fresh_tree_uses_current_head() {
+        // A freshly cut tree: HEAD is the base tip, the true pre-work baseline.
+        let got = resolve_base_commit(false, &Some("old".into()), Some("base".into()));
+        assert_eq!(got.as_deref(), Some("base"), "fresh cut ⇒ stamp current HEAD");
+    }
+
+    #[test]
+    fn base_commit_first_claim_uses_current_head() {
+        // First claim of a reused (Shared/Reuse) tree has no baseline yet → HEAD.
+        let got = resolve_base_commit(true, &None, Some("head".into()));
+        assert_eq!(
+            got.as_deref(),
+            Some("head"),
+            "no prior baseline ⇒ capture HEAD even on a reused tree"
+        );
+    }
+
+    #[test]
+    fn base_commit_reclaim_keeps_original_baseline() {
+        // The regression: a prior attempt committed green work that died in the
+        // reconcile lag, so the reused tree's HEAD is now that very commit. Keep the
+        // ORIGINAL baseline — re-stamping HEAD would make the finish-check see "HEAD
+        // never advanced" and wrongly block the finished work as an empty task.
+        let original = Some("baseline-before-first-attempt".to_string());
+        let head_is_tasks_own_commit = Some("tasks-own-unreconciled-commit".to_string());
+        let got = resolve_base_commit(true, &original, head_is_tasks_own_commit);
+        assert_eq!(
+            got, original,
+            "reused tree with a baseline ⇒ keep it, never adopt the task's own commit"
+        );
     }
 }

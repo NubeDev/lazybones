@@ -7,6 +7,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use lazybones_store::{BrandColors, BrandFonts, DocKind, MergeMode, Run, Task, WorktreeMode};
 
+/// `serde` default for boolean fields that should default to `true` when the
+/// client omits them (e.g. a page's "render even when empty" flag).
+pub(crate) fn default_true() -> bool {
+    true
+}
+
 /// `?project=` filter shared by the document-writer list endpoints. A no-op seam
 /// today (everything is unscoped); the field is here so projects land with no
 /// route change.
@@ -47,6 +53,13 @@ pub struct UpdateDocumentBody {
     /// New branding id (or `None` to clear).
     #[serde(default)]
     pub branding_id: Option<String>,
+    /// Persisted layout: print a page number on every page. Defaults to `false`.
+    #[serde(default)]
+    pub page_numbers: bool,
+    /// Persisted layout: prepend a table-of-contents index page. Defaults to
+    /// `false`.
+    #[serde(default)]
+    pub index: bool,
 }
 
 /// `POST /documents/:id/pages` body: append (or insert) a page into a document.
@@ -62,6 +75,10 @@ pub struct CreatePageBody {
     /// it to the midpoint of two neighbours (e.g. via the client) to insert.
     #[serde(default)]
     pub position: Option<f64>,
+    /// Render this page even when its body is empty (the "page break" toggle).
+    /// Defaults to `true` so a normal page always renders.
+    #[serde(default = "crate::dto::default_true")]
+    pub page_break: bool,
 }
 
 /// `PUT /documents/:id/pages/:pid` body: overwrite a page's authored fields and/or
@@ -77,6 +94,9 @@ pub struct UpdatePageBody {
     /// New fractional sort position; omit to leave the page where it is.
     #[serde(default)]
     pub position: Option<f64>,
+    /// Render this page even when its body is empty (the "page break" toggle).
+    #[serde(default = "crate::dto::default_true")]
+    pub page_break: bool,
 }
 
 /// `PUT /documents/:id/repo` body: set the GitHub publishing target. The
@@ -729,6 +749,11 @@ pub struct PreferencesBody {
     /// `"light" | "dark" | "system"`, or `None` for system.
     #[serde(default)]
     pub theme: Option<String>,
+    /// Content-sync configuration (git sync repo), or `None`/omitted to leave it
+    /// unset. Carried through verbatim as the domain
+    /// [`SyncConfig`](lazybones_store::SyncConfig).
+    #[serde(default)]
+    pub sync: Option<lazybones_store::SyncConfig>,
 }
 
 /// `POST /agent/chat` body: one operator turn for the Lazybones Agent.

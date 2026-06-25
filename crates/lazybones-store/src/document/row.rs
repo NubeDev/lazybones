@@ -61,6 +61,8 @@ pub(crate) struct DocumentRow {
     pub(crate) kind: Option<String>,
     pub(crate) branding_id: Option<String>,
     pub(crate) repo: Option<DocRepoRow>,
+    pub(crate) page_numbers: Option<bool>,
+    pub(crate) index: Option<bool>,
     pub(crate) created_at: Option<String>,
     pub(crate) updated_at: Option<String>,
 }
@@ -75,6 +77,8 @@ impl DocumentRow {
             kind: Some(d.kind.as_str().to_owned()),
             branding_id: d.branding_id.clone(),
             repo: d.repo.as_ref().map(DocRepoRow::from_repo),
+            page_numbers: Some(d.page_numbers),
+            index: Some(d.index),
             created_at: Some(d.created_at.clone()),
             updated_at: Some(d.updated_at.clone()),
         }
@@ -89,6 +93,8 @@ impl DocumentRow {
             kind: DocKind::parse(self.kind.as_deref()),
             branding_id: self.branding_id,
             repo: self.repo.map(DocRepoRow::into_repo),
+            page_numbers: self.page_numbers.unwrap_or(false),
+            index: self.index.unwrap_or(false),
             created_at: self.created_at.unwrap_or_default(),
             updated_at: self.updated_at.unwrap_or_default(),
         }
