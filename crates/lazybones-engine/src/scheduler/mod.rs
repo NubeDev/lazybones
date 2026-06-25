@@ -12,12 +12,14 @@ mod git;
 mod hcom_tail;
 pub mod issue;
 mod merge;
+mod preflight;
 mod prompt;
 mod reclaim;
 mod run;
 mod tick;
 mod worktree;
 
+pub use preflight::workspace_preflight;
 pub use run::{run, run_with_ext};
 
 pub(crate) use tick::tick;

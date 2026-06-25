@@ -15,7 +15,7 @@ pub use config::{EngineConfig, MergeMode};
 pub use management::{TurnContext, chat_turn, page_context_workflow_id, render_page_context};
 pub use scheduler::ext::{BlobComponentLoader, ExtHooks};
 pub use scheduler::issue::IssueError;
-pub use scheduler::{run, run_with_ext};
+pub use scheduler::{run, run_with_ext, workspace_preflight};
 
 use hcom::Hcom;
 use lazybones_gh::Gh;

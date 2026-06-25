@@ -147,12 +147,14 @@ fn apply_side_data(task: &mut Task, transition: &Transition, now: &str) {
             task.session = Some(session.clone());
             task.worktree = Some(worktree.clone());
             task.branch = Some(branch.clone());
-            // Record where the branch sat before this task ran, so the gate can
-            // tell a genuine no-op (HEAD unchanged) from a task that legitimately
-            // committed on top of shared work. Always overwrite: a reclaim/revive
-            // re-runs from the current HEAD (any partial work already committed by
-            // the prior, now-dead, agent attempt is the new baseline for "did this
-            // *attempt* produce work?").
+            // Record where the branch sat before this task *first* ran, so the gate
+            // can tell a genuine no-op (HEAD never moved past it) from a task that
+            // legitimately committed on top of shared work. The caller
+            // (`scheduler::tick`) decides the value: it keeps the original baseline
+            // across a reclaim/revive onto a reused tree — so a prior attempt's own
+            // commit (e.g. green work that died in the reconcile lag) is NOT adopted
+            // as the new baseline and the finished work isn't wrongly flagged
+            // "empty". We just store whatever it resolved.
             task.base_commit = base_commit.clone();
             // Stamp the first start only; reclaims/revives re-claim the same task
             // and must not reset when work actually began.

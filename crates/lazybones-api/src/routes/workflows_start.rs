@@ -13,7 +13,7 @@ use axum::extract::{Path, State};
 use lazybones_auth::Capability;
 use lazybones_store::{Status, StoreError, Transition};
 
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use crate::extract::Session;
 use crate::state::AppState;
 
@@ -26,11 +26,27 @@ pub async fn start_workflow(
 ) -> ApiResult<Json<serde_json::Value>> {
     session.require(Capability::Claim, "claim", &id)?;
 
-    state
+    let run = state
         .store
         .get_run(&id)
         .await?
         .ok_or(StoreError::RunNotFound(id.clone()))?;
+
+    // Preflight lock: refuse to start a workflow whose workspace would silently
+    // corrupt the run — repo isn't a git tree, the daemon's `.lazy/` state dir
+    // isn't gitignored (worktree-bleed), or `base_branch` has uncommitted work the
+    // landing merge could clobber. Tell the operator exactly what to fix instead of
+    // letting tasks discover it mid-run. `.lazy/wt` is the conventional worktree
+    // root (see `lazybones.yaml`); only its top component (`.lazy`) is checked.
+    let repo = std::path::Path::new(&run.workspace.repo);
+    let base_branch = run.workspace.base_branch.as_deref().unwrap_or("the base branch");
+    let problems = lazybones_engine::workspace_preflight(repo, base_branch, ".lazy/wt").await;
+    if !problems.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "workflow {id} cannot start — fix these first:\n  - {}",
+            problems.join("\n  - ")
+        )));
+    }
 
     let now = state.store.now();
     state.store.mark_run_started(&id, &now).await?;

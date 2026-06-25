@@ -62,6 +62,13 @@ pub struct Provisioned {
     pub worktree: String,
     /// The branch the agent commits to.
     pub branch: String,
+    /// `true` when this tree pre-existed and may already carry *this task's* own
+    /// committed-but-not-yet-reconciled work (a reclaim/revive onto a kept tree, or
+    /// a `Reuse`/`Shared` tree). `false` when freshly cut from base (`New` add,
+    /// `Branch` reset). The claim uses this to decide whether to keep the task's
+    /// original `base_commit` baseline (so a retry doesn't adopt the task's own
+    /// prior commit as its baseline and wrongly flag the finished work "empty").
+    pub reused: bool,
 }
 
 /// Provision `task`'s working tree according to its *effective* git settings.
@@ -124,6 +131,7 @@ pub async fn provision(
             // Idempotent across reclaims: if the worktree already exists, reuse it.
             // For `Shared` this is the common case — the tree the prior task built
             // in is right here, and the new task continues on top of its commits.
+            let reused = path.is_dir();
             if !path.is_dir() {
                 // The branch may already exist (a prior run, a restart that
                 // removed the tree but not the branch, or — for Shared — the
@@ -172,6 +180,7 @@ pub async fn provision(
             Ok(Provisioned {
                 worktree: path_str,
                 branch,
+                reused,
             })
         }
         WorktreeMode::Reuse => {
@@ -205,9 +214,12 @@ pub async fn provision(
                 );
             }
             bootstrap_permissions(repo, &reused, &eff.tool, eff.auto_trust_agent_folder);
+            // A `Reuse` tree continues from an existing checkout, so it may already
+            // hold this task's prior-attempt commits — keep the original baseline.
             Ok(Provisioned {
                 worktree: path,
                 branch,
+                reused: true,
             })
         }
         WorktreeMode::Branch => {
@@ -227,9 +239,12 @@ pub async fn provision(
             // the "repo already has settings" guard makes this a no-op when the repo
             // commits its own posture, and a one-time create otherwise.
             bootstrap_permissions(repo, repo, &eff.tool, eff.auto_trust_agent_folder);
+            // Branch mode hard-resets the checkout to `base_branch` every claim, so
+            // HEAD is the base tip — never this task's own prior work. Not reused.
             Ok(Provisioned {
                 worktree: repo.to_string_lossy().into_owned(),
                 branch,
+                reused: false,
             })
         }
     }
