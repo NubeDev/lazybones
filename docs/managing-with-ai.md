@@ -459,6 +459,127 @@ curl $BASE/health    # 200 = process + store up; 503 = store unreachable
 
 ---
 
+## 6. Driving lazybones over MCP (typed tools instead of curl)
+
+Everything above is the REST playbook. The same surface is also exposed over the
+**Model Context Protocol** so an external agent — Claude Desktop, the `claude`
+CLI, Cursor, any rmcp client — can drive lazybones through **typed tools** instead
+of hand-rolled `curl`. The MCP server runs **in-process inside `lazybonesd`** and
+is mounted at the single endpoint `POST /mcp` (design: `docs/mcp/README.md`). It is
+a second front door onto the *existing* capabilities — same `ScopedSession`, same
+`Capability` gates, **zero new privilege**.
+
+### The one rule: authoring is not running
+
+MCP inherits the house rule verbatim (§"House rules when authoring a workflow"). An
+MCP session may freely **create** tasks, workflows, templates, skills, documents,
+and extension source. **Starting, stopping, retrying, deleting, installing** are
+gated by capability — exactly the `started_at` / loop-only guards the REST routes
+already enforce. The gate is the **token's capability**, full stop: an MCP client
+has no confirm-card UI, so a default management token simply *cannot* call the
+lifecycle tools (they resolve `403`). The agent authors; the operator presses
+Start. To let an agent start things, mint an elevated token deliberately (below) —
+it is never the default.
+
+### 6a. Mint a token for the client
+
+An MCP connection authenticates exactly like a REST request: a bearer token in the
+HTTP `Authorization` header. Mint one with `POST /mcp/token` (requires `Author` to
+issue — only an operator hands out tokens). `profile` maps 1:1 onto the management
+capability profiles; `label` is an optional human tag folded into the token's actor
+for auditability:
+
+```sh
+# default: an authoring token (Read + Author + Document) — CANNOT start/stop/delete
+curl -X POST $BASE/mcp/token -H "$AUTH" -H "$JSON" -d '{
+  "profile": "author",
+  "label": "claude-desktop"
+}'
+# → { "token": "lazybones-agent-mcp-claude-desktop-1",
+#     "profile": "author",
+#     "mcp_url": "http://127.0.0.1:46787/mcp" }
+```
+
+`profile` is one of:
+
+| `profile` | Grant | What the token's MCP tools can do |
+|---|---|---|
+| `read_only` | `Read` | supervision/read tools only |
+| `author` (default) | `Read, Author, Document` | author tasks/workflows/templates/skills + documents; **not** start/stop/delete/install |
+| `author_and_manage` | `+ Block` | + *propose* lifecycle (stop/resume/retry); still no `Claim`/`Secret`/`Extension` |
+
+The loop token (`lazybones-loop`) carries the full grant and can call everything,
+including `workflow.start` and the loop-only extension install/grant tools. Minted
+tokens are a strict subset of the loop's grant and **never** carry
+`Claim`/`Secret`/`Extension`. Unknown `profile` values parse leniently to the safe
+`read_only`.
+
+### 6b. Register the endpoint with `claude mcp add`
+
+Point the client at the in-process `/mcp` endpoint over the streamable-HTTP
+transport, passing the minted token as a header:
+
+```sh
+claude mcp add lazybones \
+  --transport http http://127.0.0.1:46787/mcp \
+  --header "Authorization: Bearer lazybones-agent-mcp-claude-desktop-1"
+```
+
+For a client that takes raw JSON config (e.g. Claude Desktop's MCP config) the
+equivalent is:
+
+```jsonc
+{ "lazybones": {
+    "url": "http://127.0.0.1:46787/mcp",
+    "headers": { "Authorization": "Bearer lazybones-agent-mcp-claude-desktop-1" } } }
+```
+
+No token ⇒ only the unguarded **read** tools resolve (mirroring "GET reads are
+open" above). The server advertises its name/version and a house-rules
+**instructions** string on connect, so the client gets the authoring≠running rule
+without a separate cheat-sheet. After `claude mcp add`, list the tools and create a
+workflow to confirm — it shows up over `GET /workflows` just like a curl-authored
+one; a default-token `workflow.start` is refused.
+
+### 6c. The tool groups
+
+Tools are named `<group>.<verb>` so a client lists them grouped. Reads need no
+capability; every mutator re-checks the same capability the REST route uses. The
+set is a curated subset of REST — the high-value authoring/supervision verbs.
+
+- **Orchestration** (`Author`; lifecycle gated) — `workflow.create`,
+  `workflow.add_task`, `workflow.list`/`get`, `task.create`/`update`/`list`/`get`,
+  `template.create`/`update`/`list`/`get`/`delete`, `skill.create`/`update`/`list`/`get`,
+  `follow_up.file`. Lifecycle tools exist but are capability-gated:
+  `workflow.start` needs `Claim` (loop/elevated only — the create≠run line);
+  `workflow.stop`/`resume`/`restart` and `task.retry`/`auto_retry`/`cancel` need
+  `Block` (managed only). On a default `author` token these resolve `403`.
+- **Documents** (`Capability::Document`) — `document.create`/`update`/`get`/`list`,
+  page/reference/source sub-tools (`document.add_page`/`update_page`/`list_pages`,
+  `attach_reference`/`list_references`, `add_source`/`list_sources`),
+  `document.render`, `document.set_repo`/`publish`, `branding.create`/`update`/`list`,
+  and `asset.list`/`get_meta` (metadata only — asset *bytes* stay on REST raw-body
+  uploads; MCP carries JSON + ids/urls).
+- **Extensions** (author vs install split) — `extension.scaffold` (author a guest
+  skeleton + manifest; `Author`/`Document`, a file-writing act) and
+  `extension.list`/`get` (read) are open to agents. `extension.install`,
+  `set_grants`, `enable`/`disable`, `invoke` require `Capability::Extension` —
+  **loop-only**. An agent can author an extension's source but **cannot
+  self-install + self-grant**; a human/loop installs it. (Design §6.3.)
+- **Supervision / read** (no capability) — `state.health`, `state.engine`,
+  `state.agents`, `run.history`, `run.follow_ups`, `run.hcom_log`,
+  `task.hcom_log`, `task.transcript`. Request/response snapshots; SSE `GET /stream`
+  stays the realtime channel.
+- **Never exposed:** secrets. `Capability::Secret` is loop-only and has no MCP tool
+  (read or write) — credentials never traverse the agent surface.
+
+> Net: the MCP server adds **zero** new privilege. A confused or hostile MCP client
+> is bounded by its token exactly like a confused REST client — the hard guarantees
+> (`started_at`, loop-only `Extension`/`Secret`) are enforced *below* the tool
+> layer.
+
+---
+
 ## Quick reference: end-to-end recipe
 
 ```sh
