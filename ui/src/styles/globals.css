@@ -181,3 +181,86 @@
     animation: fade-up 0.3s ease both;
   }
 }
+
+/* WYSIWYG page editor (Tiptap) — a true A4 sheet that mirrors the PDF's
+   printable geometry (210×297mm, 2.2cm side / 2.6cm top / 2.4cm bottom margins),
+   so authoring sits in the same box Typst lays the PDF out in. The sheet caps at
+   a comfortable on-screen width but holds A4 proportions; overflow past the
+   first page is shown as an approximate boundary (Typst remains authoritative). */
+@layer components {
+  .page-sheet {
+    position: relative;
+    background: #ffffff;
+    color: #1a1a1a;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+    /* Visual width caps at the pane; the editable box inside keeps real margins.
+       Width follows A4 ratio of the printable area. */
+    width: min(210mm, 100%);
+    /* The content area is exactly the printable page: A4 minus margins. */
+    padding: 26mm 22mm 24mm;
+  }
+  .page-sheet[data-overflow="true"] {
+    box-shadow: 0 0 0 1px var(--status-blocked), 0 2px 10px rgba(0, 0, 0, 0.22);
+  }
+  /* The editable region is the printable content box: fixed min-height = one
+     page's content height (297 − 26 − 24 = 247mm) so a blank page looks like a
+     full page and the author sees the room they have. */
+  .page-editor-prose {
+    min-height: 247mm;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 11pt;
+    line-height: 1.6;
+  }
+  .page-editor-prose:focus { outline: none; }
+  .page-editor-prose h1,
+  .page-editor-prose h2,
+  .page-editor-prose h3,
+  .page-editor-prose h4 {
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 0.6em 0 0.3em;
+  }
+  .page-editor-prose h1 { font-size: 1.8em; }
+  .page-editor-prose h2 { font-size: 1.4em; }
+  .page-editor-prose h3 { font-size: 1.15em; }
+  .page-editor-prose p { margin: 0 0 0.7em; }
+  .page-editor-prose ul,
+  .page-editor-prose ol { margin: 0 0 0.7em; padding-left: 1.4em; }
+  .page-editor-prose a { color: #2563eb; text-decoration: underline; }
+  .page-editor-prose code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0.1em 0.3em;
+    border-radius: 4px;
+  }
+  .page-editor-prose pre {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    overflow: auto;
+  }
+  .page-editor-prose blockquote {
+    border-left: 3px solid #222;
+    margin-left: 0;
+    padding-left: 1rem;
+    opacity: 0.85;
+  }
+  .page-editor-prose:empty::before,
+  .page-editor-prose p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+    float: left;
+    height: 0;
+  }
+  /* The first-page boundary: a dashed rule at the bottom margin line marking
+     where content begins spilling onto page two. */
+  .page-boundary {
+    position: absolute;
+    left: 22mm;
+    right: 22mm;
+    bottom: 24mm;
+    border-top: 1px dashed var(--status-blocked);
+    opacity: 0.6;
+  }
+}

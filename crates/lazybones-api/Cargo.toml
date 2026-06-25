@@ -13,6 +13,8 @@ lazybones-store = { workspace = true }
 lazybones-auth = { workspace = true }
 lazybones-engine = { workspace = true }
 lazybones-gh = { workspace = true }
+# The generic job service behind the content-sync routes (`/jobs`, pull/push).
+lazybones-jobs = { workspace = true }
 # The WASM extension runtime: the `/extensions` surface installs into its
 # `Registry`, test-invokes guests through its `ExtEngine`, and mirrors grants into
 # the in-memory dispatch index (extension-system design §3.6).

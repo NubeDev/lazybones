@@ -20,6 +20,9 @@ pub(crate) struct PreferencesRow {
     pub(crate) id: RecordId,
     pub(crate) timezone: Option<String>,
     pub(crate) theme: Option<String>,
+    /// JSON-serialized [`SyncConfig`](super::model::SyncConfig); `None` until the
+    /// operator configures sync. Stored as a string so the row stays flat.
+    pub(crate) sync: Option<String>,
     pub(crate) updated_at: Option<String>,
 }
 
@@ -30,6 +33,7 @@ impl PreferencesRow {
             id: RecordId::new(SETTINGS_TABLE, PREFERENCES_KEY),
             timezone: p.timezone.clone(),
             theme: p.theme.clone(),
+            sync: p.sync.as_ref().and_then(|s| serde_json::to_string(s).ok()),
             updated_at: Some(p.updated_at.clone()),
         }
     }
@@ -39,6 +43,7 @@ impl PreferencesRow {
         Preferences {
             timezone: self.timezone,
             theme: self.theme,
+            sync: self.sync.and_then(|s| serde_json::from_str(&s).ok()),
             updated_at: self.updated_at.unwrap_or_default(),
         }
     }

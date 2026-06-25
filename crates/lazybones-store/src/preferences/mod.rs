@@ -8,7 +8,7 @@ mod put;
 mod row;
 
 pub use get::get_preferences;
-pub use model::Preferences;
+pub use model::{Preferences, SyncConfig};
 pub use put::put_preferences;
 
 #[cfg(test)]
@@ -38,10 +38,22 @@ mod tests {
         let prefs = Preferences {
             timezone: Some("Asia/Ho_Chi_Minh".into()),
             theme: Some("dark".into()),
+            sync: Some(SyncConfig {
+                enabled: true,
+                remote: Some("git@github.com:me/sync.git".into()),
+                branch: Some("main".into()),
+                dir: None,
+                auto_push: true,
+                auto_pull: false,
+            }),
             updated_at: "2026-06-21T00:00:00Z".into(),
         };
         let written = put_preferences(&db, &prefs).await.unwrap();
         assert_eq!(written, prefs);
+        // The nested sync config survives the JSON-column round trip.
+        let back = get_preferences(&db).await.unwrap().unwrap();
+        assert_eq!(back.sync.as_ref().unwrap().remote.as_deref(), Some("git@github.com:me/sync.git"));
+        assert!(back.sync.as_ref().unwrap().auto_push);
 
         let got = get_preferences(&db).await.unwrap().unwrap();
         assert_eq!(got, prefs);

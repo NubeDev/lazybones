@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, Check, Clock, Plug, Search, Sparkles } from "lucide-react";
+import { Bot, Check, Clock, FolderGit2, Plug, Search, Sparkles } from "lucide-react";
 import { Topbar } from "@/components/layout/topbar";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { AgentsPanel } from "@/features/agents/agents-panel";
 import { ManagementAgentCard } from "./management-agent-card";
+import { ContentSyncCard } from "./content-sync-card";
 import {
   apiBase,
   setApiBase,
@@ -169,6 +170,9 @@ export function SettingsPage() {
               <TabsTrigger value="timezone">
                 <Clock className="size-3.5" /> Timezone
               </TabsTrigger>
+              <TabsTrigger value="sync">
+                <FolderGit2 className="size-3.5" /> Sync
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="connection" className="space-y-4">
@@ -231,6 +235,10 @@ export function SettingsPage() {
 
             <TabsContent value="timezone" className="space-y-4">
               <PreferencesCard />
+            </TabsContent>
+
+            <TabsContent value="sync" className="space-y-4">
+              <ContentSyncCard />
             </TabsContent>
           </Tabs>
         </div>

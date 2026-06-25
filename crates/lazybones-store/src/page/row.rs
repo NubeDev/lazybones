@@ -20,6 +20,7 @@ pub(crate) struct PageRow {
     pub(crate) title: Option<String>,
     pub(crate) body: Option<String>,
     pub(crate) position: Option<f64>,
+    pub(crate) page_break: Option<bool>,
     pub(crate) created_at: Option<String>,
     pub(crate) updated_at: Option<String>,
 }
@@ -34,6 +35,7 @@ impl PageRow {
             title: Some(p.title.clone()),
             body: Some(p.body.clone()),
             position: Some(p.position),
+            page_break: Some(p.page_break),
             created_at: Some(p.created_at.clone()),
             updated_at: Some(p.updated_at.clone()),
         }
@@ -48,6 +50,8 @@ impl PageRow {
             title: self.title.unwrap_or_default(),
             body: self.body.unwrap_or_default(),
             position: self.position.unwrap_or_default(),
+            // Rows written before this column default to "always render".
+            page_break: self.page_break.unwrap_or(true),
             created_at: self.created_at.unwrap_or_default(),
             updated_at: self.updated_at.unwrap_or_default(),
         }

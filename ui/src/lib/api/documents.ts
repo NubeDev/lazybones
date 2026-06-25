@@ -9,6 +9,10 @@ export interface DocumentDraft {
   title: string;
   kind: DocKind;
   branding_id?: string | null;
+  /** Persisted layout: print a page number on every page. */
+  page_numbers?: boolean;
+  /** Persisted layout: prepend a table-of-contents index page. */
+  index?: boolean;
 }
 
 /** The authored fields of a page. `position` is optional: omit on create to
@@ -17,6 +21,9 @@ export interface PageDraft {
   title: string;
   body: string;
   position?: number | null;
+  /** Render this page even when empty (the "page break" toggle). Omit to default
+   *  to `true` server-side. */
+  page_break?: boolean;
 }
 
 /** `GET /documents` — list documents (open read), optionally `?project=`. */

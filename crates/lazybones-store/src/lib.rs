@@ -28,6 +28,7 @@ mod preferences;
 mod secret;
 mod skill;
 mod source;
+mod sync;
 mod task;
 mod template;
 mod workfile;
@@ -50,11 +51,12 @@ pub use management_agent::{
     ManagementAgentConfig, ManagementAgentScope, PermissionProfile, SessionMode,
 };
 pub use page::{Page, append_position, position_between};
-pub use preferences::Preferences;
+pub use preferences::{Preferences, SyncConfig};
 pub use run::{Lifecycle, MergeMode, Run, RunState, Workspace, derived_state};
 pub use secret::{SecretEnv, SecretMeta};
 pub use skill::{Skill, SkillAction, SkillParam, seed_default_skills};
 pub use source::{Source, SourceKind, extract_pdf_text};
+pub use sync::{SyncReport, export_all, import_all};
 pub use task::{
     DEFAULT_MAX_RETRIES, IssueSyncState, RetryStrategy, Status, Task, TaskEdit, Transition,
     WorktreeMode, issue_number_from_url,

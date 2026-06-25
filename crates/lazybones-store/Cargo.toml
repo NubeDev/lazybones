@@ -29,3 +29,5 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+# Content-sync round-trip tests write/read a throwaway export tree on disk.
+tempfile = "3"

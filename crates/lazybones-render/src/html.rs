@@ -138,19 +138,15 @@ img{{max-width:100%;}}\n</style>\n</head>\n<body>\n{sections}</body></html>",
 }
 
 /// The index (table-of-contents) fragment: a heading and a numbered list of each
-/// non-empty page's title, in render order. Empty pages are skipped so the
-/// numbering matches the body (and the PDF index). Returns `""` when nothing
-/// would be listed.
+/// page's title, in render order. Every page the caller passes is a real page (a
+/// deliberately-blank spacer included), so all are listed. Returns `""` when
+/// there are no pages.
 fn index_html(assembled: &Assembled) -> String {
     let mut rows = String::new();
-    let mut n = 0usize;
-    for (i, page) in assembled.pages.iter().enumerate() {
-        if page.trim().is_empty() {
-            continue;
-        }
-        n += 1;
+    for (i, _page) in assembled.pages.iter().enumerate() {
         rows.push_str(&format!(
-            "<li><span class=\"idx-n\">{n}</span>{}</li>\n",
+            "<li><span class=\"idx-n\">{}</span>{}</li>\n",
+            i + 1,
             escape_html(&assembled.page_label(i))
         ));
     }
@@ -377,13 +373,15 @@ mod tests {
     }
 
     #[test]
-    fn index_lists_page_titles_and_skips_blanks() {
+    fn index_lists_every_page_title_including_blanks() {
         use crate::model::RenderOptions;
+        // A blank spacer page is a real page and is listed (the caller already
+        // dropped any page that shouldn't render).
         let assembled = Assembled::with_pages(
             "Book",
             vec!["One".to_owned(), "   ".to_owned(), "Three".to_owned()],
         )
-        .with_page_titles(vec!["Alpha".to_owned(), "Blank".to_owned(), "Gamma".to_owned()])
+        .with_page_titles(vec!["Alpha".to_owned(), "Spacer".to_owned(), "Gamma".to_owned()])
         .with_options(RenderOptions {
             page_numbers: false,
             index: true,
@@ -391,9 +389,8 @@ mod tests {
         let html = render_html(&assembled);
         assert!(html.contains("doc-index"));
         assert!(html.contains(">Alpha<") || html.contains("Alpha</li>"));
+        assert!(html.contains("Spacer"));
         assert!(html.contains("Gamma"));
-        // The blank page is not listed, and the index renumbers around it.
-        assert!(!html.contains("Blank"));
     }
 
     #[test]

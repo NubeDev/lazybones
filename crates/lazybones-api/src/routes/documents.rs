@@ -75,7 +75,8 @@ pub async fn update_document(
     // Carry forward the GitHub linkage (set via `/repo` + filled by `gh/*`) — it
     // is not an authored field, so a content edit must not clear it.
     let existing = require_document(&state, &id).await?;
-    let mut document = Document::new(&id, &body.title, body.kind, state.store.now());
+    let mut document = Document::new(&id, &body.title, body.kind, state.store.now())
+        .with_layout(body.page_numbers, body.index);
     document.branding_id = body.branding_id;
     document.project = existing.project;
     document.repo = existing.repo;

@@ -24,10 +24,12 @@ mod error;
 mod issue;
 mod pr;
 mod repo;
+mod sync;
 
 pub use error::GhError;
 pub use issue::{Comment, Issue, IssueState};
 pub use pr::{MergeMethod, PrState, PullRequest};
+pub use sync::{Pushed, SyncRepo};
 pub use repo::{
     Branch, ChangeKind, LocalBranch, RepoView, TreeEntry, Worktree, resolve_status,
 };

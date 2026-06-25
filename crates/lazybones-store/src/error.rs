@@ -121,4 +121,14 @@ pub enum StoreError {
     /// An extension was installed with an id that is already taken.
     #[error("extension already exists: {0}")]
     ExtensionExists(String),
+
+    /// A content-sync filesystem operation (reading/writing the export tree)
+    /// failed.
+    #[error("content sync I/O failed: {0}")]
+    SyncIo(String),
+
+    /// Serializing a record to — or parsing one from — the content-sync export
+    /// tree failed (malformed YAML, a hand-edited file).
+    #[error("content sync (de)serialization failed: {0}")]
+    SyncSerde(String),
 }

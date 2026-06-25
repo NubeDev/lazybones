@@ -3300,6 +3300,7 @@ dependencies = [
  "lazybones-engine",
  "lazybones-ext",
  "lazybones-gh",
+ "lazybones-jobs",
  "lazybones-render",
  "lazybones-store",
  "serde",
@@ -3331,6 +3332,7 @@ dependencies = [
  "lazybones-auth",
  "lazybones-engine",
  "lazybones-ext",
+ "lazybones-jobs",
  "lazybones-store",
  "serde",
  "serde_yaml",
@@ -3344,9 +3346,11 @@ name = "lazybones-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "lazybones-ext",
  "lazybones-gh",
+ "lazybones-jobs",
  "lazybones-store",
  "serde",
  "serde_json",
@@ -3388,6 +3392,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lazybones-jobs"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "lazybones-render"
 version = "0.1.0"
 dependencies = [
@@ -3414,6 +3429,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "surrealdb",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
 ]

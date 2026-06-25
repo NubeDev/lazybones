@@ -23,6 +23,10 @@ export interface Document {
   kind: DocKind;
   branding_id?: string | null;
   repo?: DocRepo | null;
+  /** Persisted layout: print a page number on every page. */
+  page_numbers: boolean;
+  /** Persisted layout: prepend a table-of-contents index page. */
+  index: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +41,9 @@ export interface Page {
   title: string;
   body: string;
   position: number;
+  /** Render this page even when its body is empty (the "page break" toggle): a
+   *  deliberate blank spacer page. Defaults to `true`. */
+  page_break: boolean;
   created_at: string;
   updated_at: string;
 }

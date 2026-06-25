@@ -38,10 +38,24 @@ pub async fn put_preferences(
         .map(|tz| tz.trim().to_owned())
         .filter(|tz| !tz.is_empty());
 
+    // Normalise the sync config: canonicalise the remote (shorthand / https / ssh
+    // → a gh-auth-friendly https URL) so it's stored in the working form and the
+    // UI reflects what it resolved to. An all-whitespace remote means "not
+    // configured", so drop the whole config when it carries no usable URL.
+    let sync = body.sync.map(normalize_sync).filter(lazybones_store::SyncConfig::is_configured);
+
     let prefs = Preferences {
         timezone,
         theme: body.theme,
+        sync,
         updated_at: state.store.now(),
     };
     Ok(Json(state.store.put_preferences(&prefs).await?))
+}
+
+/// Canonicalise a sync config's remote URL in place (empty remote → cleared).
+fn normalize_sync(mut cfg: lazybones_store::SyncConfig) -> lazybones_store::SyncConfig {
+    let normalized = lazybones_engine::sync::normalize_remote(cfg.remote.as_deref().unwrap_or_default());
+    cfg.remote = if normalized.is_empty() { None } else { Some(normalized) };
+    cfg
 }
