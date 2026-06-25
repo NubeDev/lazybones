@@ -1,0 +1,33 @@
+[package]
+name = "lazybones-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The MCP server SDK: ToolRouter + ServerHandler + the macro tool surface. See
+# the root Cargo.toml for the feature rationale (server + streamable-http + macros).
+rmcp = { workspace = true }
+
+# The capability/session model the MCP surface reuses verbatim — the MCP server is
+# a *second front door* onto the existing grants, not a new privilege plane
+# (docs/mcp/README.md §3).
+lazybones-auth = { workspace = true }
+# The durable store handle every tool calls directly (no HTTP-to-self): MCP tools
+# are the REST handlers' twin over the same store boundary (§2.1).
+lazybones-store = { workspace = true }
+# The engine handles (issue/lifecycle) the orchestration tools drive. Pulled in now
+# so the scaffold's deps match the §5 layout; tool wiring lands in later tasks.
+lazybones-engine = { workspace = true }
+# Extension registry/runtime for the extension tools (author = open, install =
+# loop-only Capability::Extension), §6.3.
+lazybones-ext = { workspace = true }
+
+# Error mapping + arg-struct (de)serialization shared with the REST surface.
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

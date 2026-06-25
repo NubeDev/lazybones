@@ -1,0 +1,44 @@
+//! lazybones-mcp — the [Model Context Protocol](https://modelcontextprotocol.io)
+//! front door onto lazybones.
+//!
+//! This crate exposes lazybones over MCP so the in-app management agent *and* any
+//! external agent (Claude Desktop, the `claude` CLI, Cursor, a custom rmcp client)
+//! can drive lazybones through **typed MCP tools** instead of hand-rolled `curl`
+//! calls. It is **not a new capability plane**: every tool is a thin twin of an
+//! existing REST handler, gated by the *same* [`Capability`](lazybones_auth::Capability)
+//! and [`ScopedSession`](lazybones_auth::ScopedSession) the routes use, calling the
+//! *same* [`StoreHandle`](lazybones_store::StoreHandle) and engine handles directly
+//! (no HTTP-to-self). Its blast radius equals its token's grant — nothing new is
+//! reachable that a bearer token couldn't already reach over HTTP.
+//!
+//! See [`docs/mcp/README.md`](https://github.com/NubeDev/lazybones/blob/master/docs/mcp/README.md)
+//! for the full design, capability mapping, and house rules.
+//!
+//! # House rules (carried verbatim from the design)
+//!
+//! - **Authoring is not running.** A session may freely *create* tasks / workflows
+//!   / templates / skills / documents / extensions; *starting, stopping, retrying,
+//!   deleting, installing-and-granting* are gated behind grants the default
+//!   management token lacks.
+//! - **No new privilege.** Loop-only `Capability::Extension`/`Capability::Secret`
+//!   stay loop-only; secrets are never exposed as a tool at all.
+//! - **No HTTP-to-self.** Tools call the store/engine in-process — they are a typed
+//!   mirror of the REST routes, not a reimplementation of the domain logic.
+//!
+//! # Scaffold status
+//!
+//! This is the crate scaffold (task `mcp-crate`): an **empty** [`ToolRouter`] plus a
+//! [`ServerHandler`](rmcp::ServerHandler) advertising name/version/instructions. The
+//! tool surface (§6) and the `/mcp` mount (`mcp-mount`) land in follow-up tasks.
+
+pub mod args;
+pub mod auth;
+pub mod error;
+pub mod server;
+pub mod tools;
+
+pub use error::{McpError, McpResult};
+pub use server::McpServer;
+
+#[doc(no_inline)]
+pub use rmcp::handler::server::router::tool::ToolRouter;
