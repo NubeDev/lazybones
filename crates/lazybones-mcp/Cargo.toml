@@ -1,0 +1,59 @@
+[package]
+name = "lazybones-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The MCP server SDK: ToolRouter + ServerHandler + the macro tool surface. See
+# the root Cargo.toml for the feature rationale (server + streamable-http + macros).
+rmcp = { workspace = true }
+
+# The capability/session model the MCP surface reuses verbatim — the MCP server is
+# a *second front door* onto the existing grants, not a new privilege plane
+# (docs/mcp/README.md §3).
+lazybones-auth = { workspace = true }
+# The durable store handle every tool calls directly (no HTTP-to-self): MCP tools
+# are the REST handlers' twin over the same store boundary (§2.1).
+lazybones-store = { workspace = true }
+# The engine handles (issue/lifecycle) the orchestration tools drive. Pulled in now
+# so the scaffold's deps match the §5 layout; tool wiring lands in later tasks.
+lazybones-engine = { workspace = true }
+# Extension registry/runtime for the extension tools (author = open, install =
+# loop-only Capability::Extension), §6.3.
+lazybones-ext = { workspace = true }
+# Pure markdown→HTML renderer for `document.render`: the MCP server assembles a
+# document (pages + merged references + brand + image bytes) exactly as the REST
+# `/documents/:id/render` route does, then hands the pure value here (§6.2).
+lazybones-render = { workspace = true }
+# The user's authenticated `gh`/`git` for `document.publish` (branch → commit →
+# push → PR), the twin of `POST /documents/:id/publish` (§6.2).
+lazybones-gh = { workspace = true }
+
+# Error mapping + arg-struct (de)serialization shared with the REST surface.
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# The streamable-HTTP transport injects the request's `http::request::Parts` into
+# each tool call's extensions; a mutating tool reads its bearer token out of those
+# parts — the MCP twin of a REST handler reading the `Authorization` header (§3).
+http = "1"
+
+# `task.transcript` shells out to `hcom transcript` on demand (§6.4), exactly as
+# the REST passthrough does — async process spawning under the shared runtime.
+tokio = { workspace = true }
+
+# Best-effort warnings from the gated lifecycle tools (a reclaim/kill that fails is
+# logged, never fatal) — the same `tracing::warn!` discipline the REST routes use.
+tracing = { workspace = true }
+
+[dev-dependencies]
+# Drive the async tool methods in the in-process integration test.
+tokio = { workspace = true }
+# Isolate `extension.scaffold`'s file-writing output in a tempdir per test.
+tempfile = "3"

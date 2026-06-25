@@ -324,19 +324,19 @@ default-deny trust boundary.
 
 ## 10. Phasing
 
-- **P0 — Spike:** `lazybones-mcp` crate with rmcp; **one** read tool
+- **P0 — Spike ✅ done:** `lazybones-mcp` crate with rmcp; **one** read tool
   (`state.health`) + **one** author tool (`workflow.create`) over the in-process
   `StreamableHttpService` mounted at `/mcp`; prove a `claude mcp add` HTTP client
   authenticates with a minted token, lists tools, and creates a workflow that
   shows up over REST. *Decision gate: rmcp axum integration + token auth clean?*
-- **P1 — Orchestration MVP:** the full §6.1 tool set + §6.4 reads + capability
-  guard + `error.rs` mapping; `POST /mcp/token` minting + Settings affordance
-  (OQ1). Hard rule enforced: default token cannot `start`.
-- **P2 — Documents:** §6.2 tools over `Capability::Document`.
-- **P3 — Extensions + prompts:** §6.3 (author-only for agents; install loop-only)
-  + skills-as-prompts (§7).
-- **P4 — stdio bridge + breadth:** the stateless `lazybones-mcp` stdio bin (§4.2),
-  resource subscriptions (OQ2), audit rows (OQ5).
+- **P1 — Orchestration MVP ✅ done:** the full §6.1 tool set + §6.4 reads +
+  capability guard + `error.rs` mapping; `POST /mcp/token` minting + Settings
+  affordance (OQ1). Hard rule enforced: default token cannot `start`.
+- **P2 — Documents ✅ done:** §6.2 tools over `Capability::Document`.
+- **P3 — Extensions + prompts ✅ done (install loop-only):** §6.3 (author-only for
+  agents; install/grant/invoke loop-only). Skills-as-prompts (§7) deferred.
+- **P4 — stdio bridge + breadth (deferred):** the stateless `lazybones-mcp` stdio
+  bin (§4.2), resource subscriptions (OQ2), audit rows (OQ5).
 
 ---
 

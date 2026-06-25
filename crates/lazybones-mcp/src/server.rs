@@ -1,0 +1,277 @@
+//! The MCP server: the `#[tool_handler]` struct that holds the shared state and
+//! advertises the server's name / version / instructions.
+//!
+//! The struct carries the cloneable [`StoreHandle`] (and, in later tasks, the
+//! engine handles) so every tool calls the durable store directly — the same store
+//! boundary the REST handlers use, never an HTTP-to-self round trip (design §2.1).
+//! The [`ToolRouter`] is assembled by the `#[tool_router]` macro; it is **empty** in
+//! this scaffold and grows one `#[tool]` method per verb as the §6 surface lands.
+
+use std::sync::{Arc, OnceLock, RwLock};
+
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use rmcp::{ServerHandler, tool_handler};
+
+use lazybones_auth::{Capability, ScopedSession};
+use lazybones_ext::{EngineLimits, ExtEngine, Registry};
+use lazybones_store::{BlobStore, StoreHandle};
+
+use crate::auth::{self, SessionResolver};
+use crate::error::McpError;
+
+/// The run label MCP-authored standalone tasks group under when the daemon's
+/// `LAZYBONES_RUN` is unset — the same default `lazybones-cli`'s `configure`
+/// applies (`env_or("LAZYBONES_RUN", …, "lazybones-run")`), so the two surfaces
+/// land their history in the same place.
+const DEFAULT_RUN_LABEL: &str = "lazybones-run";
+
+/// The instructions string advertised over `ServerHandler::get_info`. Distilled
+/// from [`docs/managing-with-ai.md`](../../../docs/managing-with-ai.md) — the same
+/// house rules the management runner folds into its system prompt — so MCP clients
+/// get the operating contract without a separate cheat-sheet (design §7).
+const INSTRUCTIONS: &str = "\
+lazybones is a durable task queue + green-build gate with an in-process scheduler. \
+You drive it through these MCP tools, which mirror its REST surface 1:1.
+
+The split that matters:
+- You are the CONTROL plane: you author and promote work; you never mark a task running yourself.
+- The scheduler (a loop inside lazybonesd) is the EXECUTION plane: it promotes ready tasks, \
+provisions worktrees, claims them, spawns the agent, runs the gate, and lands the branch.
+A task runs only when both happen: you promote it AND the daemon is up.
+
+House rules (settled defaults, not per-request choices):
+- AUTHORING IS NOT RUNNING. Freely create workflows, tasks, templates, skills, documents, and \
+extension sources. Do NOT start, stop, restart, retry, cancel, delete, or install/grant — those \
+are gated behind capabilities the default management token does not hold and will refuse (403). \
+Author the work, then hand back so the operator presses Start.
+- A freshly authored workflow is `active` but has promoted nothing, so it sits idle and safe \
+until the operator starts it.
+- Permission mode is `auto` and daemon-global; there is no per-workflow/per-task bypass field. \
+Do not try to set one — it is silently ignored.
+
+Capabilities (your token's grant bounds everything):
+- Read tools (state/logs/history) need no capability.
+- Authoring tools need `Author` (tasks/templates/skills/workflows) or `Document` (documents/branding/assets).
+- Lifecycle tools (workflow start/stop/resume/restart, task retry/cancel/auto-retry) need \
+`Block`/`Claim`-class grants the Author profile lacks.
+- Installing extensions, setting grants, and reading secrets are loop-only and never agent-reachable.
+
+Status flow (lowercase): pending -> ready -> running -> gating -> done; any non-terminal state \
+can go to blocked; a stale running task is reclaimed to ready. Revive a blocked task with a \
+retry/chat (guided revive keeps the worktree and folds guidance into the re-spawn prompt). \
+When you are stuck or need a human, file a follow-up.";
+
+/// The MCP server handle. Cloneable so rmcp's session manager can hand each
+/// connection its own clone over the shared store.
+#[derive(Clone)]
+pub struct McpServer {
+    /// The durable store — every tool's path to lazybones' state. Shared, not forked
+    /// (design §2.2: one store, in-process, no second source of truth).
+    store: StoreHandle,
+    /// Maps a request's bearer token to its [`ScopedSession`] against the API's token
+    /// registry — the same map a REST request authenticates through (design §3). Held
+    /// behind `Arc<dyn …>` so this crate stays free of a cycle back onto `lazybones-api`.
+    resolver: Arc<dyn SessionResolver>,
+    /// The event-grouping run label a standalone `task.create` seeds under — the
+    /// twin of `AppState::run`, read from `LAZYBONES_RUN` (or [`DEFAULT_RUN_LABEL`])
+    /// so MCP-authored tasks group exactly where the REST surface's do.
+    run: String,
+    /// The content-addressed blob store backing assets, shared with the REST
+    /// surface ([`AppState::assets`]). `document.render` reaches through it for a
+    /// brand's logo + inline-image bytes, exactly as the render route does. `None`
+    /// when the server is built without it (the unit-test path): rendering then
+    /// simply omits images rather than failing.
+    assets: Option<Arc<dyn BlobStore>>,
+    /// The in-memory extension dispatch index, shared with the REST surface
+    /// ([`AppState::extensions`]). The loop-only `extension.install`/`set_grants`/
+    /// `enable`/`disable` tools lock it to mirror their store write into the index,
+    /// exactly as the `/extensions` routes do. `None` on the unit-test path, where
+    /// the loop-only capability gate refuses before the runtime is ever reached.
+    extensions: Option<Arc<RwLock<Registry>>>,
+    /// The shared Wasmtime extension engine cell, shared with the REST surface
+    /// ([`AppState::ext_engine`]). `extension.invoke` resolves it (building the one
+    /// engine + epoch ticker lazily on first use, like the route) to run a guest.
+    /// The same `Arc<OnceLock<…>>` both surfaces hold means the process has exactly
+    /// one engine. `None` on the unit-test path.
+    ext_engine: Option<Arc<OnceLock<ExtEngine>>>,
+    /// The typed tool surface, assembled by [`crate::tools::router`] from each
+    /// group's `#[tool_router]` block — the full §6.1 orchestration + §6.4
+    /// supervision verbs.
+    tool_router: ToolRouter<McpServer>,
+}
+
+impl McpServer {
+    /// Build a server over the shared [`StoreHandle`] and the bearer-token
+    /// [`SessionResolver`] the mount supplies. Later tasks extend the signature with
+    /// the engine handles the orchestration/lifecycle tools need.
+    #[must_use]
+    pub fn new(store: StoreHandle, resolver: Arc<dyn SessionResolver>) -> Self {
+        let run = std::env::var("LAZYBONES_RUN").unwrap_or_else(|_| DEFAULT_RUN_LABEL.to_owned());
+        Self {
+            store,
+            resolver,
+            run,
+            assets: None,
+            extensions: None,
+            ext_engine: None,
+            tool_router: crate::tools::router(),
+        }
+    }
+
+    /// Attach the shared asset [`BlobStore`] so `document.render` can resolve a
+    /// brand's logo + inline-image bytes (the mount wires `AppState::assets` here).
+    /// Builder style so the unit-test path can omit it.
+    #[must_use]
+    pub fn with_assets(mut self, assets: Arc<dyn BlobStore>) -> Self {
+        self.assets = Some(assets);
+        self
+    }
+
+    /// Share the extension dispatch index **and** engine cell with the REST surface
+    /// (builder style), so the loop-only extension tools install/grant/enable/invoke
+    /// against the **same** registry + engine the routes and the scheduler's
+    /// dispatcher use (the mount wires `AppState::extensions` + `AppState::ext_engine`
+    /// here). Omitted on the unit-test path, where the `Capability::Extension` gate
+    /// refuses before the runtime is needed.
+    #[must_use]
+    pub fn with_ext_runtime(
+        mut self,
+        extensions: Arc<RwLock<Registry>>,
+        ext_engine: Arc<OnceLock<ExtEngine>>,
+    ) -> Self {
+        self.extensions = Some(extensions);
+        self.ext_engine = Some(ext_engine);
+        self
+    }
+
+    /// The shared store handle the tool methods call. Exposed so the `tools::*`
+    /// modules reach the store without re-plumbing it through each call.
+    #[must_use]
+    pub fn store(&self) -> &StoreHandle {
+        &self.store
+    }
+
+    /// The shared asset blob store, if one was wired in. `document.render` reads a
+    /// brand's logo + inline-image bytes through it; `None` (the unit-test path)
+    /// means rendering omits images rather than failing.
+    #[must_use]
+    pub fn assets(&self) -> Option<&Arc<dyn BlobStore>> {
+        self.assets.as_ref()
+    }
+
+    /// The shared extension dispatch index, if the runtime was wired in. The
+    /// loop-only extension mutators reach it to mirror their store write into the
+    /// index; an unwired server (the unit-test path) is an internal error, but only
+    /// *after* the `Capability::Extension` gate has already refused.
+    ///
+    /// # Errors
+    /// [`McpError::Internal`] if the extension runtime was not wired in.
+    pub fn ext_registry(&self) -> Result<&Arc<RwLock<Registry>>, McpError> {
+        self.extensions
+            .as_ref()
+            .ok_or_else(|| McpError::Internal("extension runtime not wired".to_owned()))
+    }
+
+    /// The shared Wasmtime extension engine, built on first use (mirroring
+    /// `AppState::ext_engine`), if the runtime was wired in. `extension.invoke`
+    /// resolves it to run a guest. Cloning the returned [`ExtEngine`] is an `Arc`
+    /// bump — the engine + epoch ticker stay shared process-wide.
+    ///
+    /// # Errors
+    /// [`McpError::Internal`] if the extension runtime was not wired in.
+    pub fn ext_engine(&self) -> Result<ExtEngine, McpError> {
+        let cell = self
+            .ext_engine
+            .as_ref()
+            .ok_or_else(|| McpError::Internal("extension runtime not wired".to_owned()))?;
+        let engine = cell.get_or_init(|| {
+            ExtEngine::new(EngineLimits::default())
+                .expect("initialize the shared wasm extension engine")
+        });
+        Ok(engine.clone())
+    }
+
+    /// The run label a standalone `task.create` seeds under — the MCP twin of
+    /// `AppState::run` (design §6.1), so an MCP-authored task groups its history
+    /// exactly where a REST-authored one does.
+    #[must_use]
+    pub fn run_label(&self) -> &str {
+        &self.run
+    }
+
+    /// Authenticate a mutating tool call and assert it carries `cap`, returning the
+    /// resolved [`ScopedSession`] (so the tool can read `actor()` for the audit
+    /// trail). The MCP twin of a REST handler's `session.require(cap, …)`: a
+    /// missing/unknown token is [`Unauthorized`](McpError::Unauthorized); a token
+    /// lacking `cap` is [`Forbidden`](McpError::Forbidden) (→ 403). The
+    /// unauthenticated read path does **not** apply to mutators (design §3).
+    ///
+    /// # Errors
+    ///
+    /// [`McpError::Unauthorized`] with no resolvable session, or
+    /// [`McpError::Forbidden`] when the session lacks `cap`.
+    pub fn authorize(
+        &self,
+        authorization: Option<&str>,
+        cap: Capability,
+    ) -> Result<ScopedSession, McpError> {
+        let session = self.session_for(authorization).ok_or(McpError::Unauthorized)?;
+        auth::require(&session, cap)?;
+        Ok(session)
+    }
+
+    /// Like [`authorize`](Self::authorize) but the call is allowed if the session
+    /// holds **any** of `caps` — used by `extension.scaffold`, an authoring act the
+    /// design grants to either the `Author` *or* the `Document` profile (a
+    /// file-writing act, §6.3). A missing/unknown token is still
+    /// [`Unauthorized`](McpError::Unauthorized); a token holding none of `caps` is
+    /// [`Forbidden`](McpError::Forbidden), naming the first as the expected grant.
+    ///
+    /// # Errors
+    ///
+    /// [`McpError::Unauthorized`] with no resolvable session, or
+    /// [`McpError::Forbidden`] when the session holds none of `caps`. `caps` must be
+    /// non-empty.
+    pub fn authorize_any(
+        &self,
+        authorization: Option<&str>,
+        caps: &[Capability],
+    ) -> Result<ScopedSession, McpError> {
+        let session = self.session_for(authorization).ok_or(McpError::Unauthorized)?;
+        if caps.iter().any(|&c| session.can(c)) {
+            Ok(session)
+        } else {
+            // Name the first (canonical) capability the caller is missing.
+            auth::require(&session, caps[0])?;
+            Ok(session)
+        }
+    }
+
+    /// Resolve the [`ScopedSession`] a tool call acts under from its `Authorization`
+    /// header value (`None` ⇒ the unauthenticated read-only path).
+    ///
+    /// Tools read the header from the injected [`http::request::Parts`] (available via
+    /// `RequestContext`/`Extension<Parts>`, see the rmcp transport docs) and pass it
+    /// here; the token → session lookup runs against the API's registry through the
+    /// [`SessionResolver`]. A mutator then asserts its capability via
+    /// [`auth::require`](crate::auth::require) on the returned session.
+    #[must_use]
+    pub fn session_for(&self, authorization: Option<&str>) -> Option<ScopedSession> {
+        auth::resolve_session(self.resolver.as_ref(), authorization)
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for McpServer {
+    fn get_info(&self) -> ServerInfo {
+        // `ServerInfo` (`InitializeResult`) is `#[non_exhaustive]`, so build it via
+        // its constructor + `with_*` setters rather than a struct literal.
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(INSTRUCTIONS)
+    }
+}

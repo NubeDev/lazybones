@@ -135,6 +135,16 @@ impl AppState {
         })
     }
 
+    /// The shared, lazily-built extension engine **cell** (rather than the resolved
+    /// engine). Handed to the in-process MCP server at mount so it resolves the
+    /// *same* engine on first `extension.invoke` without forcing construction (and
+    /// its epoch ticker thread) at boot — the engine is built once, shared across
+    /// both front doors.
+    #[must_use]
+    pub fn ext_engine_cell(&self) -> &Arc<OnceLock<ExtEngine>> {
+        &self.ext_engine
+    }
+
     /// Swap in the asset blob store (builder style). Called by `serve.rs` to root
     /// the store at the daemon's `data_dir`; tests use it to isolate blob bytes in
     /// a tempdir.
@@ -196,5 +206,15 @@ impl AppState {
             .write()
             .expect("token registry lock poisoned")
             .insert(token.into(), session);
+    }
+}
+
+/// Let the in-process MCP server (`lazybones-mcp`) resolve a bearer token against
+/// this same token registry, so an MCP connection authenticates exactly like a REST
+/// request — the MCP surface is a second front door onto the existing grants, not a
+/// new auth plane (docs/mcp/README.md §3).
+impl lazybones_mcp::SessionResolver for AppState {
+    fn session_for(&self, token: &str) -> Option<ScopedSession> {
+        AppState::session_for(self, token)
     }
 }

@@ -12,6 +12,7 @@ members = [
     "crates/lazybones-cli",
     "crates/lazybones-render",
     "crates/lazybones-ext",
+    "crates/lazybones-mcp",
 ]
 # Example WASM guest(s): standalone crates targeting `wasm32-wasip2`, built into
 # checked-in `.wasm` fixtures. They have their own dep set and `[workspace]` table,
@@ -37,6 +38,7 @@ lazybones-gh = { version = "0.1.0", path = "crates/lazybones-gh" }
 lazybones-jobs = { version = "0.1.0", path = "crates/lazybones-jobs" }
 lazybones-render = { version = "0.1.0", path = "crates/lazybones-render" }
 lazybones-ext = { version = "0.1.0", path = "crates/lazybones-ext" }
+lazybones-mcp = { version = "0.1.0", path = "crates/lazybones-mcp" }
 
 # WASM extension runtime (lazybones-ext). Pinned to the Wasmtime 46 major: per
 # the extension-system design (§2), the Component Model surface still moves, so we
@@ -78,6 +80,13 @@ pulldown-cmark = { version = "0.13", default-features = false }
 
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "query"] }
+# Model Context Protocol server (lazybones-mcp). The official Rust SDK exposes
+# lazybones over MCP as a typed tool surface mounted in-process. Features: `server`
+# (the ServerHandler/tool machinery), `transport-streamable-http-server` (the axum
+# sub-router transport mounted at `/mcp`, the v1 primary), and `macros`
+# (`#[tool_router]`/`#[tool]`/`#[tool_handler]` — schema generated from schemars
+# arg structs, no hand-written JSON-Schema). See docs/mcp/README.md §2, §5.
+rmcp = { version = "1", default-features = false, features = ["server", "transport-streamable-http-server", "macros"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 # Secret store at rest: AES-256-GCM authenticated encryption, SHA-256 to derive
 # the cipher key from a master passphrase, base64 for the stored blob.
