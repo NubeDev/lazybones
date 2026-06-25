@@ -26,6 +26,13 @@ lazybones-engine = { workspace = true }
 # Extension registry/runtime for the extension tools (author = open, install =
 # loop-only Capability::Extension), §6.3.
 lazybones-ext = { workspace = true }
+# Pure markdown→HTML renderer for `document.render`: the MCP server assembles a
+# document (pages + merged references + brand + image bytes) exactly as the REST
+# `/documents/:id/render` route does, then hands the pure value here (§6.2).
+lazybones-render = { workspace = true }
+# The user's authenticated `gh`/`git` for `document.publish` (branch → commit →
+# push → PR), the twin of `POST /documents/:id/publish` (§6.2).
+lazybones-gh = { workspace = true }
 
 # Error mapping + arg-struct (de)serialization shared with the REST surface.
 serde = { workspace = true }

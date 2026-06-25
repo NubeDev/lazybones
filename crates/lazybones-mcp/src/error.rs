@@ -37,6 +37,11 @@ pub enum McpError {
     #[error(transparent)]
     Asset(#[from] AssetError),
 
+    /// A `gh`/`git` failure from a document publish action (REST maps this to
+    /// `502 Bad Gateway`; MCP has no gateway fault, so it is an internal error).
+    #[error(transparent)]
+    Gh(#[from] lazybones_gh::GhError),
+
     /// The requested resource does not exist (REST `404`).
     #[error("not found")]
     NotFound,
@@ -107,8 +112,9 @@ impl From<McpError> for ErrorData {
                 | StoreError::BrandingExists(_)
                 | StoreError::ExtensionExists(_),
             ) => ErrorData::invalid_request(message, None),
-            // Anything else from the store/blob layer is ours.
-            McpError::Store(_) | McpError::Asset(_) | McpError::Internal(_) => {
+            // Anything else from the store/blob layer — and a `gh`/`git` publish
+            // failure — is ours.
+            McpError::Store(_) | McpError::Asset(_) | McpError::Gh(_) | McpError::Internal(_) => {
                 ErrorData::internal_error(message, None)
             }
         }

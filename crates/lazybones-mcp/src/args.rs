@@ -16,7 +16,7 @@
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
 
-use lazybones_store::{MergeMode, Workspace, WorktreeMode};
+use lazybones_store::{BrandColors, BrandFonts, MergeMode, Workspace, WorktreeMode};
 
 /// Parse an optional worktree-mode string into a concrete [`WorktreeMode`],
 /// falling back to the enum default (`Shared`) when absent — matching the REST
@@ -414,4 +414,276 @@ impl WorkspaceArgs {
             auto_pr: self.auto_pr,
         }
     }
+}
+
+// ---- §6.2 document / branding / asset tools ----------------------------------
+
+/// A `?project=` listing filter shared by `document.list`, `branding.list`, and
+/// `asset.list` — the typed twin of the REST [`ProjectQuery`](../../../crates/lazybones-api/src/dto.rs).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ProjectArgs {
+    /// Restrict the listing to one project scope; all scopes when omitted.
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+/// Arguments for `document.create` — the typed twin of `POST /documents`
+/// ([`CreateDocumentBody`](../../../crates/lazybones-api/src/dto.rs)).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentCreateArgs {
+    /// The unique document id; conflicts if it is taken.
+    pub id: String,
+    /// Human title.
+    pub title: String,
+    /// `document` (default) or `reference` (a reusable page merged into others);
+    /// any other value parses to `document`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// The brand profile to render with; omitted falls back to the default.
+    #[serde(default)]
+    pub branding_id: Option<String>,
+    /// Optional project scope; always `None` today.
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+/// Arguments for `document.update` — the typed twin of `PUT /documents/:id`
+/// ([`UpdateDocumentBody`](../../../crates/lazybones-api/src/dto.rs)). `created_at`
+/// and the `repo` linkage are preserved server-side.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentUpdateArgs {
+    /// The document id to edit; `404` if unknown.
+    pub id: String,
+    /// New title.
+    pub title: String,
+    /// New kind (`document` | `reference`); any other value parses to `document`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// New branding id (or omitted to clear).
+    #[serde(default)]
+    pub branding_id: Option<String>,
+}
+
+/// Arguments for `document.add_page` — the typed twin of `POST /documents/:id/pages`
+/// ([`CreatePageBody`](../../../crates/lazybones-api/src/dto.rs)).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentAddPageArgs {
+    /// The document (book) id to add the page to; `404` if unknown.
+    pub document_id: String,
+    /// Page title / running header.
+    #[serde(default)]
+    pub title: String,
+    /// The page body (markdown).
+    #[serde(default)]
+    pub body: String,
+    /// Explicit fractional sort position; omit to append after the last page.
+    #[serde(default)]
+    pub position: Option<f64>,
+}
+
+/// Arguments for `document.update_page` — the typed twin of
+/// `PUT /documents/:id/pages/:pid` ([`UpdatePageBody`](../../../crates/lazybones-api/src/dto.rs)).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentUpdatePageArgs {
+    /// The document the page belongs to; `404` if the page is not under it.
+    pub document_id: String,
+    /// The page id to overwrite.
+    pub page_id: String,
+    /// New title.
+    #[serde(default)]
+    pub title: String,
+    /// New markdown body.
+    #[serde(default)]
+    pub body: String,
+    /// New fractional sort position; omit to leave the page where it is.
+    #[serde(default)]
+    pub position: Option<f64>,
+}
+
+/// Address one document by id — shared by `document.list_pages`,
+/// `document.list_references`, and `document.list_sources`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentRefArgs {
+    /// The document id to read; `404` if unknown.
+    pub document_id: String,
+}
+
+/// Arguments for `document.attach_reference` — the typed twin of
+/// `POST /documents/:id/references`
+/// ([`AddReferenceBody`](../../../crates/lazybones-api/src/routes/documents.rs)).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentAttachReferenceArgs {
+    /// The document to merge the reference into; `404` if unknown.
+    pub document_id: String,
+    /// The id of the `reference` document to merge into this one's output.
+    pub reference_id: String,
+}
+
+/// Arguments for `document.add_source` — a **link** source, the JSON twin of
+/// `POST /documents/:id/sources` ([`LinkSourceBody`](../../../crates/lazybones-api/src/dto.rs)).
+/// Asset *bytes* (file uploads) stay on the REST raw-body route; MCP carries only
+/// link sources + ids (design §6.2).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentAddSourceArgs {
+    /// The document the source sits behind; `404` if unknown.
+    pub document_id: String,
+    /// The URL the author references.
+    pub url: String,
+    /// Human title / label; defaults to the URL when blank.
+    #[serde(default)]
+    pub title: String,
+}
+
+/// Arguments for `document.render` — the typed twin of `GET /documents/:id/render`
+/// ([`RenderQuery`](../../../crates/lazybones-api/src/routes/document_render.rs)).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentRenderArgs {
+    /// The document id to render; `404` if unknown.
+    pub id: String,
+    /// Preview a brand other than the saved one (blank ⇒ the default brand). Omitted
+    /// ⇒ the document's saved `branding_id`.
+    #[serde(default)]
+    pub branding_id: Option<String>,
+    /// Print a page number on every page.
+    #[serde(default)]
+    pub page_numbers: bool,
+    /// Prepend a table-of-contents index page.
+    #[serde(default)]
+    pub index: bool,
+}
+
+/// Arguments for `document.set_repo` — the typed twin of `PUT /documents/:id/repo`
+/// ([`SetDocRepoBody`](../../../crates/lazybones-api/src/dto.rs)). The
+/// `branch`/`*_url` linkage is filled by the publish flow, not here.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentSetRepoArgs {
+    /// The document id whose publishing target to set; `404` if unknown.
+    pub id: String,
+    /// Absolute path to the local git checkout.
+    pub repo: String,
+    /// Base branch to fork from; omitted inherits the default.
+    #[serde(default)]
+    pub base_branch: Option<String>,
+    /// Branch-name prefix; omitted inherits the default.
+    #[serde(default)]
+    pub branch_prefix: Option<String>,
+    /// Where in the repo the rendered doc is committed, e.g. `docs/<id>.md`.
+    pub output_path: String,
+}
+
+/// Arguments for `document.publish` — the typed twin of `POST /documents/:id/publish`
+/// ([`PublishBody`](../../../crates/lazybones-api/src/routes/document_gh.rs)): branch
+/// → commit → push → PR, in one call.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DocumentPublishArgs {
+    /// The document id to publish; `404` if unknown, `400` if it has no repo target.
+    pub id: String,
+    /// The commit message; omitted defaults to `docs: publish <title>`.
+    #[serde(default)]
+    pub message: Option<String>,
+    /// The PR title; omitted defaults to the document title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The PR body; omitted defaults to a generated note.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// A brand color palette in MCP arg form — the JSON-Schema twin of the store's
+/// [`BrandColors`] (which is not `JsonSchema`). All fields are CSS-style color
+/// strings; absent fields stay empty (the store/render layer falls back).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct BrandColorsArgs {
+    /// The dominant brand color.
+    #[serde(default)]
+    pub primary: String,
+    /// The supporting color.
+    #[serde(default)]
+    pub secondary: String,
+    /// The highlight/call-to-action color.
+    #[serde(default)]
+    pub accent: String,
+    /// Default body-text color.
+    #[serde(default)]
+    pub text: String,
+    /// Page/background color.
+    #[serde(default)]
+    pub background: String,
+}
+
+impl From<BrandColorsArgs> for BrandColors {
+    fn from(c: BrandColorsArgs) -> Self {
+        BrandColors {
+            primary: c.primary,
+            secondary: c.secondary,
+            accent: c.accent,
+            text: c.text,
+            background: c.background,
+        }
+    }
+}
+
+/// Brand typography in MCP arg form — the JSON-Schema twin of the store's
+/// [`BrandFonts`].
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct BrandFontsArgs {
+    /// Font family for headings.
+    #[serde(default)]
+    pub heading: String,
+    /// Font family for body text.
+    #[serde(default)]
+    pub body: String,
+}
+
+impl From<BrandFontsArgs> for BrandFonts {
+    fn from(f: BrandFontsArgs) -> Self {
+        BrandFonts {
+            heading: f.heading,
+            body: f.body,
+        }
+    }
+}
+
+/// Arguments for `branding.create` / `branding.update` — the typed twin of
+/// `POST /branding` / `PUT /branding/:id`
+/// ([`CreateBrandingBody`](../../../crates/lazybones-api/src/dto.rs)). On update the
+/// `id` names the existing profile (`created_at` preserved server-side).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct BrandingArgs {
+    /// Unique branding id; create conflicts if taken, update `404`s if unknown.
+    pub id: String,
+    /// Human name shown in the picker.
+    pub name: String,
+    /// Optional project scope; always `None` today. Honored on create only.
+    #[serde(default)]
+    pub project: Option<String>,
+    /// The asset id of the brand's logo, if set.
+    #[serde(default)]
+    pub logo_asset_id: Option<String>,
+    /// The brand color palette.
+    #[serde(default)]
+    pub colors: BrandColorsArgs,
+    /// The brand typography.
+    #[serde(default)]
+    pub fonts: BrandFontsArgs,
+    /// Header text rendered on branded output.
+    #[serde(default)]
+    pub header_text: String,
+    /// Footer text rendered on branded output.
+    #[serde(default)]
+    pub footer_text: String,
 }

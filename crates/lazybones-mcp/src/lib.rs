@@ -44,7 +44,7 @@ use std::sync::Arc;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 
-use lazybones_store::StoreHandle;
+use lazybones_store::{BlobStore, StoreHandle};
 
 pub use auth::SessionResolver;
 pub use error::{McpError, McpResult};
@@ -57,18 +57,21 @@ pub use rmcp::handler::server::router::tool::ToolRouter;
 /// axum sub-router at `/mcp` (design §4.1).
 ///
 /// The service factory hands every MCP session its own [`McpServer`] over the shared
-/// `store` and bearer-token `resolver`, so each connection authenticates through the
-/// **same** token → session registry a REST request does and calls the **same** store
-/// boundary in-process — no HTTP-to-self (design §2.1/§3). Sessions are held in rmcp's
-/// in-memory [`LocalSessionManager`]; the caller layers the existing `cors_layer()` +
-/// body limit over the mount.
+/// `store`, asset blob store, and bearer-token `resolver`, so each connection
+/// authenticates through the **same** token → session registry a REST request does
+/// and calls the **same** store boundary in-process — no HTTP-to-self (design
+/// §2.1/§3). The `assets` blob store is shared with the REST surface so
+/// `document.render` resolves logo/image bytes through the same backend. Sessions are
+/// held in rmcp's in-memory [`LocalSessionManager`]; the caller layers the existing
+/// `cors_layer()` + body limit over the mount.
 #[must_use]
 pub fn streamable_http_service(
     store: StoreHandle,
+    assets: Arc<dyn BlobStore>,
     resolver: Arc<dyn SessionResolver>,
 ) -> StreamableHttpService<McpServer, LocalSessionManager> {
     StreamableHttpService::new(
-        move || Ok(McpServer::new(store.clone(), resolver.clone())),
+        move || Ok(McpServer::new(store.clone(), resolver.clone()).with_assets(assets.clone())),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     )

@@ -32,7 +32,7 @@ use crate::server::McpServer;
 /// `new()` stores the result; adding a group is adding its router to this sum.
 #[must_use]
 pub(crate) fn router() -> ToolRouter<McpServer> {
-    McpServer::supervise_router() + McpServer::orchestrate_router()
+    McpServer::supervise_router() + McpServer::orchestrate_router() + McpServer::documents_router()
 }
 
 /// Serialize an existing domain type as a tool's JSON result — the shared tail of

@@ -14,7 +14,7 @@ use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool_handler};
 
 use lazybones_auth::{Capability, ScopedSession};
-use lazybones_store::StoreHandle;
+use lazybones_store::{BlobStore, StoreHandle};
 
 use crate::auth::{self, SessionResolver};
 use crate::error::McpError;
@@ -76,6 +76,12 @@ pub struct McpServer {
     /// twin of `AppState::run`, read from `LAZYBONES_RUN` (or [`DEFAULT_RUN_LABEL`])
     /// so MCP-authored tasks group exactly where the REST surface's do.
     run: String,
+    /// The content-addressed blob store backing assets, shared with the REST
+    /// surface ([`AppState::assets`]). `document.render` reaches through it for a
+    /// brand's logo + inline-image bytes, exactly as the render route does. `None`
+    /// when the server is built without it (the unit-test path): rendering then
+    /// simply omits images rather than failing.
+    assets: Option<Arc<dyn BlobStore>>,
     /// The typed tool surface, assembled by [`crate::tools::router`] from each
     /// group's `#[tool_router]` block — the full §6.1 orchestration + §6.4
     /// supervision verbs.
@@ -93,8 +99,18 @@ impl McpServer {
             store,
             resolver,
             run,
+            assets: None,
             tool_router: crate::tools::router(),
         }
+    }
+
+    /// Attach the shared asset [`BlobStore`] so `document.render` can resolve a
+    /// brand's logo + inline-image bytes (the mount wires `AppState::assets` here).
+    /// Builder style so the unit-test path can omit it.
+    #[must_use]
+    pub fn with_assets(mut self, assets: Arc<dyn BlobStore>) -> Self {
+        self.assets = Some(assets);
+        self
     }
 
     /// The shared store handle the tool methods call. Exposed so the `tools::*`
@@ -102,6 +118,14 @@ impl McpServer {
     #[must_use]
     pub fn store(&self) -> &StoreHandle {
         &self.store
+    }
+
+    /// The shared asset blob store, if one was wired in. `document.render` reads a
+    /// brand's logo + inline-image bytes through it; `None` (the unit-test path)
+    /// means rendering omits images rather than failing.
+    #[must_use]
+    pub fn assets(&self) -> Option<&Arc<dyn BlobStore>> {
+        self.assets.as_ref()
     }
 
     /// The run label a standalone `task.create` seeds under — the MCP twin of

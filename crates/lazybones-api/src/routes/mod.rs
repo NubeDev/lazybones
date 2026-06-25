@@ -92,8 +92,11 @@ pub fn router(state: AppState) -> Router {
     // the same token registry via `AppState`'s `SessionResolver` impl — no
     // HTTP-to-self, no new privilege. It sits inside the same `cors_layer()` + body
     // limit applied to the REST routes below.
-    let mcp_service =
-        lazybones_mcp::streamable_http_service(state.store.clone(), Arc::new(state.clone()));
+    let mcp_service = lazybones_mcp::streamable_http_service(
+        state.store.clone(),
+        state.assets.clone(),
+        Arc::new(state.clone()),
+    );
     Router::new()
         .nest_service("/mcp", mcp_service)
         .route("/health", get(health::health))
