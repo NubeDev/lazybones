@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { AgentsPanel } from "@/features/agents/agents-panel";
 import { ManagementAgentCard } from "./management-agent-card";
+import { McpTokenCard } from "./mcp-token-card";
 import {
   apiBase,
   setApiBase,
@@ -227,6 +228,7 @@ export function SettingsPage() {
 
             <TabsContent value="management" className="space-y-4">
               <ManagementAgentCard />
+              <McpTokenCard />
             </TabsContent>
 
             <TabsContent value="timezone" className="space-y-4">

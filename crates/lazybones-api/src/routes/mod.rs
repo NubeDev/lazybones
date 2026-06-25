@@ -38,6 +38,7 @@ mod heartbeat;
 mod issue;
 mod list;
 mod management_agent;
+mod mcp_token;
 mod preferences;
 mod promote;
 mod ready;
@@ -87,11 +88,18 @@ use crate::state::AppState;
 
 /// Assemble the full route table over the shared [`AppState`].
 pub fn router(state: AppState) -> Router {
-    // The MCP front door (`lazybones-mcp`), mounted in-process as a sub-router at
-    // `/mcp` (design §4.1). It shares this server's store and authenticates against
-    // the same token registry via `AppState`'s `SessionResolver` impl — no
-    // HTTP-to-self, no new privilege. It sits inside the same `cors_layer()` + body
-    // limit applied to the REST routes below.
+    // The MCP front door (`lazybones-mcp`), mounted in-process at the single
+    // `/mcp` endpoint (design §4.1). It shares this server's store and
+    // authenticates against the same token registry via `AppState`'s
+    // `SessionResolver` impl — no HTTP-to-self, no new privilege. It sits inside
+    // the same `cors_layer()` + body limit applied to the REST routes below.
+    //
+    // Mounted with `route_service` (exact `/mcp`) rather than `nest_service`
+    // (`/mcp/*` subtree) so the sibling REST route `POST /mcp/token` below does not
+    // collide with — and panic against — the MCP subtree. The streamable-HTTP
+    // transport dispatches purely on HTTP method and ignores the request path, so
+    // serving it at the exact `/mcp` path is equivalent for MCP clients (which post
+    // to exactly that URL) while leaving `/mcp/token` free for the minting route.
     let mcp_service = lazybones_mcp::streamable_http_service(
         state.store.clone(),
         state.assets.clone(),
@@ -100,7 +108,11 @@ pub fn router(state: AppState) -> Router {
         Arc::new(state.clone()),
     );
     Router::new()
-        .nest_service("/mcp", mcp_service)
+        .route_service("/mcp", mcp_service)
+        // Mint a profile-scoped management token for an external MCP client to put
+        // in its `Authorization` header (design §9 OQ1). `Author` to mint; the
+        // token is a strict subset of the loop grant, never `Claim`/`Secret`.
+        .route("/mcp/token", post(mcp_token::mint_mcp_token))
         .route("/health", get(health::health))
         .route("/workfile/sync", post(sync::sync_workfile))
         .route("/tasks", get(list::list_tasks).post(create::create_task))

@@ -702,6 +702,22 @@ fn default_session_mode() -> String {
     "per_conversation".to_owned()
 }
 
+/// `POST /mcp/token` body: mint a profile-scoped management token for an external
+/// MCP client (docs/mcp/README.md OQ1). `profile` parses leniently (unknown ⇒ the
+/// safe `read_only`) the same way the stored config does; `label` is an optional
+/// human tag folded into the token's actor for auditability (defaults to
+/// `mcp-client`).
+#[derive(Debug, Deserialize)]
+pub struct MintMcpTokenBody {
+    /// `"read_only" | "author" | "author_and_manage"` — the grant the minted token
+    /// carries, mapped 1:1 onto the existing management capability profiles.
+    pub profile: String,
+    /// An optional human label for the client this token is for (e.g.
+    /// `"claude-desktop"`), recorded in the token's actor string.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
 /// `PUT /settings/preferences` body: the single global user-preferences record.
 /// Every field is optional; an omitted field clears that preference (reverts to
 /// the default — follow-browser timezone, system theme).
