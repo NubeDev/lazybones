@@ -12,7 +12,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{Html, IntoResponse, Response};
-use lazybones_render::{Assembled, Brand, Colors, Fonts, ImageAsset};
+use lazybones_render::{Assembled, Brand, Colors, Fonts, ImageAsset, RenderOptions};
 use lazybones_store::{Branding, Document};
 use serde::Deserialize;
 
@@ -20,13 +20,27 @@ use crate::error::ApiResult;
 use crate::routes::documents::{REFERENCE_KIND, require_document};
 use crate::state::AppState;
 
-/// Assemble a document's renderable markdown: its own pages (in `position`
-/// order) followed by each attached `reference` document's pages, in attach order
-/// (`list_attachments` returns newest-first, so we reverse). Pages are joined with
-/// a blank line; the render layer turns each page boundary into a PDF page break.
-/// Shared with the GitHub commit route.
-pub(crate) async fn assemble_markdown(state: &AppState, doc: &Document) -> ApiResult<String> {
-    let mut markdown = pages_markdown(state, &doc.id).await?;
+/// Assemble a document's renderable **pages**, in render order: the document's
+/// own pages (by `position`) followed by each attached `reference` document's
+/// pages, in attach order (`list_attachments` returns newest-first, so we
+/// reverse). Each non-empty page is one entry — the render layer puts a page
+/// break between them, so each becomes its own PDF page.
+pub(crate) async fn assemble_pages(state: &AppState, doc: &Document) -> ApiResult<Vec<String>> {
+    Ok(assemble_titled_pages(state, doc)
+        .await?
+        .into_iter()
+        .map(|(_, body)| body)
+        .collect())
+}
+
+/// Like [`assemble_pages`] but keeps each non-empty page's `(title, body)` so the
+/// index can list page titles. Same render order (own pages, then merged
+/// references in attach order).
+async fn assemble_titled_pages(
+    state: &AppState,
+    doc: &Document,
+) -> ApiResult<Vec<(String, String)>> {
+    let mut pages = titled_page_bodies(state, &doc.id).await?;
 
     let mut refs = state
         .store
@@ -35,24 +49,30 @@ pub(crate) async fn assemble_markdown(state: &AppState, doc: &Document) -> ApiRe
     refs.reverse(); // attach order: oldest first
     for att in refs {
         if state.store.get_document(&att.thing_id).await?.is_some() {
-            let reference_md = pages_markdown(state, &att.thing_id).await?;
-            if !reference_md.is_empty() {
-                if !markdown.is_empty() {
-                    markdown.push_str("\n\n");
-                }
-                markdown.push_str(&reference_md);
-            }
+            pages.extend(titled_page_bodies(state, &att.thing_id).await?);
         }
     }
-    Ok(markdown)
+    Ok(pages)
 }
 
-/// Concatenate a document's pages (in render order) into one markdown blob,
-/// joined by a blank line.
-async fn pages_markdown(state: &AppState, document: &str) -> ApiResult<String> {
-    let pages = state.store.list_pages(document).await?;
-    let bodies: Vec<String> = pages.into_iter().map(|p| p.body).collect();
-    Ok(bodies.join("\n\n"))
+/// Assemble a document's renderable markdown as one blank-line-joined blob — for
+/// consumers that don't paginate (the committed `.md` file, the issue body).
+/// Shared with the GitHub commit/issue routes.
+pub(crate) async fn assemble_markdown(state: &AppState, doc: &Document) -> ApiResult<String> {
+    Ok(assemble_pages(state, doc).await?.join("\n\n"))
+}
+
+/// The non-empty `(title, body)` pages of one document, in `position` (render)
+/// order.
+async fn titled_page_bodies(state: &AppState, document: &str) -> ApiResult<Vec<(String, String)>> {
+    Ok(state
+        .store
+        .list_pages(document)
+        .await?
+        .into_iter()
+        .filter(|p| !p.body.trim().is_empty())
+        .map(|p| (p.title, p.body))
+        .collect())
 }
 
 /// Which brand to render with. `None` ⇒ the document's saved `branding_id`;
@@ -67,8 +87,11 @@ async fn assemble(
     state: &AppState,
     doc: &Document,
     brand_override: BrandOverride<'_>,
+    options: RenderOptions,
 ) -> ApiResult<Assembled> {
-    let markdown = assemble_markdown(state, doc).await?;
+    let titled = assemble_titled_pages(state, doc).await?;
+    let (page_titles, pages): (Vec<String>, Vec<String>) = titled.into_iter().unzip();
+    let combined = pages.join("\n\n");
 
     // The effective brand id: a live override (blank ⇒ default) wins over the
     // saved one, so the preview tracks the picker before the document is saved.
@@ -89,9 +112,9 @@ async fn assemble(
     };
 
     // Resolve inline image bytes for every `![alt](src)` whose `src` names an
-    // asset (`/assets/<id>` or a bare asset id).
+    // asset (`/assets/<id>` or a bare asset id), across all pages.
     let mut images = Vec::new();
-    for src in lazybones_render::image_sources(&markdown) {
+    for src in lazybones_render::image_sources(&combined) {
         if let Some(image) = fetch_image(state, &asset_id_from_src(&src), &src).await? {
             images.push(image);
         }
@@ -99,10 +122,12 @@ async fn assemble(
 
     Ok(Assembled {
         title: doc.title.clone(),
-        markdown,
+        pages,
         brand,
         logo,
         images,
+        page_titles,
+        options,
     })
 }
 
@@ -156,12 +181,30 @@ fn to_brand(b: &Branding) -> Brand {
 }
 
 /// Query for the render preview: an optional live `branding_id` override so the
-/// editor can preview the currently-picked brand before the document is saved.
+/// editor can preview the currently-picked brand before the document is saved,
+/// plus the live layout toggles (page numbers / index) so the preview tracks the
+/// checkboxes before anything is saved.
 #[derive(Debug, Deserialize)]
 pub struct RenderQuery {
     /// The brand to preview with (blank ⇒ default brand). Absent ⇒ the saved one.
     #[serde(default)]
     branding_id: Option<String>,
+    /// Print a page number on every page.
+    #[serde(default)]
+    page_numbers: bool,
+    /// Prepend a table-of-contents index page.
+    #[serde(default)]
+    index: bool,
+}
+
+impl RenderQuery {
+    /// The layout options carried by this query.
+    fn options(&self) -> RenderOptions {
+        RenderOptions {
+            page_numbers: self.page_numbers,
+            index: self.index,
+        }
+    }
 }
 
 /// `GET /documents/:id/render` — the assembled HTML preview (body + merged
@@ -175,7 +218,7 @@ pub async fn render_document(
     Query(q): Query<RenderQuery>,
 ) -> ApiResult<Html<String>> {
     let doc = require_document(&state, &id).await?;
-    let assembled = assemble(&state, &doc, q.branding_id.as_deref()).await?;
+    let assembled = assemble(&state, &doc, q.branding_id.as_deref(), q.options()).await?;
     Ok(Html(lazybones_render::render_html(&assembled)))
 }
 
@@ -184,10 +227,34 @@ pub async fn render_document(
 pub async fn export_pdf(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<ExportQuery>,
 ) -> ApiResult<Response> {
     let doc = require_document(&state, &id).await?;
-    // Export always uses the document's saved brand (no live override).
-    let assembled = assemble(&state, &doc, None).await?;
+    // Export always uses the document's saved brand (no live override), but honors
+    // the layout toggles passed on the export link so the PDF matches the preview.
+    let assembled = assemble(&state, &doc, None, q.options()).await?;
     let pdf = lazybones_render::render_pdf(&assembled)?;
     Ok(([(CONTENT_TYPE, "application/pdf")], pdf).into_response())
+}
+
+/// Query for the PDF export: the layout toggles (page numbers / index), so the
+/// exported document matches what the editor previewed.
+#[derive(Debug, Deserialize)]
+pub struct ExportQuery {
+    /// Print a page number on every page.
+    #[serde(default)]
+    page_numbers: bool,
+    /// Prepend a table-of-contents index page.
+    #[serde(default)]
+    index: bool,
+}
+
+impl ExportQuery {
+    /// The layout options carried by this query.
+    fn options(&self) -> RenderOptions {
+        RenderOptions {
+            page_numbers: self.page_numbers,
+            index: self.index,
+        }
+    }
 }

@@ -20,7 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { BrandPicker } from "@/components/brand-picker";
 import { ApiError } from "@/lib/api/client";
-import { exportPdfUrl, renderDocumentHtml } from "@/lib/api/documents";
+import { exportPdfUrl, renderDocumentHtml, type RenderLayout } from "@/lib/api/documents";
 import {
   useAddReference,
   useCreateDocument,
@@ -68,6 +68,9 @@ export function DocumentEditor({
 
   const [id, setId] = useState(documentId ?? "");
   const [draft, setDraft] = useState<DocumentDraft>({ ...EMPTY, kind: initialKind });
+  // Layout toggles shared by the live preview and the PDF export, so the
+  // exported document matches exactly what's previewed.
+  const [layout, setLayout] = useState<RenderLayout>({ pageNumbers: false, index: false });
 
   useEffect(() => {
     if (doc) {
@@ -127,7 +130,7 @@ export function DocumentEditor({
             </Button>
             {!creating && (
               <Button asChild variant="secondary" size="sm">
-                <a href={exportPdfUrl(currentId!)} target="_blank" rel="noreferrer">
+                <a href={exportPdfUrl(currentId!, layout)} target="_blank" rel="noreferrer">
                   <FileDown /> Export PDF
                 </a>
               </Button>
@@ -184,6 +187,25 @@ export function DocumentEditor({
               />
             </Field>
 
+            <div className="space-y-1">
+              <span className="text-xs font-medium">Layout</span>
+              <div className="flex flex-col gap-1.5">
+                <LayoutToggle
+                  label="Page numbers"
+                  checked={!!layout.pageNumbers}
+                  onChange={(v) => setLayout((l) => ({ ...l, pageNumbers: v }))}
+                />
+                <LayoutToggle
+                  label="Index (table of contents)"
+                  checked={!!layout.index}
+                  onChange={(v) => setLayout((l) => ({ ...l, index: v }))}
+                />
+              </div>
+              <span className="block text-[10px] text-muted-foreground">
+                applies to the preview and the PDF export
+              </span>
+            </div>
+
             <div>
               <div className="mb-1 flex items-center gap-1.5">
                 <FileText className="size-3.5 text-accent" />
@@ -219,6 +241,7 @@ export function DocumentEditor({
               documentId={currentId!}
               document={doc}
               brandingId={draft.branding_id ?? null}
+              layout={layout}
             />
           )}
         </div>
@@ -231,10 +254,12 @@ function SidePanels({
   documentId,
   document,
   brandingId,
+  layout,
 }: {
   documentId: string;
   document?: Document;
   brandingId: string | null;
+  layout: RenderLayout;
 }) {
   return (
     <Tabs defaultValue="preview" className="flex h-full flex-col">
@@ -260,7 +285,7 @@ function SidePanels({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <TabsContent value="preview">
-          <HtmlPreview documentId={documentId} brandingId={brandingId} />
+          <HtmlPreview documentId={documentId} brandingId={brandingId} layout={layout} />
         </TabsContent>
         <TabsContent value="references">
           <ReferencesPanel documentId={documentId} />
@@ -291,13 +316,15 @@ function SidePanels({
 function HtmlPreview({
   documentId,
   brandingId,
+  layout,
 }: {
   documentId: string;
   brandingId: string | null;
+  layout: RenderLayout;
 }) {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ["doc-render", documentId, brandingId],
-    queryFn: ({ signal }) => renderDocumentHtml(documentId, brandingId, signal),
+    queryKey: ["doc-render", documentId, brandingId, layout.pageNumbers, layout.index],
+    queryFn: ({ signal }) => renderDocumentHtml(documentId, brandingId, layout, signal),
   });
 
   return (
@@ -432,6 +459,30 @@ function Field({
       <span className="text-xs font-medium">{label}</span>
       {children}
       {hint && <span className="block text-[10px] text-muted-foreground">{hint}</span>}
+    </label>
+  );
+}
+
+/** A single layout checkbox (page numbers / index) used in the editor's Layout
+ *  group. */
+function LayoutToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="size-3.5 accent-accent"
+      />
+      {label}
     </label>
   );
 }

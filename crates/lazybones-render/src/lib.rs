@@ -42,7 +42,7 @@ mod world;
 pub use convert::{image_sources, markdown_to_typst, markdown_to_typst_plain};
 pub use error::RenderError;
 pub use html::render_html;
-pub use model::{Assembled, Brand, Colors, Fonts, ImageAsset};
+pub use model::{Assembled, Brand, Colors, Fonts, ImageAsset, RenderOptions};
 pub use pdf::render_pdf;
 
 #[cfg(test)]

@@ -170,10 +170,14 @@ export function removeSource(id: string, sid: string): Promise<{ deleted: boolea
 export async function renderDocumentHtml(
   id: string,
   brandingId?: string | null,
+  layout?: RenderLayout,
   signal?: AbortSignal,
 ): Promise<string> {
-  const q =
-    brandingId === undefined ? "" : `?branding_id=${encodeURIComponent(brandingId ?? "")}`;
+  const params = new URLSearchParams();
+  if (brandingId !== undefined) params.set("branding_id", brandingId ?? "");
+  if (layout?.pageNumbers) params.set("page_numbers", "true");
+  if (layout?.index) params.set("index", "true");
+  const q = params.toString() ? `?${params}` : "";
   const res = await fetch(`${apiBase()}/documents/${encodeURIComponent(id)}/render${q}`, { signal });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -182,10 +186,22 @@ export async function renderDocumentHtml(
   return res.text();
 }
 
+/** Layout toggles shared by the preview and the PDF export: print page numbers,
+ *  and prepend a table-of-contents index page. */
+export type RenderLayout = {
+  pageNumbers?: boolean;
+  index?: boolean;
+};
+
 /** The absolute URL of a document's PDF export (`GET /documents/:id/export.pdf`,
- *  open read) — point a download link or new tab at it. */
-export function exportPdfUrl(id: string): string {
-  return `${apiBase()}/documents/${encodeURIComponent(id)}/export.pdf`;
+ *  open read) — point a download link or new tab at it. The layout toggles are
+ *  carried as query params so the exported PDF matches the previewed one. */
+export function exportPdfUrl(id: string, layout?: RenderLayout): string {
+  const params = new URLSearchParams();
+  if (layout?.pageNumbers) params.set("page_numbers", "true");
+  if (layout?.index) params.set("index", "true");
+  const q = params.toString() ? `?${params}` : "";
+  return `${apiBase()}/documents/${encodeURIComponent(id)}/export.pdf${q}`;
 }
 
 // ---- GitHub publishing ------------------------------------------------------

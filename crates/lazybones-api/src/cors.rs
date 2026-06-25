@@ -29,5 +29,10 @@ pub fn cors_layer() -> CorsLayer {
         .allow_headers([
             HeaderName::from_static("authorization"),
             HeaderName::from_static("content-type"),
+            // Raw-body uploads (assets, document sources) send the original
+            // filename in `x-filename`; without it here the browser's preflight
+            // rejects every upload (the daemon looked fine from curl/tests, which
+            // don't preflight).
+            HeaderName::from_static("x-filename"),
         ])
 }

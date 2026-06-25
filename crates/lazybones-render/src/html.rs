@@ -22,21 +22,175 @@ use crate::model::{Assembled, ImageAsset};
 /// in the preview.
 #[must_use]
 pub fn render_html(assembled: &Assembled) -> String {
+    let c = &assembled.brand.colors;
+    let f = &assembled.brand.fonts;
+    let bg = css_or(&c.background, "#ffffff");
+    let text = css_or(&c.text, "#1a1a1a");
+    let primary = css_or(&c.primary, "#222222");
+    let accent = css_or(&c.accent, "#2563eb");
+    let heading_font = css_or(&f.heading, "Georgia, 'Times New Roman', serif");
+    let body_font = css_or(&f.body, "Georgia, 'Times New Roman', serif");
+
+    // The cover (header band, logo, title) is the first sheet's leading content —
+    // exactly as the PDF template lays it out before the first page's body — so it
+    // prints *on* the A4 page rather than floating on the grey desk above it.
+    let mut cover = String::new();
+    if !assembled.brand.header_text.trim().is_empty() {
+        cover.push_str(&format!(
+            "<header>{}</header>\n",
+            escape_html(&assembled.brand.header_text)
+        ));
+    }
+    if let Some(logo) = &assembled.logo {
+        cover.push_str(&format!(
+            "<img class=\"brand-logo\" src=\"{}\" alt=\"\">\n",
+            data_uri(logo)
+        ));
+    }
+    cover.push_str(&format!(
+        "<h1 class=\"doc-title\">{}</h1>\n",
+        escape_html(&assembled.title)
+    ));
+
+    // When enabled, an index (table of contents) sheet rides on the cover page,
+    // listing each non-empty page's title — mirroring the PDF, where the index
+    // shares the title page and the body starts after a break.
+    if assembled.options.index {
+        cover.push_str(&index_html(assembled));
+    }
+
+    let brand_footer = if assembled.brand.footer_text.trim().is_empty() {
+        String::new()
+    } else {
+        format!("<span class=\"brand-footer\">{}</span>", escape_html(&assembled.brand.footer_text))
+    };
+
+    // Render each page to its own A4 sheet (one card per page), so the preview
+    // mirrors the paginated PDF. The cover rides on the first sheet; every sheet
+    // gets a footer band carrying the brand footer (last page) and, when enabled,
+    // a "page / total" counter — just like the printed document.
+    let total = assembled.pages.len().max(1);
+    let last = total - 1;
+    let mut sections = String::new();
+    for (i, page) in assembled.pages.iter().enumerate() {
+        let lead = if i == 0 { cover.as_str() } else { "" };
+        let band = page_footer_html(
+            if i == last { &brand_footer } else { "" },
+            assembled.options.page_numbers,
+            i + 1,
+            total,
+        );
+        sections.push_str(&format!(
+            "<section class=\"doc-page\">\n{lead}{}{band}</section>\n",
+            render_body(page, &assembled.images)
+        ));
+    }
+    // A document with no pages still shows its cover on a single sheet.
+    if assembled.pages.is_empty() {
+        let band = page_footer_html(&brand_footer, assembled.options.page_numbers, 1, 1);
+        sections.push_str(&format!("<section class=\"doc-page\">\n{cover}{band}</section>\n"));
+    }
+
+    format!(
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+<title>{title}</title>\n<style>\n\
+/* The preview mirrors the printed PDF: every page is a real A4 sheet \
+(210mm x 297mm) with the same 2.2cm side / 2.6cm top / 2.4cm bottom margins \
+as the Typst template, laid out on a grey desk and centred. */\n\
+:root{{--page-w:210mm;--page-h:297mm;--page-mx:2.2cm;--page-mt:2.6cm;--page-mb:2.4cm;}}\n\
+*{{box-sizing:border-box;}}\n\
+body{{background:#e6e6e9;color:{text};font-family:{body_font};line-height:1.6;\
+margin:0;padding:1.5rem;display:flex;flex-direction:column;align-items:center;gap:1.5rem;}}\n\
+h1,h2,h3,h4,h5,h6{{font-family:{heading_font};color:{primary};line-height:1.25;}}\n\
+.doc-title{{border-bottom:2px solid {primary};padding-bottom:0.3rem;margin:0 0 1rem;}}\n\
+header{{opacity:0.65;font-size:0.85rem;}}\n\
+/* The footer band pins to the bottom of its sheet (flex push) and carries the \
+brand footer on the left and the page counter on the right. */\n\
+.page-foot{{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;\
+gap:1rem;padding-top:1.5rem;opacity:0.65;font-size:0.85rem;}}\n\
+.page-foot .page-num{{margin-left:auto;font-variant-numeric:tabular-nums;}}\n\
+/* Index (table of contents) listing each page title. */\n\
+.doc-index{{margin:0 0 1rem;}}\n\
+.doc-index h2{{margin:0 0 0.6rem;}}\n\
+.doc-index ol{{list-style:none;margin:0;padding:0;}}\n\
+.doc-index li{{display:flex;gap:0.6em;padding:0.15rem 0;}}\n\
+.doc-index .idx-n{{color:{primary};font-weight:600;min-width:1.4em;}}\n\
+.brand-logo{{max-height:3.2rem;width:auto;margin-bottom:1rem;}}\n\
+/* The sheet keeps true A4 proportions but shrinks to fit a narrow preview pane \
+(the iframe is often half the screen) so it never clips horizontally. \
+aspect-ratio holds 210:297 once the width caps below A4. The flex column lets the \
+footer band sink to the bottom of every sheet. */\n\
+.doc-page{{background:{bg};color:{text};box-shadow:0 2px 10px rgba(0,0,0,0.22);\
+width:min(var(--page-w),100%);aspect-ratio:210/297;display:flex;flex-direction:column;\
+padding:var(--page-mt) var(--page-mx) var(--page-mb);margin:0;overflow:hidden;}}\n\
+@media(min-width:840px){{.doc-page{{width:var(--page-w);height:var(--page-h);aspect-ratio:auto;}}}}\n\
+.doc-page>*:first-child{{margin-top:0;}}\n\
+a{{color:{accent};}}\n\
+code,pre{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}}\n\
+pre{{background:rgba(0,0,0,0.05);padding:0.75rem 1rem;border-radius:6px;overflow:auto;}}\n\
+blockquote{{border-left:3px solid {primary};margin-left:0;padding-left:1rem;opacity:0.85;}}\n\
+table{{border-collapse:collapse;}}\n\
+th,td{{border:1px solid rgba(0,0,0,0.2);padding:0.4rem 0.7rem;}}\n\
+img{{max-width:100%;}}\n</style>\n</head>\n<body>\n{sections}</body></html>",
+        title = escape_html(&assembled.title),
+    )
+}
+
+/// The index (table-of-contents) fragment: a heading and a numbered list of each
+/// non-empty page's title, in render order. Empty pages are skipped so the
+/// numbering matches the body (and the PDF index). Returns `""` when nothing
+/// would be listed.
+fn index_html(assembled: &Assembled) -> String {
+    let mut rows = String::new();
+    let mut n = 0usize;
+    for (i, page) in assembled.pages.iter().enumerate() {
+        if page.trim().is_empty() {
+            continue;
+        }
+        n += 1;
+        rows.push_str(&format!(
+            "<li><span class=\"idx-n\">{n}</span>{}</li>\n",
+            escape_html(&assembled.page_label(i))
+        ));
+    }
+    if rows.is_empty() {
+        return String::new();
+    }
+    format!("<section class=\"doc-index\">\n<h2>Index</h2>\n<ol>\n{rows}</ol>\n</section>\n")
+}
+
+/// A sheet's footer band: the brand footer (already HTML) on the left and, when
+/// enabled, a `page / total` counter on the right. Returns `""` when neither is
+/// present so an unconfigured sheet keeps no footer.
+fn page_footer_html(brand: &str, page_numbers: bool, page: usize, total: usize) -> String {
+    if brand.is_empty() && !page_numbers {
+        return String::new();
+    }
+    let number = if page_numbers {
+        format!("<span class=\"page-num\">{page} / {total}</span>")
+    } else {
+        String::new()
+    };
+    format!("<footer class=\"page-foot\">{brand}{number}</footer>\n")
+}
+
+/// Render one page's markdown to an HTML fragment, rewriting inline image `src`s
+/// to `data:` URIs so they render in the (base-URL-less) preview iframe.
+fn render_body(markdown: &str, images: &[ImageAsset]) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_TASKLISTS);
 
-    // Rewrite each inline image `src` to a data URI so it renders in the iframe.
-    let parser = Parser::new_ext(&assembled.markdown, options).map(|event| match event {
+    let parser = Parser::new_ext(markdown, options).map(|event| match event {
         Event::Start(Tag::Image {
             link_type,
             dest_url,
             title,
             id,
         }) => {
-            let dest_url = data_uri_for_src(&assembled.images, &dest_url)
-                .map_or(dest_url, CowStr::from);
+            let dest_url = data_uri_for_src(images, &dest_url).map_or(dest_url, CowStr::from);
             Event::Start(Tag::Image {
                 link_type,
                 dest_url,
@@ -49,57 +203,7 @@ pub fn render_html(assembled: &Assembled) -> String {
 
     let mut body = String::new();
     html::push_html(&mut body, parser);
-
-    let c = &assembled.brand.colors;
-    let f = &assembled.brand.fonts;
-    let bg = css_or(&c.background, "#ffffff");
-    let text = css_or(&c.text, "#1a1a1a");
-    let primary = css_or(&c.primary, "#222222");
-    let accent = css_or(&c.accent, "#2563eb");
-    let heading_font = css_or(&f.heading, "Georgia, 'Times New Roman', serif");
-    let body_font = css_or(&f.body, "Georgia, 'Times New Roman', serif");
-
-    let mut sections = String::new();
-    if !assembled.brand.header_text.trim().is_empty() {
-        sections.push_str(&format!(
-            "<header>{}</header>\n",
-            escape_html(&assembled.brand.header_text)
-        ));
-    }
-    if let Some(logo) = &assembled.logo {
-        sections.push_str(&format!(
-            "<img class=\"brand-logo\" src=\"{}\" alt=\"\">\n",
-            data_uri(logo)
-        ));
-    }
-    sections.push_str(&format!("<h1 class=\"doc-title\">{}</h1>\n", escape_html(&assembled.title)));
-    sections.push_str(&body);
-    if !assembled.brand.footer_text.trim().is_empty() {
-        sections.push_str(&format!(
-            "<footer>{}</footer>\n",
-            escape_html(&assembled.brand.footer_text)
-        ));
-    }
-
-    format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
-<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-<title>{title}</title>\n<style>\n\
-body{{background:{bg};color:{text};font-family:{body_font};line-height:1.6;\
-margin:0 auto;max-width:46rem;padding:2.5rem 1.5rem;}}\n\
-h1,h2,h3,h4,h5,h6{{font-family:{heading_font};color:{primary};line-height:1.25;}}\n\
-.doc-title{{border-bottom:2px solid {primary};padding-bottom:0.3rem;}}\n\
-a{{color:{accent};}}\n\
-code,pre{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}}\n\
-pre{{background:rgba(0,0,0,0.05);padding:0.75rem 1rem;border-radius:6px;overflow:auto;}}\n\
-blockquote{{border-left:3px solid {primary};margin-left:0;padding-left:1rem;opacity:0.85;}}\n\
-table{{border-collapse:collapse;}}\n\
-th,td{{border:1px solid rgba(0,0,0,0.2);padding:0.4rem 0.7rem;}}\n\
-header,footer{{opacity:0.65;font-size:0.85rem;}}\n\
-img{{max-width:100%;}}\n\
-.brand-logo{{max-height:3.2rem;width:auto;margin-bottom:1rem;}}\n</style>\n</head>\n<body>\n{sections}</body></html>",
-        title = escape_html(&assembled.title),
-    )
+    body
 }
 
 /// The `data:` URI for the inline image whose `src` matches `src`, or `None` if
@@ -184,7 +288,7 @@ mod tests {
         assert!(html.contains("#1d4ed8"));
         assert!(html.contains("#db2777"));
         assert!(html.contains("<header>Confidential</header>"));
-        assert!(html.contains("<footer>&copy; ACME</footer>") || html.contains("<footer>© ACME</footer>"));
+        assert!(html.contains("brand-footer\">&copy; ACME</span>") || html.contains("brand-footer\">© ACME</span>"));
     }
 
     #[test]
@@ -204,6 +308,101 @@ mod tests {
         assert!(html.contains("data:image/jpeg;base64,"));
         // The unresolved server path must not leak into the preview.
         assert!(!html.contains("/assets/abc"));
+    }
+
+    #[test]
+    fn each_page_renders_as_its_own_card() {
+        let assembled = Assembled::with_pages(
+            "Book",
+            vec!["# Page one".to_owned(), "# Page two".to_owned()],
+        );
+        let html = render_html(&assembled);
+        assert_eq!(html.matches("class=\"doc-page\"").count(), 2, "one card per page");
+        assert!(html.contains("Page one"));
+        assert!(html.contains("Page two"));
+    }
+
+    #[test]
+    fn pages_are_sized_as_real_a4_sheets() {
+        let html = render_html(&Assembled::new("Doc", "body"));
+        // The preview must lay each page out at true A4 dimensions, not an
+        // arbitrary min-height, so it matches the printed PDF.
+        assert!(html.contains("--page-w:210mm"));
+        assert!(html.contains("--page-h:297mm"));
+        assert!(html.contains("width:var(--page-w)"));
+        assert!(html.contains("height:var(--page-h)"));
+        assert!(!html.contains("min-height:60vh"));
+    }
+
+    #[test]
+    fn cover_rides_on_the_first_sheet() {
+        // The title (and header/logo) belong inside the first A4 sheet, mirroring
+        // the PDF, rather than floating above the pages on the grey desk.
+        let assembled = Assembled::with_pages(
+            "My Title",
+            vec!["# One".to_owned(), "# Two".to_owned()],
+        )
+        .with_brand(Brand {
+            header_text: "Confidential".into(),
+            ..Brand::default()
+        });
+        let html = render_html(&assembled);
+        let first = html.split("<section class=\"doc-page\">").nth(1).unwrap();
+        let first_page = first.split("</section>").next().unwrap();
+        assert!(first_page.contains("doc-title"), "title is on the first sheet");
+        assert!(first_page.contains("<header>Confidential</header>"));
+    }
+
+    #[test]
+    fn page_numbers_add_a_counter_to_every_sheet() {
+        use crate::model::RenderOptions;
+        let assembled = Assembled::with_pages("Book", vec!["a".to_owned(), "b".to_owned()])
+            .with_options(RenderOptions {
+                page_numbers: true,
+                index: false,
+            });
+        let html = render_html(&assembled);
+        assert!(html.contains("class=\"page-num\">1 / 2<"));
+        assert!(html.contains("class=\"page-num\">2 / 2<"));
+    }
+
+    #[test]
+    fn no_options_means_no_counter_or_index() {
+        let html = render_html(&Assembled::new("Doc", "body"));
+        // No rendered counter span and no index section (the CSS class definitions
+        // for these always exist; assert on the rendered markup, not the styles).
+        assert!(!html.contains("class=\"page-num\">"));
+        assert!(!html.contains("class=\"doc-index\">"));
+        assert!(!html.contains("class=\"page-foot\">"));
+    }
+
+    #[test]
+    fn index_lists_page_titles_and_skips_blanks() {
+        use crate::model::RenderOptions;
+        let assembled = Assembled::with_pages(
+            "Book",
+            vec!["One".to_owned(), "   ".to_owned(), "Three".to_owned()],
+        )
+        .with_page_titles(vec!["Alpha".to_owned(), "Blank".to_owned(), "Gamma".to_owned()])
+        .with_options(RenderOptions {
+            page_numbers: false,
+            index: true,
+        });
+        let html = render_html(&assembled);
+        assert!(html.contains("doc-index"));
+        assert!(html.contains(">Alpha<") || html.contains("Alpha</li>"));
+        assert!(html.contains("Gamma"));
+        // The blank page is not listed, and the index renumbers around it.
+        assert!(!html.contains("Blank"));
+    }
+
+    #[test]
+    fn index_falls_back_to_generic_labels_without_titles() {
+        use crate::model::RenderOptions;
+        let assembled = Assembled::with_pages("Book", vec!["body".to_owned()])
+            .with_options(RenderOptions { page_numbers: false, index: true });
+        let html = render_html(&assembled);
+        assert!(html.contains("Page 1"));
     }
 
     #[test]

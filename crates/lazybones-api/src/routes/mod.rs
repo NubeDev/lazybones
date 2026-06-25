@@ -77,6 +77,7 @@ mod workflows_tasks;
 mod workflows_update;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post, put};
 
 use crate::cors::cors_layer;
@@ -411,6 +412,9 @@ pub fn router(state: AppState) -> Router {
             "/extensions/:id/frontend/*path",
             get(extensions::frontend_asset),
         )
+        // Raw-body uploads (asset logos/images, PDF sources) routinely exceed
+        // axum's 2 MB default body limit; lift it so real images/PDFs upload.
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         // Let the browser/desktop UI (a different origin) read the surface.
         .layer(cors_layer())
         .with_state(state)

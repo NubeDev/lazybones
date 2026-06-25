@@ -37,12 +37,22 @@ pub fn render_pdf(assembled: &Assembled) -> Result<Vec<u8>, RenderError> {
         image_paths.push((img.src.clone(), path));
     }
 
-    let body = markdown_to_typst(&assembled.markdown, |src| {
+    let resolve = |src: &str| {
         image_paths
             .iter()
             .find(|(s, _)| s == src)
             .map(|(_, path)| path.clone())
-    });
+    };
+    // Convert each page independently and join with a real Typst page break, so
+    // every document page lands on its own PDF page. Empty pages are dropped so a
+    // blank page never produces a stray break.
+    let body = assembled
+        .pages
+        .iter()
+        .map(|page| markdown_to_typst(page, |src| resolve(src)))
+        .filter(|typ| !typ.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n#pagebreak()\n\n");
 
     let source = build_template(assembled, logo_path.as_deref(), &body);
 
@@ -69,7 +79,7 @@ fn build_template(a: &Assembled, logo_path: Option<&str>, body: &str) -> String 
     let heading_font = font_list(&f.heading);
 
     let header = brand_band(&a.brand.header_text, &text_color);
-    let footer = brand_band(&a.brand.footer_text, &text_color);
+    let footer = page_footer(&a.brand.footer_text, &text_color, a.options.page_numbers);
 
     let mut out = String::new();
     out.push_str(&format!(
@@ -96,8 +106,58 @@ fn build_template(a: &Assembled, logo_path: Option<&str>, body: &str) -> String 
     out.push_str(&format!("#line(length: 100%, stroke: 0.6pt + {primary})\n"));
     out.push_str("#v(0.6cm)\n\n");
 
+    if a.options.index {
+        out.push_str(&index_block(a, &primary));
+    }
+
     out.push_str(body);
     out.push('\n');
+    out
+}
+
+/// The page footer: the brand footer band on the left and, when page numbers are
+/// on, a live `page / total` counter on the right. Returns `none` when neither is
+/// present so an unconfigured document keeps its empty footer.
+fn page_footer(brand_text: &str, color: &str, page_numbers: bool) -> String {
+    let band = brand_band(brand_text, color);
+    if !page_numbers {
+        return band;
+    }
+    // `context` lets the counter read the resolved page/total at layout time.
+    let number = format!(
+        "context [#text(size: 8.5pt, fill: {color})[#counter(page).display(\"1 / 1\", both: true)]]"
+    );
+    // Brand band (if any) on the left, page number pushed to the right.
+    let left = if band == "none" { "[]".to_owned() } else { band };
+    format!("[#grid(columns: (1fr, auto), {left}, {number})]")
+}
+
+/// An index (table of contents) block listing each non-empty page's title in
+/// render order, followed by a page break so the body starts on a fresh page.
+/// Mirrors the body's empty-page filtering so the numbering lines up.
+fn index_block(a: &Assembled, primary: &str) -> String {
+    let mut rows = String::new();
+    let mut n = 0usize;
+    for (i, page) in a.pages.iter().enumerate() {
+        if page.trim().is_empty() {
+            continue;
+        }
+        n += 1;
+        rows.push_str(&format!(
+            "#text(size: 11pt)[{}.#h(0.4em){}]\n#v(0.2cm)\n",
+            n,
+            typst_string(&a.page_label(i))
+        ));
+    }
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    out.push_str(&format!(
+        "#text(size: 15pt, weight: \"bold\", fill: {primary})[Index]\n#v(0.4cm)\n"
+    ));
+    out.push_str(&rows);
+    out.push_str("#pagebreak()\n\n");
     out
 }
 
@@ -178,6 +238,28 @@ mod tests {
     }
 
     #[test]
+    fn multi_page_document_inserts_a_page_break_per_page() {
+        // Two pages should compile to a PDF with two pages (each page-broken).
+        let one = render_pdf(&Assembled::with_pages("Book", vec!["Only page.".to_owned()]))
+            .expect("single page renders");
+        let two = render_pdf(&Assembled::with_pages(
+            "Book",
+            vec!["First page.".to_owned(), "Second page.".to_owned()],
+        ))
+        .expect("two pages render");
+        // The page count is encoded in the PDF; the two-page doc must report more
+        // `/Page` objects than the one-page doc.
+        let count = |pdf: &[u8]| {
+            String::from_utf8_lossy(pdf).matches("/Type /Page\n").count()
+                + String::from_utf8_lossy(pdf).matches("/Type/Page").count()
+        };
+        assert!(
+            count(&two) > count(&one),
+            "two-page doc should have more PDF pages than one-page doc",
+        );
+    }
+
+    #[test]
     fn renders_with_a_brand_palette_and_header() {
         let brand = Brand {
             colors: Colors {
@@ -206,6 +288,39 @@ mod tests {
             Assembled::new("With Logo", "Body.").with_logo(ImageAsset::new("", "logo.svg", svg));
         let pdf = render_pdf(&assembled).expect("logo render should succeed");
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn renders_with_page_numbers_and_index() {
+        use crate::model::RenderOptions;
+        let assembled = Assembled::with_pages(
+            "Book",
+            vec!["First page.".to_owned(), "Second page.".to_owned()],
+        )
+        .with_page_titles(vec!["Intro".to_owned(), "Details".to_owned()])
+        .with_options(RenderOptions {
+            page_numbers: true,
+            index: true,
+        });
+        // The generated template must compile to a real PDF with both the page
+        // counter (footer grid) and the index page present.
+        let pdf = render_pdf(&assembled).expect("page-number + index render should succeed");
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn index_block_lists_non_empty_pages() {
+        let assembled = Assembled::with_pages(
+            "Book",
+            vec!["One".to_owned(), "  ".to_owned(), "Three".to_owned()],
+        )
+        .with_page_titles(vec!["A".to_owned(), "Blank".to_owned(), "C".to_owned()]);
+        let block = index_block(&assembled, "rgb(\"#222\")");
+        // The blank page is skipped, and numbering renumbers around it.
+        assert!(block.contains("\"A\""));
+        assert!(block.contains("\"C\""));
+        assert!(!block.contains("\"Blank\""));
+        assert!(block.contains("#pagebreak()"));
     }
 
     #[test]
