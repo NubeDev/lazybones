@@ -3438,6 +3438,7 @@ dependencies = [
 name = "lazybones-mcp"
 version = "0.1.0"
 dependencies = [
+ "http",
  "lazybones-auth",
  "lazybones-engine",
  "lazybones-ext",
@@ -3446,6 +3447,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

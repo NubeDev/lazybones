@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, tool_handler, tool_router};
+use rmcp::{ServerHandler, tool_handler};
 
 use lazybones_auth::ScopedSession;
 use lazybones_store::StoreHandle;
@@ -65,12 +65,12 @@ pub struct McpServer {
     /// registry — the same map a REST request authenticates through (design §3). Held
     /// behind `Arc<dyn …>` so this crate stays free of a cycle back onto `lazybones-api`.
     resolver: Arc<dyn SessionResolver>,
-    /// The typed tool surface. Empty in this scaffold; `#[tool]` methods register
-    /// here as the §6 verbs land.
+    /// The typed tool surface, assembled by [`crate::tools::router`] from each
+    /// group's `#[tool_router]` block. P0 holds `state.health` + `workflow.create`;
+    /// it grows as the §6 verbs land.
     tool_router: ToolRouter<McpServer>,
 }
 
-#[tool_router]
 impl McpServer {
     /// Build a server over the shared [`StoreHandle`] and the bearer-token
     /// [`SessionResolver`] the mount supplies. Later tasks extend the signature with
@@ -80,7 +80,7 @@ impl McpServer {
         Self {
             store,
             resolver,
-            tool_router: Self::tool_router(),
+            tool_router: crate::tools::router(),
         }
     }
 

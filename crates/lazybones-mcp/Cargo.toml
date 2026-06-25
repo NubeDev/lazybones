@@ -31,3 +31,12 @@ lazybones-ext = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+# The streamable-HTTP transport injects the request's `http::request::Parts` into
+# each tool call's extensions; a mutating tool reads its bearer token out of those
+# parts — the MCP twin of a REST handler reading the `Authorization` header (§3).
+http = "1"
+
+[dev-dependencies]
+# Drive the async tool methods in the in-process integration test.
+tokio = { workspace = true }

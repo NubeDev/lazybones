@@ -45,6 +45,21 @@ pub fn resolve_session(
     resolver.session_for(token)
 }
 
+/// Read the `Authorization` header value out of an HTTP request's [`Parts`], as a
+/// `&str` for [`resolve_session`]/[`McpServer::session_for`](crate::server::McpServer::session_for).
+///
+/// The streamable-HTTP transport injects the request's [`Parts`] into each tool
+/// call's extensions (see the rmcp `StreamableHttpService` docs), so a tool reaches
+/// the bearer token the connection authenticated with through this — the MCP twin of
+/// a REST handler reading the same header. `None` when the header is absent or not
+/// valid UTF-8, falling through to the unauthenticated read-only path.
+///
+/// [`Parts`]: http::request::Parts
+#[must_use]
+pub fn authorization_header(parts: &http::request::Parts) -> Option<&str> {
+    parts.headers.get(http::header::AUTHORIZATION)?.to_str().ok()
+}
+
 /// Extract the bearer token from an `Authorization` header value, if present and
 /// well-formed (`"Bearer <token>"`, case-insensitive scheme, non-empty token).
 ///

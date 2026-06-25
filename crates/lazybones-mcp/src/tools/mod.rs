@@ -9,11 +9,23 @@
 //! logic lives here** — it is the REST handlers' twin over the same store boundary,
 //! so the two surfaces can never drift.
 //!
-//! Empty in this scaffold (task `mcp-crate`): the `#[tool]` methods register onto
-//! [`McpServer`](crate::server::McpServer)'s [`ToolRouter`](crate::ToolRouter) as
-//! each group is implemented.
+//! Each group contributes its own `#[tool_router(router = …)]` block over
+//! [`McpServer`](crate::server::McpServer); [`router`] merges them into the one
+//! [`ToolRouter`](crate::ToolRouter) the server holds. P0 (task `mcp-spike`)
+//! wires `supervise::state.health` + `orchestrate::workflow.create`; the remaining
+//! groups register their verbs here as they land.
 
 pub mod documents;
 pub mod extensions;
 pub mod orchestrate;
 pub mod supervise;
+
+use crate::ToolRouter;
+use crate::server::McpServer;
+
+/// Assemble the full MCP tool surface by merging each group's router. The server's
+/// `new()` stores the result; adding a group is adding its router to this sum.
+#[must_use]
+pub(crate) fn router() -> ToolRouter<McpServer> {
+    McpServer::supervise_router() + McpServer::orchestrate_router()
+}
