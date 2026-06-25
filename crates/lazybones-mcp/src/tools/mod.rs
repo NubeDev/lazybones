@@ -20,7 +20,12 @@ pub mod extensions;
 pub mod orchestrate;
 pub mod supervise;
 
+use rmcp::handler::server::wrapper::Json;
+use serde::Serialize;
+use serde_json::Value;
+
 use crate::ToolRouter;
+use crate::error::{McpError, McpResult};
 use crate::server::McpServer;
 
 /// Assemble the full MCP tool surface by merging each group's router. The server's
@@ -28,4 +33,17 @@ use crate::server::McpServer;
 #[must_use]
 pub(crate) fn router() -> ToolRouter<McpServer> {
     McpServer::supervise_router() + McpServer::orchestrate_router()
+}
+
+/// Serialize an existing domain type as a tool's JSON result — the shared tail of
+/// every tool that returns a store/engine value. We hand back `Json<Value>` (rather
+/// than the typed `Json<T>`) so the wire shape is the domain type's own serde form,
+/// identical to what the REST route returns, with no second schema to drift.
+///
+/// A serialization failure is an internal error (a domain type that won't serialize
+/// is a bug, not a client fault).
+pub(crate) fn json<T: Serialize>(value: T) -> McpResult<Json<Value>> {
+    let value =
+        serde_json::to_value(value).map_err(|e| McpError::Internal(format!("serialize: {e}")))?;
+    Ok(Json(value))
 }

@@ -37,6 +37,14 @@ thiserror = { workspace = true }
 # parts — the MCP twin of a REST handler reading the `Authorization` header (§3).
 http = "1"
 
+# `task.transcript` shells out to `hcom transcript` on demand (§6.4), exactly as
+# the REST passthrough does — async process spawning under the shared runtime.
+tokio = { workspace = true }
+
+# Best-effort warnings from the gated lifecycle tools (a reclaim/kill that fails is
+# logged, never fatal) — the same `tracing::warn!` discipline the REST routes use.
+tracing = { workspace = true }
+
 [dev-dependencies]
 # Drive the async tool methods in the in-process integration test.
 tokio = { workspace = true }

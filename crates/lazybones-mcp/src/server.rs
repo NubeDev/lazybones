@@ -13,10 +13,17 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool_handler};
 
-use lazybones_auth::ScopedSession;
+use lazybones_auth::{Capability, ScopedSession};
 use lazybones_store::StoreHandle;
 
 use crate::auth::{self, SessionResolver};
+use crate::error::McpError;
+
+/// The run label MCP-authored standalone tasks group under when the daemon's
+/// `LAZYBONES_RUN` is unset — the same default `lazybones-cli`'s `configure`
+/// applies (`env_or("LAZYBONES_RUN", …, "lazybones-run")`), so the two surfaces
+/// land their history in the same place.
+const DEFAULT_RUN_LABEL: &str = "lazybones-run";
 
 /// The instructions string advertised over `ServerHandler::get_info`. Distilled
 /// from [`docs/managing-with-ai.md`](../../../docs/managing-with-ai.md) — the same
@@ -65,9 +72,13 @@ pub struct McpServer {
     /// registry — the same map a REST request authenticates through (design §3). Held
     /// behind `Arc<dyn …>` so this crate stays free of a cycle back onto `lazybones-api`.
     resolver: Arc<dyn SessionResolver>,
+    /// The event-grouping run label a standalone `task.create` seeds under — the
+    /// twin of `AppState::run`, read from `LAZYBONES_RUN` (or [`DEFAULT_RUN_LABEL`])
+    /// so MCP-authored tasks group exactly where the REST surface's do.
+    run: String,
     /// The typed tool surface, assembled by [`crate::tools::router`] from each
-    /// group's `#[tool_router]` block. P0 holds `state.health` + `workflow.create`;
-    /// it grows as the §6 verbs land.
+    /// group's `#[tool_router]` block — the full §6.1 orchestration + §6.4
+    /// supervision verbs.
     tool_router: ToolRouter<McpServer>,
 }
 
@@ -77,18 +88,49 @@ impl McpServer {
     /// the engine handles the orchestration/lifecycle tools need.
     #[must_use]
     pub fn new(store: StoreHandle, resolver: Arc<dyn SessionResolver>) -> Self {
+        let run = std::env::var("LAZYBONES_RUN").unwrap_or_else(|_| DEFAULT_RUN_LABEL.to_owned());
         Self {
             store,
             resolver,
+            run,
             tool_router: crate::tools::router(),
         }
     }
 
-    /// The shared store handle the tool methods call. Exposed so the (forthcoming)
-    /// `tools::*` modules reach the store without re-plumbing it through each call.
+    /// The shared store handle the tool methods call. Exposed so the `tools::*`
+    /// modules reach the store without re-plumbing it through each call.
     #[must_use]
     pub fn store(&self) -> &StoreHandle {
         &self.store
+    }
+
+    /// The run label a standalone `task.create` seeds under — the MCP twin of
+    /// `AppState::run` (design §6.1), so an MCP-authored task groups its history
+    /// exactly where a REST-authored one does.
+    #[must_use]
+    pub fn run_label(&self) -> &str {
+        &self.run
+    }
+
+    /// Authenticate a mutating tool call and assert it carries `cap`, returning the
+    /// resolved [`ScopedSession`] (so the tool can read `actor()` for the audit
+    /// trail). The MCP twin of a REST handler's `session.require(cap, …)`: a
+    /// missing/unknown token is [`Unauthorized`](McpError::Unauthorized); a token
+    /// lacking `cap` is [`Forbidden`](McpError::Forbidden) (→ 403). The
+    /// unauthenticated read path does **not** apply to mutators (design §3).
+    ///
+    /// # Errors
+    ///
+    /// [`McpError::Unauthorized`] with no resolvable session, or
+    /// [`McpError::Forbidden`] when the session lacks `cap`.
+    pub fn authorize(
+        &self,
+        authorization: Option<&str>,
+        cap: Capability,
+    ) -> Result<ScopedSession, McpError> {
+        let session = self.session_for(authorization).ok_or(McpError::Unauthorized)?;
+        auth::require(&session, cap)?;
+        Ok(session)
     }
 
     /// Resolve the [`ScopedSession`] a tool call acts under from its `Authorization`
