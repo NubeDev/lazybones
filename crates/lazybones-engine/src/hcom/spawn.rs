@@ -101,6 +101,20 @@ impl Hcom {
         // survives a daemon launched from inside a Claude Code session.
         cmd.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
 
+        // Disable Claude Code's non-essential background traffic (telemetry,
+        // auto-update, and the GrowthBook feature-flag refresh) for every spawned
+        // agent. The flag refresh is what kept re-enabling the **Chrome/browser
+        // tools** integration: `tengu_chrome_auto_enable` is fetched from GrowthBook
+        // and, when a Chrome extension is detected, claude prompts "Claude in Chrome
+        // extension detected … ❯ 1. Yes, use my browser  2. No" on startup — a gate
+        // a headless agent can't answer, parking it `launch_blocked`. There is no
+        // dedicated env/flag to disable the browser tools (confirmed against the
+        // docs); cutting the background refresh keeps the locally-disabled state
+        // (`cachedChromeExtensionInstalled: false`) from flipping back to enabled,
+        // so the prompt never fires. Headless agents have no use for telemetry or
+        // mid-task auto-update anyway.
+        cmd.env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
+
         let out = cmd.output().await?;
         if !out.status.success() {
             anyhow::bail!(
