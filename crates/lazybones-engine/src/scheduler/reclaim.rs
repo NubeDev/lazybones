@@ -37,6 +37,20 @@ pub async fn reconcile(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
             }
         };
         for task in tasks {
+            // A *launch-wedged* agent (parked on an unanswerable startup prompt, or
+            // exited before it was ready) is NOT a healthy live agent and must not
+            // be left silently `running` — its hcom status isn't `dead`, so the
+            // stale-reclaim check below would treat it as alive and the task would
+            // sit `running` until a human noticed. Surface it immediately: kill the
+            // parked agent and `block()` the task, which files the operator
+            // follow-up (and auto-retries if a policy is armed). This is the visible
+            // "it's blocked, here's why" signal that was missing.
+            if let Some(reason) = agent_for(&task.id, &live).and_then(launch_block_reason) {
+                tracing::info!(task = %task.id, %reason, "reclaim: agent launch-wedged → blocking");
+                let _ = hcom.kill_tag(&task.id).await; // best-effort; reap the parked agent
+                super::block::block(store, &task, reason, ACTOR).await;
+                continue;
+            }
             if !is_reclaimable(&task, &live, cfg.stale_after_secs) {
                 continue;
             }
@@ -48,6 +62,46 @@ pub async fn reconcile(store: &StoreHandle, hcom: &Hcom, cfg: &EngineConfig) {
     }
 
     reap_finished_agents(store, hcom, &live).await;
+}
+
+/// The agent carrying `tag`, if any.
+fn agent_for<'a>(tag: &str, live: &'a [HcomAgent]) -> Option<&'a HcomAgent> {
+    live.iter().find(|a| a.tag.as_deref() == Some(tag))
+}
+
+/// If `agent` is *launch-wedged* — parked on an unanswerable startup prompt, or
+/// exited before it reached readiness — return a block reason describing why.
+/// `None` for any healthy state (`active`, `idle`/`listening`, or a `dead` agent
+/// that crashed mid-work, which the stale-reclaim path correctly retries).
+///
+/// Two tells, both startup-only so a normal idle/working agent is never matched:
+/// - hcom status is `blocked` (a startup park: the screen settled before ready); or
+/// - the status/detail names a launch wall — `launch_blocked` / `launch_failed` /
+///   `screen settled` / `exited before startup`.
+///
+/// The returned reason always carries the literal `launch_blocked:` so the
+/// follow-up classifier files the operator "needs attention" note (a headless
+/// agent parked on an interactive prompt — browser/chrome consent, folder trust,
+/// bypass consent, theme picker, …).
+fn launch_block_reason(agent: &HcomAgent) -> Option<String> {
+    let status = agent.status.to_lowercase();
+    let detail = agent.detail.to_lowercase();
+    let wedged = status == "blocked"
+        || detail.contains("launch_blocked")
+        || detail.contains("launch blocked")
+        || detail.contains("launch_failed")
+        || detail.contains("screen settled")
+        || detail.contains("settled before readiness")
+        || detail.contains("exited before startup");
+    if !wedged {
+        return None;
+    }
+    let what = if agent.detail.trim().is_empty() {
+        agent.status.clone()
+    } else {
+        agent.detail.clone()
+    };
+    Some(format!("launch_blocked: {what}"))
 }
 
 /// Whether `tag` carries a non-dead live agent in `live`.
@@ -147,8 +201,55 @@ mod tests {
             name: "a".into(),
             base_name: "a".into(),
             status: status.into(),
+            detail: String::new(),
             tag: Some(tag.into()),
         }
+    }
+
+    fn agent_d(tag: &str, status: &str, detail: &str) -> HcomAgent {
+        HcomAgent {
+            name: "a".into(),
+            base_name: "a".into(),
+            status: status.into(),
+            detail: detail.into(),
+            tag: Some(tag.into()),
+        }
+    }
+
+    #[test]
+    fn launch_blocked_status_is_detected() {
+        // The browser/chrome consent park, theme picker, settings warning, etc. —
+        // hcom reports status `blocked`.
+        let r = launch_block_reason(&agent_d(
+            "t",
+            "blocked",
+            "launch blocked: screen settled before readiness",
+        ))
+        .expect("blocked status ⇒ wedged");
+        assert!(r.contains("launch_blocked:"), "reason must classify: {r}");
+    }
+
+    #[test]
+    fn launch_failed_detail_is_detected() {
+        // Exit-before-ready (e.g. the invalid `--permission-mode auto` flag on an
+        // old claude): status `inactive`, detail names the startup failure.
+        let r = launch_block_reason(&agent_d(
+            "t",
+            "inactive",
+            "process exited before startup completed (exit code 1)",
+        ))
+        .expect("exited-before-startup ⇒ wedged");
+        assert!(r.contains("launch_blocked:"), "reason must classify: {r}");
+        // But a bare `inactive` with no launch marker is a finished agent, not a wall.
+        assert!(launch_block_reason(&agent_d("t", "inactive", "")).is_none());
+    }
+
+    #[test]
+    fn healthy_agents_are_not_wedged() {
+        assert!(launch_block_reason(&agent("t", "active")).is_none());
+        assert!(launch_block_reason(&agent("t", "idle")).is_none());
+        // A crashed (`dead`) agent is for stale-reclaim to retry, not a launch wall.
+        assert!(launch_block_reason(&agent("t", "dead")).is_none());
     }
 
     #[test]

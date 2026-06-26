@@ -179,8 +179,9 @@ distinct wall with a distinct fix.
 | 7 | `launch_failed` exit code 1 across **every** repo; headless log shows `error: option '--permission-mode <mode>' argument 'auto' is invalid. Allowed choices are acceptEdits, bypassPermissions, default, delegate, dontAsk, plan.` | Installed `claude` is **too old** for the `--permission-mode auto` flag the daemon spawns (`permission_flags` default in [config.rs](../../crates/lazybones-engine/src/config.rs)). `auto` exists only on claude ≳2.1.185 | **Update claude** (`claude update`, must run with `CLAUDECODE` unset — it can't update from inside a Claude session) to ≥2.1.185, then restart the daemon. (Alternative: set `permission_flags.claude` to `--permission-mode dontAsk`, the older auto-approve peer — but `auto` on a current binary is the verified path.) |
 | 8 | `launch_blocked`; ANSI-stripped headless log shows `Welcome to Claude Code … Let's get started. Choose the text style …` | A claude **update reset onboarding** (`claude update` warns *config install method is 'unknown'*); the first-run **theme picker** parks the headless agent | Seed `~/.claude.json` once: `theme` (e.g. `"dark"`) + `hasCompletedOnboarding: true` (+ `hasCompletedProjectOnboarding: true`). No re-launch of `claude` interactively needed. |
 | 9 | `launch_blocked`; headless log shows a **`Settings Warning`** box (`permissions.allow: Invalid permission rule "*" was skipped … ❯ 1. Continue 2. Fix with Claude 3. Exit`) | A newer claude **strict-validates `~/.claude/settings.json`** and interactively prompts on an invalid rule — the bare `"*"` wildcard in `permissions.allow` / `additionalDirectories` is now rejected | Remove the bare `"*"` entries from `permissions.allow` and `additionalDirectories` in `~/.claude/settings.json` (redundant anyway under `--permission-mode auto`/`bypassPermissions`). Keep the literal rules. |
+| 10 | `launch_blocked: screen settled before readiness`; headless log shows `Turn browser tools off for future sessions with /chrome. ❯ 1. Yes, use my browser  2. No, keep browser tools off` | claude **auto-detected a Chrome extension** and prompts to enable browser tools on first run — driven by `cachedChromeExtensionInstalled: true` + the growthbook flag `tengu_chrome_auto_enable: true` in `~/.claude.json`. There is **no** env var / `settings.json` key / CLI flag to disable it (confirmed against the docs) | Set `cachedChromeExtensionInstalled: false` in `~/.claude.json` (and `cachedGrowthBookFeatures.tengu_chrome_auto_enable: false` belt-and-suspenders). It can re-set itself if you later run claude interactively with the extension present; the daemon's headless spawns won't re-detect it. |
 
-> **Walls #7–#9 cascade after a `claude` version bump.** A `claude update` can surface them in
+> **Walls #7–#10 cascade after a `claude` version bump.** A `claude update` can surface them in
 > sequence — fix the `auto`-flag gate (#7) and the next spawn parks on the theme picker (#8); seed
 > onboarding and the next parks on the settings-wildcard warning (#9). After each fix, **smoke-test
 > the spawn in a worktree** before relaunching tasks:
@@ -197,6 +198,19 @@ so check the follow-ups surface too.
 
 Note #4 can stack on #1: a task can clear the consent screen and *then* hit the
 build seam, so a single "stuck" task may have two causes.
+
+> **A launch-wedged agent now self-surfaces — it should never sit silently `running`.**
+> Previously a `launch_blocked` agent (any of #1, #8, #9, #10) left its task `running`
+> indefinitely: hcom reports the parked agent with status `blocked`, not `dead`, so the
+> stale-reclaim check counted it as a *live, healthy* agent and never acted — an operator
+> had to notice and stop it by hand. Fixed: every reclaim tick (~2s) now detects a
+> launch-wedged agent (`reclaim::launch_block_reason` — status `blocked`, or a
+> `launch_blocked`/`launch_failed`/`screen settled`/`exited before startup` detail) and
+> immediately **kills the parked agent, blocks the task with the reason, and files the
+> `consent` follow-up** (and auto-retries if a policy is armed). So a host-side launch
+> wall shows up as a **blocked task + a follow-up within seconds**, not a phantom
+> `running`. If you're on a daemon that predates this, that's why a wall looked invisible
+> — rebuild + restart. ([scheduler/reclaim.rs](../../crates/lazybones-engine/src/scheduler/reclaim.rs))
 
 ## API caveats while debugging
 

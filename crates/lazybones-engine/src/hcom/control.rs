@@ -29,9 +29,17 @@ pub struct HcomAgent {
     /// tail keys its name→tag map on `base_name`. Empty when hcom omits it.
     #[serde(default)]
     pub base_name: String,
-    /// Liveness/status string hcom computes (`active`, `idle`, `dead`, …).
+    /// Liveness/status string hcom computes (`active`, `idle`, `dead`,
+    /// `blocked`, …). A startup park (the agent settled on an unanswerable
+    /// interactive prompt before it was ready) surfaces here as `blocked`.
     #[serde(default)]
     pub status: String,
+    /// The human-readable detail hcom attaches to a non-running status — e.g.
+    /// `launch blocked: screen settled before readiness` for a startup park, or
+    /// `process exited before startup completed` for a launch failure. Empty when
+    /// hcom omits it. Reclaim reads this to surface *why* an agent is wedged.
+    #[serde(default)]
+    pub detail: String,
     /// The `--tag` the agent was launched with — the task id, for us.
     #[serde(default)]
     pub tag: Option<String>,

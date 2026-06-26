@@ -144,9 +144,7 @@ fn build_template(a: &Assembled, logo_path: Option<&str>, body: &str) -> String 
     out.push_str(&format!(
         "#set table(inset: (x: 0.8em, y: 0.55em), stroke: (x, y) => if y == 0 {{ none }} else {{ (top: 0.5pt + {rule}) }}, fill: (x, y) => if y == 0 {{ {primary} }} else if calc.even(y) {{ {zebra} }} else {{ none }})\n"
     ));
-    out.push_str(&format!(
-        "#show table.cell.where(y: 0): set text(fill: white, weight: \"bold\")\n"
-    ));
+    out.push_str("#show table.cell.where(y: 0): set text(fill: white, weight: \"bold\")\n");
 
     // ---- Block code in a tinted, padded panel -----------------------------
     out.push_str(&format!(
