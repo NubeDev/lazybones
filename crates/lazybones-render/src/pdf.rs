@@ -67,80 +67,224 @@ pub fn render_pdf(assembled: &Assembled) -> Result<Vec<u8>, RenderError> {
 }
 
 /// Assemble the branded `.typ` source around the converted body.
+///
+/// The layout is a professional, corporate document:
+/// - a dedicated **cover page** (logo, oversized title, an accent rule, and the
+///   brand header/footer text laid out as cover metadata),
+/// - a **running header** carrying the brand header text under a hairline rule on
+///   body pages (suppressed on the cover),
+/// - a **footer** with the brand footer text on the left and a `page / total`
+///   counter on the right, above a hairline rule (body pages only),
+/// - typographic `show` rules that give headings a clear size/weight/color
+///   hierarchy and style tables and code blocks (header fill, zebra rows, tinted
+///   code panels) instead of leaving them flat.
 fn build_template(a: &Assembled, logo_path: Option<&str>, body: &str) -> String {
     let c = &a.brand.colors;
     let f = &a.brand.fonts;
 
     let background = typst_color(&c.background, "white");
     let text_color = typst_color(&c.text, "rgb(\"#1a1a1a\")");
-    let primary = typst_color(&c.primary, "rgb(\"#222222\")");
+    let primary = typst_color(&c.primary, "rgb(\"#1a2b4a\")");
     let accent = typst_color(&c.accent, "rgb(\"#2563eb\")");
     let body_font = font_list(&f.body);
     let heading_font = font_list(&f.heading);
-
-    let header = brand_band(&a.brand.header_text, &text_color);
-    let footer = page_footer(&a.brand.footer_text, &text_color, a.options.page_numbers);
+    // A muted ink derived for secondary text (header/footer, captions). Typst can
+    // mix a color toward the page fill at layout time, so this stays correct
+    // whatever the brand text color is.
+    let muted = format!("{text_color}.lighten(35%)");
+    // A faint tint of the primary for table header fills and code panels.
+    let panel = format!("{primary}.lighten(92%)");
+    let zebra = format!("{primary}.lighten(96%)");
+    let rule = format!("{text_color}.lighten(75%)");
 
     let mut out = String::new();
+
+    // ---- Page geometry + running header/footer (body pages) ---------------
+    // The cover suppresses both bands via a page-local `#set page(..)` override,
+    // so these only ever decorate body pages.
+    let header = running_header(&a.brand.header_text, &muted, &rule);
+    let footer = running_footer(&a.brand.footer_text, &muted, &rule, a.options.page_numbers);
     out.push_str(&format!(
-        "#set page(paper: \"a4\", margin: (x: 2.2cm, top: 2.6cm, bottom: 2.4cm), fill: {background}, header: {header}, footer: {footer})\n"
+        "#set page(paper: \"a4\", margin: (x: 2.2cm, top: 2.4cm, bottom: 2.2cm), fill: {background}, header: {header}, header-ascent: 40%, footer: {footer}, footer-descent: 40%)\n"
     ));
+
+    // ---- Text + paragraph defaults ---------------------------------------
     out.push_str(&format!(
-        "#set text(font: {body_font}, fill: {text_color}, size: 11pt)\n"
+        "#set text(font: {body_font}, fill: {text_color}, size: 10.5pt)\n"
     ));
+    out.push_str("#set par(justify: true, leading: 0.72em, spacing: 1.25em)\n");
+    // Inline + block code in a real monospace face, slightly down-sized.
+    out.push_str("#show raw: set text(font: (\"DejaVu Sans Mono\",), size: 9pt)\n");
+
+    // ---- Heading hierarchy ------------------------------------------------
     out.push_str(&format!(
         "#show heading: set text(font: {heading_font}, fill: {primary})\n"
     ));
-    out.push_str(&format!("#show link: set text(fill: {accent})\n\n"));
-
-    if let Some(path) = logo_path {
-        out.push_str(&format!("#image({}, height: 1.4cm)\n", typst_string(path)));
-        out.push_str("#v(0.3cm)\n");
-    }
-
+    out.push_str("#show heading: set block(above: 1.4em, below: 0.7em)\n");
+    // h1: large, with a short accent underline drawn after the text.
     out.push_str(&format!(
-        "#text(size: 22pt, weight: \"bold\", fill: {primary})[{}]\n",
-        typst_string(&a.title)
+        "#show heading.where(level: 1): it => block[#text(size: 17pt, weight: \"bold\")[#it.body] #v(-0.3em) #box(width: 2.2em, line(length: 100%, stroke: 2pt + {accent}))]\n"
     ));
-    out.push_str("#v(0.2cm)\n");
-    out.push_str(&format!("#line(length: 100%, stroke: 0.6pt + {primary})\n"));
-    out.push_str("#v(0.6cm)\n\n");
+    out.push_str("#show heading.where(level: 2): set text(size: 13pt, weight: \"bold\")\n");
+    out.push_str(&format!(
+        "#show heading.where(level: 3): set text(size: 11pt, weight: \"bold\", fill: {accent})\n"
+    ));
 
+    // ---- Links, quotes, rules, lists -------------------------------------
+    out.push_str(&format!(
+        "#show link: it => text(fill: {accent}, underline(it))\n"
+    ));
+    out.push_str(&format!(
+        "#show quote.where(block: true): it => block(inset: (left: 1em), stroke: (left: 2pt + {accent}))[#text(style: \"italic\", fill: {muted})[#it.body]]\n"
+    ));
+    out.push_str("#set list(indent: 0.6em, spacing: 0.7em)\n");
+    out.push_str("#set enum(indent: 0.6em, spacing: 0.7em)\n");
+
+    // ---- Table styling: filled header row, zebra body, soft hairlines -----
+    out.push_str(&format!(
+        "#set table(inset: (x: 0.8em, y: 0.55em), stroke: (x, y) => if y == 0 {{ none }} else {{ (top: 0.5pt + {rule}) }}, fill: (x, y) => if y == 0 {{ {primary} }} else if calc.even(y) {{ {zebra} }} else {{ none }})\n"
+    ));
+    out.push_str(&format!(
+        "#show table.cell.where(y: 0): set text(fill: white, weight: \"bold\")\n"
+    ));
+
+    // ---- Block code in a tinted, padded panel -----------------------------
+    out.push_str(&format!(
+        "#show raw.where(block: true): it => block(width: 100%, fill: {panel}, inset: (x: 1em, y: 0.8em), radius: 4pt, breakable: true)[#it]\n\n"
+    ));
+
+    // ---- Cover page -------------------------------------------------------
+    out.push_str(&cover_page(a, logo_path, &primary, &accent, &muted, &rule));
+
+    // ---- Optional index (table of contents) on its own page --------------
     if a.options.index {
-        out.push_str(&index_block(a, &primary));
+        out.push_str(&index_block(a, &primary, &accent, &rule));
     }
 
+    // ---- Body -------------------------------------------------------------
     out.push_str(body);
     out.push('\n');
     out
 }
 
-/// The page footer: the brand footer band on the left and, when page numbers are
-/// on, a live `page / total` counter on the right. Returns `none` when neither is
-/// present so an unconfigured document keeps its empty footer.
-fn page_footer(brand_text: &str, color: &str, page_numbers: bool) -> String {
-    let band = brand_band(brand_text, color);
-    if !page_numbers {
-        return band;
+/// The cover page: a logo (if any), a generous top spacer, the oversized title,
+/// an accent rule, and the brand header/footer text laid out as cover metadata.
+/// The whole page suppresses the running header/footer via a page-local override,
+/// then breaks so the body starts on a fresh page.
+fn cover_page(
+    a: &Assembled,
+    logo_path: Option<&str>,
+    primary: &str,
+    accent: &str,
+    muted: &str,
+    rule: &str,
+) -> String {
+    let mut out = String::new();
+    // The cover carries no running header/footer of its own.
+    out.push_str("#page(header: none, footer: none)[\n");
+
+    // Logo at the top of the cover.
+    if let Some(path) = logo_path {
+        out.push_str(&format!(
+            "#v(0.6cm)\n#image({}, height: 1.7cm)\n",
+            typst_string(path)
+        ));
     }
-    // `context` lets the counter read the resolved page/total at layout time.
-    let number = format!(
-        "context [#text(size: 8.5pt, fill: {color})[#counter(page).display(\"1 / 1\", both: true)]]"
-    );
-    // Brand band (if any) on the left, page number pushed to the right.
-    let left = if band == "none" { "[]".to_owned() } else { band };
-    format!("[#grid(columns: (1fr, auto), {left}, {number})]")
+
+    // A flexible spacer floats the title block down to roughly the upper third,
+    // so the cover reads as composed rather than top-loaded. The 1.1fr / 1.9fr
+    // split keeps it above centre.
+    out.push_str("#v(1.1fr)\n");
+
+    // A small accent eyebrow above the title gives the cover a designed feel even
+    // when the brand sets no header text.
+    let eyebrow = if a.brand.header_text.trim().is_empty() {
+        "DOCUMENT".to_owned()
+    } else {
+        a.brand.header_text.trim().to_uppercase()
+    };
+    out.push_str(&format!(
+        "#text(size: 9.5pt, weight: \"bold\", fill: {accent}, tracking: 0.18em)[#{}]\n#v(0.5cm)\n",
+        typst_string(&eyebrow)
+    ));
+
+    // The title, oversized, with an accent rule beneath it. Justification and
+    // hyphenation are forced off here so the display title never stretches words
+    // or breaks mid-word the way justified body copy does.
+    out.push_str(&format!(
+        "#block(width: 85%)[#par(justify: false)[#text(size: 30pt, weight: \"bold\", fill: {primary}, hyphenate: false)[#{}]]]\n",
+        typst_string(&a.title)
+    ));
+    out.push_str("#v(0.6cm)\n");
+    out.push_str(&format!(
+        "#box(width: 3.5cm, line(length: 100%, stroke: 3pt + {accent}))\n"
+    ));
+
+    out.push_str("#v(1.9fr)\n");
+
+    // Cover metadata pinned near the bottom: a hairline and the brand footer text.
+    out.push_str(&format!("#line(length: 100%, stroke: 0.5pt + {rule})\n#v(0.3cm)\n"));
+    if !a.brand.footer_text.trim().is_empty() {
+        out.push_str(&format!(
+            "#text(size: 9pt, fill: {muted})[#{}]\n",
+            typst_string(a.brand.footer_text.trim())
+        ));
+    }
+    out.push_str("]\n#pagebreak(weak: true)\n\n");
+    out
 }
 
-/// An index (table of contents) block listing each page's title in render order,
-/// followed by a page break so the body starts on a fresh page. Every page the
-/// caller passes is a real page (a deliberately-blank spacer included), so all
-/// are numbered.
-fn index_block(a: &Assembled, primary: &str) -> String {
+/// The running header (body pages): the brand header text in small muted caps with
+/// a hairline rule beneath, or `none` when the brand left the header blank.
+fn running_header(text: &str, muted: &str, rule: &str) -> String {
+    if text.trim().is_empty() {
+        return "none".to_owned();
+    }
+    format!(
+        "[#text(size: 8pt, fill: {muted}, tracking: 0.08em)[#{}] #v(-0.4em) #line(length: 100%, stroke: 0.5pt + {rule})]",
+        typst_string(text.trim())
+    )
+}
+
+/// The running footer (body pages): a hairline rule above the brand footer text on
+/// the left and a live `page / total` counter on the right. Returns `none` when
+/// there is neither footer text nor page numbering.
+fn running_footer(brand_text: &str, muted: &str, rule: &str, page_numbers: bool) -> String {
+    let has_text = !brand_text.trim().is_empty();
+    if !has_text && !page_numbers {
+        return "none".to_owned();
+    }
+    let left = if has_text {
+        format!(
+            "text(size: 8pt, fill: {muted})[#{}]",
+            typst_string(brand_text.trim())
+        )
+    } else {
+        "[]".to_owned()
+    };
+    // `context` lets the counter read the resolved page/total at layout time.
+    let right = if page_numbers {
+        format!(
+            "context text(size: 8pt, fill: {muted})[#counter(page).display(\"1 / 1\", both: true)]"
+        )
+    } else {
+        "[]".to_owned()
+    };
+    format!(
+        "[#line(length: 100%, stroke: 0.5pt + {rule}) #v(-0.2em) #grid(columns: (1fr, auto), {left}, {right})]"
+    )
+}
+
+/// An index (table of contents) block on its own page listing each page's title in
+/// render order, with a leader-dotted layout. Followed by a page break so the body
+/// starts fresh. Every page the caller passes is a real page (a deliberately-blank
+/// spacer included), so all are numbered.
+fn index_block(a: &Assembled, primary: &str, accent: &str, rule: &str) -> String {
     let mut rows = String::new();
     for (i, _page) in a.pages.iter().enumerate() {
+        // index · title · dotted leader filling the rest of the line.
         rows.push_str(&format!(
-            "#text(size: 11pt)[{}.#h(0.4em){}]\n#v(0.2cm)\n",
+            "#grid(columns: (auto, auto, 1fr), gutter: 0.7em, align: (left, left, bottom), text(fill: {accent}, weight: \"bold\")[{}], text[#{}], box(width: 100%, inset: (bottom: 3pt))[#repeat(gap: 4pt)[#text(fill: {rule})[.]]])\n#v(0.4cm)\n",
             i + 1,
             typst_string(&a.page_label(i))
         ));
@@ -150,24 +294,12 @@ fn index_block(a: &Assembled, primary: &str) -> String {
     }
     let mut out = String::new();
     out.push_str(&format!(
-        "#text(size: 15pt, weight: \"bold\", fill: {primary})[Index]\n#v(0.4cm)\n"
+        "#text(size: 20pt, weight: \"bold\", fill: {primary})[Contents]\n#v(0.3cm)\n"
     ));
+    out.push_str(&format!("#line(length: 100%, stroke: 0.5pt + {rule})\n#v(0.7cm)\n"));
     out.push_str(&rows);
-    out.push_str("#pagebreak()\n\n");
+    out.push_str("#pagebreak(weak: true)\n\n");
     out
-}
-
-/// A page header/footer band: small, muted text, or `none` when the brand left
-/// it blank.
-fn brand_band(text: &str, color: &str) -> String {
-    if text.trim().is_empty() {
-        "none".to_owned()
-    } else {
-        format!(
-            "[#text(size: 8.5pt, fill: {color})[{}]]",
-            typst_string(text)
-        )
-    }
 }
 
 /// A Typst font-family list: the brand font (if any) first, then an embedded
@@ -314,11 +446,16 @@ mod tests {
             vec!["One".to_owned(), "  ".to_owned(), "Three".to_owned()],
         )
         .with_page_titles(vec!["A".to_owned(), "Spacer".to_owned(), "C".to_owned()]);
-        let block = index_block(&assembled, "rgb(\"#222\")");
+        let block = index_block(
+            &assembled,
+            "rgb(\"#222\")",
+            "rgb(\"#2563eb\")",
+            "rgb(\"#ccc\")",
+        );
         assert!(block.contains("\"A\""));
         assert!(block.contains("\"Spacer\""));
         assert!(block.contains("\"C\""));
-        assert!(block.contains("#pagebreak()"));
+        assert!(block.contains("#pagebreak"));
     }
 
     #[test]

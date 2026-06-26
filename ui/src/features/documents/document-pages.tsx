@@ -18,6 +18,7 @@ import {
   useUpdatePage,
 } from "@/lib/hooks/use-documents";
 import { AssetsLibrary } from "./assets-library";
+import { PageOrganizer } from "./page-organizer";
 import type { Asset } from "@/types/asset";
 import type { Page } from "@/types/document";
 
@@ -89,8 +90,34 @@ export function DocumentPages({ documentId }: { documentId: string }) {
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
 
+  // The same Add / Organize / Save-all row is rendered above and below the pages
+  // so the actions are reachable without scrolling a long stack of pages.
+  const actions = (
+    <div className="flex gap-2">
+      <Button
+        variant="secondary"
+        className="flex-1"
+        onClick={addPage}
+        disabled={createPage.isPending}
+      >
+        <Plus className="size-4" /> Add page
+      </Button>
+      <PageOrganizer documentId={documentId} pages={pages ?? []} />
+      <Button
+        className="flex-1"
+        onClick={saveAll}
+        disabled={dirtyPages.length === 0 || update.isPending}
+      >
+        <Save className="size-4" />
+        {dirtyPages.length > 0 ? `Save all (${dirtyPages.length})` : "Save all"}
+      </Button>
+    </div>
+  );
+
   return (
     <div className="space-y-3">
+      {pages && pages.length > 0 && actions}
+
       {pages && pages.length > 0 ? (
         pages.map((page, i) => (
           <PageCard
@@ -108,24 +135,7 @@ export function DocumentPages({ documentId }: { documentId: string }) {
         </p>
       )}
 
-      <div className="flex gap-2">
-        <Button
-          variant="secondary"
-          className="flex-1"
-          onClick={addPage}
-          disabled={createPage.isPending}
-        >
-          <Plus className="size-4" /> Add page
-        </Button>
-        <Button
-          className="flex-1"
-          onClick={saveAll}
-          disabled={dirtyPages.length === 0 || update.isPending}
-        >
-          <Save className="size-4" />
-          {dirtyPages.length > 0 ? `Save all (${dirtyPages.length})` : "Save all"}
-        </Button>
-      </div>
+      {actions}
       {createPage.error && (
         <p className="text-[11px] text-status-blocked">
           {createPage.error instanceof ApiError

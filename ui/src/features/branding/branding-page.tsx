@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ImagePlus,
@@ -167,8 +167,15 @@ function BrandEditor({
   const [id, setId] = useState(brandingId ?? "");
   const [draft, setDraft] = useState<BrandingDraft>(EMPTY);
 
+  // Seed the editable draft from the server *once per brand*, not on every
+  // refetch. The single-brand query refetches on window focus (react-query
+  // default), and the file picker blurs/refocuses the window — re-seeding on
+  // that refetch would clobber a just-uploaded logo (and any other unsaved
+  // edits) back to the server's values. Guarding by id keeps in-progress edits.
+  const seededId = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (brand) {
+    if (brand && seededId.current !== brand.id) {
+      seededId.current = brand.id;
       setId(brand.id);
       setDraft(draftFrom(brand));
     }

@@ -34,23 +34,32 @@ pub fn render_html(assembled: &Assembled) -> String {
     // The cover (header band, logo, title) is the first sheet's leading content —
     // exactly as the PDF template lays it out before the first page's body — so it
     // prints *on* the A4 page rather than floating on the grey desk above it.
+    // The cover mirrors the PDF: logo, a small accent "eyebrow" (the brand header
+    // text in caps, or "DOCUMENT" as a fallback), the oversized title, and a short
+    // accent rule beneath it.
     let mut cover = String::new();
-    if !assembled.brand.header_text.trim().is_empty() {
-        cover.push_str(&format!(
-            "<header>{}</header>\n",
-            escape_html(&assembled.brand.header_text)
-        ));
-    }
+    cover.push_str("<div class=\"doc-cover\">\n");
     if let Some(logo) = &assembled.logo {
         cover.push_str(&format!(
             "<img class=\"brand-logo\" src=\"{}\" alt=\"\">\n",
             data_uri(logo)
         ));
     }
+    let eyebrow = if assembled.brand.header_text.trim().is_empty() {
+        "DOCUMENT".to_owned()
+    } else {
+        assembled.brand.header_text.trim().to_uppercase()
+    };
+    cover.push_str(&format!(
+        "<p class=\"doc-eyebrow\">{}</p>\n",
+        escape_html(&eyebrow)
+    ));
     cover.push_str(&format!(
         "<h1 class=\"doc-title\">{}</h1>\n",
         escape_html(&assembled.title)
     ));
+    cover.push_str("<div class=\"doc-rule\"></div>\n");
+    cover.push_str("</div>\n");
 
     // When enabled, an index (table of contents) sheet rides on the cover page,
     // listing each non-empty page's title — mirroring the PDF, where the index
@@ -98,25 +107,37 @@ pub fn render_html(assembled: &Assembled) -> String {
 /* The preview mirrors the printed PDF: every page is a real A4 sheet \
 (210mm x 297mm) with the same 2.2cm side / 2.6cm top / 2.4cm bottom margins \
 as the Typst template, laid out on a grey desk and centred. */\n\
-:root{{--page-w:210mm;--page-h:297mm;--page-mx:2.2cm;--page-mt:2.6cm;--page-mb:2.4cm;}}\n\
+:root{{--page-w:210mm;--page-h:297mm;--page-mx:2.2cm;--page-mt:2.4cm;--page-mb:2.2cm;\
+--primary:{primary};--accent:{accent};--text:{text};}}\n\
 *{{box-sizing:border-box;}}\n\
 body{{background:#e6e6e9;color:{text};font-family:{body_font};line-height:1.6;\
 margin:0;padding:1.5rem;display:flex;flex-direction:column;align-items:center;gap:1.5rem;}}\n\
-h1,h2,h3,h4,h5,h6{{font-family:{heading_font};color:{primary};line-height:1.25;}}\n\
-.doc-title{{border-bottom:2px solid {primary};padding-bottom:0.3rem;margin:0 0 1rem;}}\n\
-header{{opacity:0.65;font-size:0.85rem;}}\n\
+h1,h2,h3,h4,h5,h6{{font-family:{heading_font};color:{primary};line-height:1.25;\
+margin:1.4em 0 0.5em;}}\n\
+h2{{font-size:1.25rem;}}\n\
+h3{{font-size:1.05rem;color:{accent};}}\n\
+/* The cover mirrors the PDF: an accent eyebrow, an oversized title, and a short \
+accent rule beneath it (replacing the old full-width underline). */\n\
+.doc-cover{{margin:0 0 1.5rem;}}\n\
+.doc-eyebrow{{font-size:0.72rem;font-weight:700;letter-spacing:0.18em;color:{accent};\
+text-transform:uppercase;margin:0 0 0.5rem;}}\n\
+.doc-title{{font-size:2rem;font-weight:700;margin:0 0 0.6rem;line-height:1.15;}}\n\
+.doc-rule{{width:3.5cm;height:3px;background:{accent};border-radius:1px;}}\n\
 /* The footer band pins to the bottom of its sheet (flex push) and carries the \
-brand footer on the left and the page counter on the right. */\n\
+brand footer on the left and the page counter on the right, above a hairline. */\n\
 .page-foot{{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;\
-gap:1rem;padding-top:1.5rem;opacity:0.65;font-size:0.85rem;}}\n\
+gap:1rem;padding-top:0.6rem;border-top:1px solid rgba(0,0,0,0.12);opacity:0.7;font-size:0.78rem;}}\n\
 .page-foot .page-num{{margin-left:auto;font-variant-numeric:tabular-nums;}}\n\
-/* Index (table of contents) listing each page title. */\n\
+/* Index (table of contents): index number in the accent color, dotted leaders. */\n\
 .doc-index{{margin:0 0 1rem;}}\n\
-.doc-index h2{{margin:0 0 0.6rem;}}\n\
-.doc-index ol{{list-style:none;margin:0;padding:0;}}\n\
-.doc-index li{{display:flex;gap:0.6em;padding:0.15rem 0;}}\n\
-.doc-index .idx-n{{color:{primary};font-weight:600;min-width:1.4em;}}\n\
-.brand-logo{{max-height:3.2rem;width:auto;margin-bottom:1rem;}}\n\
+.doc-index h2{{margin:0 0 0.4rem;}}\n\
+.doc-index ol{{list-style:none;margin:0;padding:0;border-top:1px solid rgba(0,0,0,0.12);\
+padding-top:0.7rem;}}\n\
+.doc-index li{{display:flex;gap:0.6em;padding:0.2rem 0;align-items:baseline;}}\n\
+.doc-index li::after{{content:\"\";flex:1;border-bottom:1px dotted rgba(0,0,0,0.3);\
+margin-bottom:0.2em;}}\n\
+.doc-index .idx-n{{color:{accent};font-weight:700;min-width:1.4em;}}\n\
+.brand-logo{{max-height:3.2rem;width:auto;margin-bottom:1.2rem;}}\n\
 /* The sheet keeps true A4 proportions but shrinks to fit a narrow preview pane \
 (the iframe is often half the screen) so it never clips horizontally. \
 aspect-ratio holds 210:297 once the width caps below A4. The flex column lets the \
@@ -126,12 +147,24 @@ width:min(var(--page-w),100%);aspect-ratio:210/297;display:flex;flex-direction:c
 padding:var(--page-mt) var(--page-mx) var(--page-mb);margin:0;overflow:hidden;}}\n\
 @media(min-width:840px){{.doc-page{{width:var(--page-w);height:var(--page-h);aspect-ratio:auto;}}}}\n\
 .doc-page>*:first-child{{margin-top:0;}}\n\
-a{{color:{accent};}}\n\
+.doc-page p{{text-align:justify;}}\n\
+a{{color:{accent};text-decoration:underline;}}\n\
 code,pre{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}}\n\
-pre{{background:rgba(0,0,0,0.05);padding:0.75rem 1rem;border-radius:6px;overflow:auto;}}\n\
-blockquote{{border-left:3px solid {primary};margin-left:0;padding-left:1rem;opacity:0.85;}}\n\
-table{{border-collapse:collapse;}}\n\
-th,td{{border:1px solid rgba(0,0,0,0.2);padding:0.4rem 0.7rem;}}\n\
+code{{font-size:0.88em;}}\n\
+/* Block code in a tinted, padded panel matching the PDF. */\n\
+pre{{background:{primary}10;padding:0.85rem 1rem;border-radius:5px;overflow:auto;\
+font-size:0.82rem;line-height:1.45;}}\n\
+pre code{{font-size:inherit;}}\n\
+/* Block quote: accent rule on the left, muted italic text. */\n\
+blockquote{{border-left:2px solid {accent};margin:1em 0;padding:0.1rem 0 0.1rem 1rem;\
+font-style:italic;opacity:0.8;}}\n\
+/* Table: filled header row (primary), white bold header text, zebra body rows, \
+soft hairline row separators — no heavy cell borders. */\n\
+table{{border-collapse:collapse;width:100%;margin:1em 0;font-size:0.95em;}}\n\
+thead th{{background:{primary};color:#fff;font-weight:700;text-align:left;}}\n\
+th,td{{padding:0.5rem 0.8rem;border:none;}}\n\
+tbody tr{{border-top:1px solid rgba(0,0,0,0.12);}}\n\
+tbody tr:nth-child(even){{background:{primary}0d;}}\n\
 img{{max-width:100%;}}\n</style>\n</head>\n<body>\n{sections}</body></html>",
         title = escape_html(&assembled.title),
     )
@@ -283,7 +316,8 @@ mod tests {
         let html = render_html(&assembled);
         assert!(html.contains("#1d4ed8"));
         assert!(html.contains("#db2777"));
-        assert!(html.contains("<header>Confidential</header>"));
+        // The brand header text becomes the uppercased cover eyebrow.
+        assert!(html.contains("class=\"doc-eyebrow\">CONFIDENTIAL</p>"));
         assert!(html.contains("brand-footer\">&copy; ACME</span>") || html.contains("brand-footer\">© ACME</span>"));
     }
 
@@ -346,7 +380,7 @@ mod tests {
         let first = html.split("<section class=\"doc-page\">").nth(1).unwrap();
         let first_page = first.split("</section>").next().unwrap();
         assert!(first_page.contains("doc-title"), "title is on the first sheet");
-        assert!(first_page.contains("<header>Confidential</header>"));
+        assert!(first_page.contains("class=\"doc-eyebrow\">CONFIDENTIAL</p>"));
     }
 
     #[test]

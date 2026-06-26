@@ -245,9 +245,9 @@ impl Converter<'_> {
                     Some(lang) => format!(
                         "#raw(block: true, lang: {}, {})\n\n",
                         typst_string(&lang),
-                        typst_string(code)
+                        typst_string_multiline(code)
                     ),
-                    None => format!("#raw(block: true, {})\n\n", typst_string(code)),
+                    None => format!("#raw(block: true, {})\n\n", typst_string_multiline(code)),
                 };
                 self.push(&block);
             }
@@ -366,6 +366,27 @@ pub(crate) fn typst_string(s: &str) -> String {
     out
 }
 
+/// Like [`typst_string`] but **preserves line structure** for verbatim blocks
+/// (fenced code). Newlines and tabs are emitted as the Typst escape sequences
+/// `\n` / `\t` rather than collapsed to spaces, so a multi-line code block keeps
+/// its lines instead of flowing into one run. `\r` is dropped (CRLF → LF).
+pub(crate) fn typst_string_multiline(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +436,17 @@ mod tests {
         let typ = markdown_to_typst_plain(md);
         assert!(typ.contains("#raw(block: true, lang: \"rust\","));
         assert!(typ.contains("let x = \\\"hi\\\";"));
+    }
+
+    #[test]
+    fn fenced_code_block_preserves_line_breaks() {
+        // A multi-line code block must keep its newlines as `\n` escapes so the
+        // lines do not flow into a single run in the rendered panel.
+        let md = "```\nline one\nline two\nline three\n```";
+        let typ = markdown_to_typst_plain(md);
+        assert!(typ.contains("line one\\nline two\\nline three"));
+        // ...and no literal spaces standing in for the dropped newlines.
+        assert!(!typ.contains("line one line two"));
     }
 
     #[test]

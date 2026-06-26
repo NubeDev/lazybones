@@ -180,6 +180,11 @@ Supporting edits:
 
 ## Render layer — new crate `crates/lazybones-render`
 
+> **Styling guide: [`styling.md`](styling.md)** — how a document becomes a branded
+> PDF + matching HTML preview, what the author controls (colors/fonts/logo/toggles)
+> vs. the developer (cover, headings, tables, code panels), the Typst string-vs-
+> content gotcha, and the embedded-font constraint. Read it before changing the look.
+
 Isolated crate so Typst's heavy deps don't slow the api/store build, and so
 rendering is pure + unit-testable. It takes an **already-assembled** document
 (title, branding values, resolved markdown, resolved logo/image bytes) — no store
