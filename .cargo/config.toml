@@ -1,0 +1,22 @@
+# --- C compiler + linker: zig cc ---
+# This box has NO system C compiler / `cc` / gcc on PATH and no root to
+# apt-install one. C deps (e.g. `ring`) need a real C compiler to build their
+# C+asm, and rustc needs a `cc`-style driver to link. We use a self-contained
+# zig toolchain (~/.local/zig-linux-x86_64-0.13.0) whose clang-based `zig cc`
+# both compiles C and links — no system toolchain required.
+#
+#   ~/.local/bin/zigcc  ->  `zig cc`  (also rewrites the gnu target triple
+#                           x86_64-unknown-linux-gnu -> zig's x86_64-linux-gnu)
+#   ~/.local/bin/zigar  ->  `zig ar`
+#
+# If you install a real gcc/clang later, delete this file to fall back to the
+# system toolchain. See ../../lb/docs/debugging/build/no-c-compiler-linker-cc-not-found.md
+[target.x86_64-unknown-linux-gnu]
+linker = "/home/user/.local/bin/zigcc"
+
+# cc-rs (for C deps) reads CC/AR from the environment. Setting them here means
+# `cargo build` Just Works with no shell exports.
+[env]
+CC = "/home/user/.local/bin/zigcc"
+AR = "/home/user/.local/bin/zigar"
+CC_x86_64_unknown_linux_gnu = "/home/user/.local/bin/zigcc"

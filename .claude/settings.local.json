@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://static.crates.io/crates/wasmtime-wasi-http/wasmtime-wasi-http-46.0.0.crate\" -o wh.crate)",
+      "Bash(tar xzf *)",
+      "Bash(curl -s \"https://static.crates.io/crates/wasmtime-wasi/wasmtime-wasi-46.0.0.crate\" -o ws.crate)"
+    ]
+  }
+}

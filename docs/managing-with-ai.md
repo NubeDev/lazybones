@@ -22,6 +22,13 @@ A task runs only when **both** happen: you promote it **and** the daemon is up.
 
 ## House rules when authoring a workflow for a human (read first)
 
+> **The canonical recipe lives in [`workflow/DEFAULT-WORKFLOW.md`](workflow/DEFAULT-WORKFLOW.md).**
+> When asked to *set up* a workflow, follow that doc verbatim: worktree mode
+> `shared` (one branch → one PR), model `claude-opus-4-8`, effort `medium`,
+> auto-retry `long_term`×2 on every task, hand back idle. Do **not** make the user
+> choose those — and never fake sharing with per-task `reuse_from` (that's the
+> mistake the doc exists to prevent).
+
 When a human asks you to *set up* a workflow (author the run + its tasks) so they
 can review it, follow these — they are settled defaults, not per-request choices:
 

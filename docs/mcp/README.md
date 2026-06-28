@@ -1,7 +1,10 @@
 # MCP service for lazybones — design scope
 
 Status: draft for review · Owner: TBD · Date: 2026-06-25
-Companion docs: [`docs/managing-with-ai.md`](../managing-with-ai.md) (the REST
+Companion docs: [`docs/workflow/DEFAULT-WORKFLOW.md`](../workflow/DEFAULT-WORKFLOW.md)
+(the canonical recipe for authoring a workflow over these tools — shared/one-PR,
+opus-4.8/medium, auto-retry×2, hand back idle),
+[`docs/managing-with-ai.md`](../managing-with-ai.md) (the REST
 playbook this exposes as tools), [`docs/agent/lazybones-agent-scope.md`](../agent/lazybones-agent-scope.md)
 (the in-app management agent — the *first consumer* of this surface),
 [`docs/workflows-scope.md`](../workflows-scope.md),
